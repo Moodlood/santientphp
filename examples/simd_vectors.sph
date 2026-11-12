@@ -1,0 +1,95 @@
+<?php
+// SentientPHP (SPH 0.1) - Milestone 11C Example
+// SIMD (Single Instruction, Multiple Data) & Hardware CPU Feature Detection
+
+fn main(): i32 {
+    echo "--- 1. Target CPU SIMD Feature Detection ---\n";
+    let has_sse: bool = Simd::has_sse();
+    let has_sse2: bool = Simd::has_sse2();
+    let has_sse3: bool = Simd::has_sse3();
+    let has_avx: bool = Simd::has_avx();
+    println(has_sse);
+    println(has_sse2);
+    println(has_sse3);
+    println(has_avx);
+
+    echo "--- 2. f32x4 Vector Construction & Operations ---\n";
+    let mut v1 = new f32x4(1.0, 2.0, 3.0, 4.0);
+    let mut v2 = f32x4(5.0, 6.0, 7.0, 8.0);
+    let v_zero = f32x4::zero();
+    let v_splat = f32x4::splat(10.0);
+
+    println(v1);
+    println(v2);
+    println(v_zero);
+    println(v_splat);
+
+    echo "--- 3. f32x4 Vector Arithmetic ---\n";
+    let v_add = v1 + v2;
+    let v_sub = v2 - v1;
+    let v_mul = v1 * v2;
+    let v_div = v2 / v1;
+
+    println(v_add);
+    println(v_sub);
+    println(v_mul);
+    println(v_div);
+
+    echo "--- 4. f32x4 Vector Math Functions ---\n";
+    let v_sq = f32x4(4.0, 9.0, 16.0, 25.0);
+    let v_sqrt = v_sq.sqrt();
+    println(v_sqrt);
+
+    let v_neg = f32x4(-1.5, 2.5, -3.5, 4.5);
+    let v_abs = v_neg.abs();
+    println(v_abs);
+
+    let v_min = v1.min(v2);
+    let v_max = v1.max(v2);
+    println(v_min);
+    println(v_max);
+
+    echo "--- 5. f32x4 Reductions & Dot Product ---\n";
+    let v1_sum: f32 = v1.sum();
+    let v_dot: f32 = v1.dot(v2);
+    println(v1_sum);
+    println(v_dot);
+
+    echo "--- 6. Lane Access & Mutation ---\n";
+    println(v1.x);
+    println(v1.y);
+    println(v1.get(2));
+    println(v1[3]);
+
+    v1.set(0, 50.0);
+    println(v1.x);
+
+    echo "--- 7. i32x4 Vector Operations ---\n";
+    let iv1 = new i32x4(10, 20, 30, 40);
+    let iv2 = i32x4::splat(5);
+    let iv_add = iv1 + iv2;
+    let iv_sub = iv1 - iv2;
+    println(iv_add);
+    println(iv_sub);
+    let iv_sum: i32 = iv_add.sum();
+    println(iv_sum);
+
+    echo "--- 8. f64x2 Vector Operations ---\n";
+    let dv1 = new f64x2(100.0, 200.0);
+    let dv2 = f64x2::splat(50.0);
+    let dv_sub = dv1 - dv2;
+    println(dv_sub);
+    let dv_sum: f64 = dv_sub.sum();
+    println(dv_sum);
+
+    echo "--- 9. i64x2 Vector Operations ---\n";
+    let lv1 = new i64x2(1000000000, 2000000000);
+    let lv2 = i64x2::splat(500000000);
+    let lv_add = lv1 + lv2;
+    println(lv_add);
+    let lv_sum: i64 = lv_add.sum();
+    println(lv_sum);
+
+    return 0;
+}
+

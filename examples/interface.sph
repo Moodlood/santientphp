@@ -1,0 +1,35 @@
+<?php
+
+interface Shape {
+    fn area(): i32;
+}
+
+class Rectangle implements Shape {
+    width: i32,
+    height: i32,
+
+    fn area(): i32 {
+        return this.width * this.height;
+    }
+}
+
+class Square implements Shape {
+    side: i32,
+
+    fn area(): i32 {
+        return this.side * this.side;
+    }
+}
+
+fn printArea(s: Shape): void {
+    println(s.area());
+}
+
+fn main(): i32 {
+    let r = Rectangle { width: 5, height: 10 };
+    let sq = Square { side: 5 };
+    printArea(r);
+    printArea(sq);
+    return 0;
+}
+

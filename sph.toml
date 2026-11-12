@@ -1,0 +1,21 @@
+[project]
+name = "santientphp"
+version = "0.1.0"
+entry = "examples/hello.sph"
+
+[compiler]
+language_version = "0.1"
+
+[target]
+triple = "x86_64-windows"
+
+[build]
+mode = "debug"
+optimization = "0"
+
+[memory]
+default = "automatic"
+
+[compatibility]
+php = false
+mode = "strict"

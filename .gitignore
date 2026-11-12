@@ -1,0 +1,21 @@
+# Build output
+build/
+bin/
+lib/
+*.exe
+*.obj
+*.o
+*.a
+*.pdb
+
+# IDE and editors
+.vscode/
+.idea/
+*.swp
+*~
+
+# Node and VS Code packaging
+node_modules/
+*.vsix
+editors/vscode/out/
+

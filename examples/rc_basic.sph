@@ -1,0 +1,26 @@
+<?php
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn sum_point(p: Rc<Point>): i32 {
+    return p.x + p.y;
+}
+
+fn main(): i32 {
+    let p: Rc<Point> = Rc::new(Point { x: 10, y: 20 });
+    println(p.x);
+    println(p.y);
+
+    let q: Rc<Point> = p;
+    println(Rc::count(q));
+
+    let result = sum_point(p);
+    println(result);
+    println(Rc::count(p));
+
+    return 0;
+}
+

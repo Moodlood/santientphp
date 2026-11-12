@@ -1,0 +1,31 @@
+<?php
+
+struct Item {
+    id: i32,
+    weight: i32,
+}
+
+fn main(): i32 {
+    let mut arena: Arena = Arena::new(1024);
+
+    let p1: *Item = Arena::alloc(arena, Item { id: 1, weight: 100 });
+    let p2: *Item = arena.alloc(Item { id: 2, weight: 200 });
+
+    unsafe {
+        println((*p1).id);
+        println((*p1).weight);
+        println((*p2).id);
+        println((*p2).weight);
+    }
+
+    arena.reset();
+    let p3: *Item = Arena::alloc(arena, Item { id: 3, weight: 300 });
+    unsafe {
+        println((*p3).id);
+        println((*p3).weight);
+    }
+
+    arena.destroy();
+    return 0;
+}
+

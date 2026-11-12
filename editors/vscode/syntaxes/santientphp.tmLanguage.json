@@ -1,0 +1,242 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "SantientPHP",
+  "scopeName": "source.sph",
+  "patterns": [
+    { "include": "#php_tags" },
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#constants" },
+    { "include": "#php_variables" },
+    { "include": "#types" },
+    { "include": "#keywords" },
+    { "include": "#builtins" },
+    { "include": "#function_calls" },
+    { "include": "#operators" },
+    { "include": "#punctuation" }
+  ],
+  "repository": {
+    "php_tags": {
+      "patterns": [
+        {
+          "name": "punctuation.section.embedded.begin.php",
+          "match": "<\\?php"
+        },
+        {
+          "name": "punctuation.section.embedded.end.php",
+          "match": "\\?>"
+        }
+      ]
+    },
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.block.documentation.sph",
+          "begin": "/\\*\\*",
+          "end": "\\*/",
+          "patterns": [
+            {
+              "name": "keyword.other.documentation.tag.sph",
+              "match": "@(param|return|throws|brief|author|since|see|package|var)\\b"
+            }
+          ]
+        },
+        {
+          "name": "comment.block.sph",
+          "begin": "/\\*",
+          "end": "\\*/"
+        },
+        {
+          "name": "comment.line.triple-slash.sph",
+          "match": "///.*$"
+        },
+        {
+          "name": "comment.line.double-slash.sph",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.line.number-sign.sph",
+          "match": "#.*$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.sph",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.sph",
+              "match": "\\\\([nrtbf\\\\\"'$]|u[0-9a-fA-F]{4})"
+            },
+            {
+              "name": "variable.other.interpolated.sph",
+              "match": "\\$[a-zA-Z_\\x7f-\\xff][a-zA-Z0-9_\\x7f-\\xff]*"
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.single.sph",
+          "begin": "'",
+          "end": "'",
+          "patterns": [
+            {
+              "name": "constant.character.escape.sph",
+              "match": "\\\\[\\\\']"
+            }
+          ]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hex.sph",
+          "match": "\\b0[xX][0-9a-fA-F]+(_[0-9a-fA-F]+)*\\b"
+        },
+        {
+          "name": "constant.numeric.binary.sph",
+          "match": "\\b0[bB][01]+(_[01]+)*\\b"
+        },
+        {
+          "name": "constant.numeric.float.sph",
+          "match": "\\b[0-9]+(_[0-9]+)*\\.[0-9]+(_[0-9]+)*([eE][+-]?[0-9]+(_[0-9]+)*)?\\b"
+        },
+        {
+          "name": "constant.numeric.integer.sph",
+          "match": "\\b[0-9]+(_[0-9]+)*\\b"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.sph",
+          "match": "\\b(true|false|null|self|this)\\b"
+        }
+      ]
+    },
+    "php_variables": {
+      "patterns": [
+        {
+          "name": "variable.language.this.php",
+          "match": "\\$this\\b"
+        },
+        {
+          "name": "variable.other.php",
+          "match": "\\$[a-zA-Z_\\x7f-\\xff][a-zA-Z0-9_\\x7f-\\xff]*"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "storage.type.primitive.sph",
+          "match": "\\b(i32|i64|u32|u64|f32|f64|bool|string|void|dynamic|any)\\b"
+        },
+        {
+          "name": "storage.type.simd.sph",
+          "match": "\\b(f32x4|i32x4|f64x2|i64x2)\\b"
+        },
+        {
+          "name": "storage.type.concurrency.sph",
+          "match": "\\b(AtomicI32|AtomicI64|AtomicBool|Promise)\\b"
+        },
+        {
+          "name": "storage.type.collection.sph",
+          "match": "\\b(Vec|Rc|Box|Arena|Option|Result)\\b"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.declaration.function.sph",
+          "match": "\\b(fn|function)\\b"
+        },
+        {
+          "name": "keyword.declaration.variable.sph",
+          "match": "\\b(let|mut|const)\\b"
+        },
+        {
+          "name": "keyword.declaration.type.sph",
+          "match": "\\b(struct|class|interface|enum|impl|type)\\b"
+        },
+        {
+          "name": "keyword.control.flow.sph",
+          "match": "\\b(if|else|while|for|foreach|as|match|return|break|continue|try|catch|finally|throw|await)\\b"
+        },
+        {
+          "name": "storage.modifier.sph",
+          "match": "\\b(pub|public|protected|private|static|async|unsafe|extern|use|implements|extends)\\b"
+        },
+        {
+          "name": "keyword.operator.new.sph",
+          "match": "\\bnew\\b"
+        }
+      ]
+    },
+    "builtins": {
+      "patterns": [
+        {
+          "name": "support.function.builtin.sph",
+          "match": "\\b(println|print|echo|var_dump|count|array_push|array_pop|array_keys|array_values|explode|implode|strlen|strpos|substr|is_null|is_int|is_string|is_array|is_object|get_class|property_exists)\\b"
+        }
+      ]
+    },
+    "function_calls": {
+      "patterns": [
+        {
+          "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?=\\()",
+          "captures": {
+            "1": { "name": "entity.name.function.sph" }
+          }
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.arrow.sph",
+          "match": "=>|->|::"
+        },
+        {
+          "name": "keyword.operator.comparison.sph",
+          "match": "===|!==|==|!=|<=|>=|<|>"
+        },
+        {
+          "name": "keyword.operator.logical.sph",
+          "match": "&&|\\|\\||!"
+        },
+        {
+          "name": "keyword.operator.assignment.sph",
+          "match": "(\\+|-|\\*|/|%|&|\\||\\^|<<|>>)?="
+        },
+        {
+          "name": "keyword.operator.arithmetic.sph",
+          "match": "\\+|-|\\*|/|%"
+        },
+        {
+          "name": "keyword.operator.bitwise.sph",
+          "match": "&|\\||\\^|~|<<|>>"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.separator.sph",
+          "match": "[,;:]"
+        },
+        {
+          "name": "punctuation.bracket.sph",
+          "match": "[\\(\\)\\[\\]\\{\\}]"
+        }
+      ]
+    }
+  }
+}
+

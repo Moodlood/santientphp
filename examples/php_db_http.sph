@@ -1,0 +1,50 @@
+<?php
+
+function test_database() {
+    $pdo = new PDO("sqlite::memory:");
+    $pdo->exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, role TEXT);");
+
+    $stmt = $pdo->prepare("INSERT INTO users (name, role) VALUES (?, ?);");
+    $stmt->execute(["Alice", "Admin"]);
+    $stmt->execute(["Bob", "Engineer"]);
+    $stmt->execute(["Charlie", "Designer"]);
+
+    $select = $pdo->query("SELECT name, role FROM users ORDER BY id ASC;");
+    $rows = $select->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($rows as $user) {
+        echo "User: " . $user["name"] . " (" . $user["role"] . ")\n";
+    }
+
+    $single = $pdo->prepare("SELECT name, role FROM users WHERE id = ?;");
+    $single->execute([2]);
+    $bob = $single->fetch(PDO::FETCH_ASSOC);
+    echo "Single User: " . $bob["name"] . "\n";
+}
+
+function test_http() {
+    $ch = curl_init("http://mock/api/users");
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, "user=alice");
+    $res = curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    echo "HTTP Status: " . $code . "\n";
+    echo "HTTP Response: " . $res . "\n";
+
+    $fileData = file_get_contents("http://mock/api/data");
+    echo "File Get Contents: " . $fileData . "\n";
+}
+
+function main(): i32 {
+    echo "--- Testing PDO SQLite ---\n";
+    test_database();
+
+    echo "--- Testing HTTP Client ---\n";
+    test_http();
+
+    echo "Milestone 10F Interop Success!\n";
+    return 0;
+}
+

@@ -1,0 +1,17 @@
+<?php
+
+fn main(): i32 {
+    mut numbers: [i32; 4] = [10, 20, 30, 40];
+    numbers[0] = 100;
+
+    mut sum: i32 = 0;
+    mut i: i32 = 0;
+    while (i < 4) {
+        sum = sum + numbers[i];
+        i = i + 1;
+    }
+
+    println(sum);
+    return 0;
+}
+

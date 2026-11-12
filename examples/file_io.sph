@@ -1,0 +1,39 @@
+<?php
+
+fn main(): i32 {
+    let filename: string = "test_io_temp.txt";
+
+    // Clean up if left from previous run
+    if (File::exists(filename)) {
+        File::delete(filename);
+    }
+
+    println(File::exists(filename));
+
+    // Write content
+    let ok_write: bool = File::write(filename, "Hello from SantientPHP!\n");
+    println(ok_write);
+    println(File::exists(filename));
+
+    // Append content
+    let ok_append: bool = File::append(filename, "Appended line.\n");
+    println(ok_append);
+
+    // Read content
+    let content: string = File::read(filename);
+    println(content);
+
+    // Environment variables
+    let ok_env: bool = Env::set("SPH_TEST_VAR", "SantientEnvValue");
+    println(ok_env);
+    let env_val: string = Env::get("SPH_TEST_VAR");
+    println(env_val);
+
+    // Clean up file
+    let ok_del: bool = File::delete(filename);
+    println(ok_del);
+    println(File::exists(filename));
+
+    return 0;
+}
+

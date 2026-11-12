@@ -1,0 +1,115 @@
+{
+  "name": "santientphp",
+  "displayName": "SantientPHP",
+  "description": "Rich language support for SantientPHP (SPH) with Language Server Protocol, syntax highlighting, diagnostics, and build tools.",
+  "version": "0.1.0",
+  "publisher": "santientphp",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters",
+    "Formatters",
+    "Snippets"
+  ],
+  "keywords": [
+    "santientphp",
+    "sph",
+    "php",
+    "lsp",
+    "native"
+  ],
+  "main": "./out/extension.js",
+  "icon": "icons/icon.png",
+  "activationEvents": [
+    "onLanguage:santientphp",
+    "workspaceContains:sph.toml",
+    "workspaceContains:**/*.sph"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "santientphp",
+        "aliases": ["SantientPHP", "sph"],
+        "extensions": [".sph"],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icons/sph-file-icon-light.svg",
+          "dark": "./icons/sph-file-icon.svg"
+        }
+      }
+    ],
+    "grammars": [
+      {
+        "language": "santientphp",
+        "scopeName": "source.sph",
+        "path": "./syntaxes/santientphp.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "santientphp.restartServer",
+        "title": "Restart Language Server",
+        "category": "SantientPHP"
+      },
+      {
+        "command": "santientphp.doctor",
+        "title": "Run Doctor Diagnostics",
+        "category": "SantientPHP"
+      },
+      {
+        "command": "santientphp.build",
+        "title": "Build Active File / Project",
+        "category": "SantientPHP"
+      },
+      {
+        "command": "santientphp.run",
+        "title": "Run Active File",
+        "category": "SantientPHP"
+      },
+      {
+        "command": "santientphp.format",
+        "title": "Format File with sphc fmt",
+        "category": "SantientPHP"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "SantientPHP",
+      "properties": {
+        "santientphp.compilerPath": {
+          "type": "string",
+          "default": "sphc",
+          "description": "Path to the SantientPHP compiler binary (sphc or sphc.exe)."
+        },
+        "santientphp.trace.server": {
+          "type": "string",
+          "enum": ["off", "messages", "verbose"],
+          "default": "off",
+          "description": "Traces the communication between VS Code and the SantientPHP language server."
+        },
+        "santientphp.format.onSave": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically format SantientPHP documents on save."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.75.0",
+    "typescript": "^5.3.3"
+  }
+}
+

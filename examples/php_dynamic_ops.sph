@@ -1,0 +1,26 @@
+<?php
+
+fn main(): i32 {
+    $a = 10;
+    $b = 20;
+    if ($a < $b) {
+        echo "a is less than b\n";
+    }
+
+    $strNum = "50";
+    $calc = $a + $strNum;
+    echo "10 + '50' = " . $calc . "\n";
+
+    $f = 3.5;
+    $fcalc = $a + $f;
+    echo "10 + 3.5 = " . $fcalc . "\n";
+
+    $s1 = "hello";
+    $s2 = "hello";
+    if ($s1 == $s2) {
+        echo "strings match!\n";
+    }
+
+    return 0;
+}
+

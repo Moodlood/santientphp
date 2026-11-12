@@ -1,0 +1,20 @@
+<?php
+
+struct Node {
+    value: i32,
+}
+
+fn consume(n: Box<Node>): i32 {
+    return n.value;
+}
+
+fn main(): i32 {
+    let b1: Box<Node> = Box::new(Node { value: 42 });
+    println(b1.value);
+    let b2: Box<Node> = b1;
+    println(b2.value);
+    let res = consume(b2);
+    println(res);
+    return 0;
+}
+

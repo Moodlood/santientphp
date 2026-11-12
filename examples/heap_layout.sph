@@ -1,0 +1,36 @@
+<?php
+
+extern "C" fn malloc(size: i64): *void;
+extern "C" fn free(ptr: *void): void;
+
+#[repr(packed)]
+struct PacketHeader {
+    magic: i32,
+    version: bool,
+    payload_len: i32,
+}
+
+fn main(): i32 {
+    unsafe {
+        let raw_mem: *void = malloc(9 as i64);
+        let hdr: *PacketHeader = raw_mem as *PacketHeader;
+
+        (*hdr).magic = 1337;
+        (*hdr).version = true;
+        (*hdr).payload_len = 256;
+
+        println((*hdr).magic);
+
+        let p_ver: *bool = ((raw_mem as i64) + (4 as i64)) as *bool;
+        println(*p_ver);
+
+        println((*hdr).payload_len);
+
+        let p_len: *i32 = ((raw_mem as i64) + (5 as i64)) as *i32;
+        println(*p_len);
+
+        free(raw_mem);
+    }
+
+    return 0;
+}

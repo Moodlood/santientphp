@@ -1,0 +1,116 @@
+<?php
+
+class Exception {
+    public $message;
+
+    public function __construct($message) {
+        $this->message = $message;
+    }
+
+    public function getMessage() {
+        return $this->message;
+    }
+}
+
+class Product {
+    public $id;
+    public $name;
+    public $price;
+
+    public function __construct($id, $name, $price) {
+        $this->id = $id;
+        $this->name = $name;
+        $this->price = $price;
+    }
+
+    public function getSummary() {
+        return $this->name . " ($" . $this->price . ")";
+    }
+}
+
+function apply_discount(&$price, $percent) {
+    $discount = $price * ($percent / 100);
+    $price = $price - $discount;
+}
+
+function validate_order($customer, $quantity) {
+    if (strlen($customer) == 0) {
+        throw new Exception("Customer name cannot be empty");
+    }
+    if ($quantity <= 0) {
+        throw new Exception("Quantity must be positive");
+    }
+}
+
+function run_store_application() {
+    echo "=== SantientPHP Store Application ===\n";
+
+    // 1. OOP & Classes
+    $p1 = new Product(101, "Mechanical Keyboard", 100);
+    $p2 = new Product(102, "4K Monitor", 300);
+    echo "Product 1: " . $p1->getSummary() . "\n";
+    echo "Product 2: " . $p2->getSummary() . "\n";
+
+    // 2. By-Reference Discount
+    $price1 = $p1->price;
+    apply_discount($price1, 10);
+    echo "Discounted Product 1: $" . $price1 . "\n";
+
+    $price2 = $p2->price;
+    apply_discount($price2, 20);
+    echo "Discounted Product 2: $" . $price2 . "\n";
+
+    // 3. Exception Handling & Validation
+    try {
+        echo "Validating bad order...\n";
+        validate_order("", 0);
+    } catch (Exception $e) {
+        echo "Caught Expected Exception: " . $e->getMessage() . "\n";
+    } finally {
+        echo "Validation check completed\n";
+    }
+
+    // 4. Database Persistence (PDO SQLite)
+    $pdo = new PDO("sqlite::memory:");
+    $pdo->exec("CREATE TABLE orders (id INTEGER PRIMARY KEY, customer TEXT, product TEXT, total REAL);");
+
+    $insert = $pdo->prepare("INSERT INTO orders (customer, product, total) VALUES (?, ?, ?);");
+    $insert->execute(["Alice", $p1->name, $price1]);
+    $insert->execute(["Bob", $p2->name, $price2]);
+
+    $query = $pdo->query("SELECT customer, product, total FROM orders ORDER BY id ASC;");
+    $orders = $query->fetchAll(PDO::FETCH_ASSOC);
+
+    echo "--- Recorded Orders ---\n";
+    $totalRevenue = 0;
+    foreach ($orders as $order) {
+        $totalRevenue = $totalRevenue + $order["total"];
+        echo "Order: " . $order["customer"] . " -> " . $order["product"] . " ($" . $order["total"] . ")\n";
+    }
+
+    echo "Total Orders: " . count($orders) . "\n";
+    echo "Total Revenue: $" . $totalRevenue . "\n";
+
+    // 5. Remote HTTP Reporting (cURL & file_get_contents)
+    echo "--- HTTP Reporting ---\n";
+    $ch = curl_init("http://mock/api/orders/audit");
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, "count=" . count($orders) . "&rev=" . $totalRevenue);
+    $auditResp = curl_exec($ch);
+    $statusCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    echo "Audit Status: " . $statusCode . "\n";
+    echo "Audit Response: " . $auditResp . "\n";
+
+    $remoteConfig = file_get_contents("http://mock/api/config");
+    echo "Remote Config: " . $remoteConfig . "\n";
+
+    echo "SantientPHP Phase 10 Application Verified!\n";
+}
+
+function main(): i32 {
+    run_store_application();
+    return 0;
+}

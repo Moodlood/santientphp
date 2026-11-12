@@ -1,0 +1,30 @@
+<?php
+
+fn divide(a: i32, b: i32): Result<i32, string> {
+    if (b == 0) {
+        return Err("cannot divide by zero");
+    }
+    return Ok(a / b);
+}
+
+fn main(): i32 {
+    let r1: Result<i32, string> = divide(100, 4);
+    println(r1.is_ok());
+    println(r1.is_err());
+    if (r1.is_ok()) {
+        let val: i32 = r1.unwrap();
+        println(val);
+    }
+
+    let r2: Result<i32, string> = divide(50, 0);
+    println(r2.is_ok());
+    println(r2.is_err());
+    if (r2.is_err()) {
+        println("divide by zero error caught!");
+    }
+
+    r1.destroy();
+    r2.destroy();
+    return 0;
+}
+

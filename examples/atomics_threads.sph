@@ -1,0 +1,79 @@
+<?php
+
+function worker_inc(counter: *AtomicI32): void {
+    let mut i: i32 = 0;
+    while (i < 1000) {
+        counter->fetch_add(1, MemoryOrder::Relaxed);
+        i = i + 1;
+    }
+}
+
+function worker_dec(counter: *AtomicI32): void {
+    let mut i: i32 = 0;
+    while (i < 500) {
+        counter->fetch_sub(1, MemoryOrder::Relaxed);
+        i = i + 1;
+    }
+}
+
+function main(): i32 {
+    echo "--- Test 1: Single-thread Atomic Operations ---\n";
+    let mut val = new AtomicI32(10);
+    echo "Initial AtomicI32: " . val->load() . "\n";
+    val->store(42, MemoryOrder::Release);
+    echo "After store: " . val->load(MemoryOrder::Acquire) . "\n";
+
+    let old_val = val->fetch_add(8, MemoryOrder::SeqCst);
+    echo "fetch_add(8) old: " . old_val . ", new: " . val->load() . "\n";
+
+    let old_sub = val->fetch_sub(10, MemoryOrder::SeqCst);
+    echo "fetch_sub(10) old: " . old_sub . ", new: " . val->load() . "\n";
+
+    let old_xchg = val->exchange(100, MemoryOrder::SeqCst);
+    echo "exchange(100) old: " . old_xchg . ", new: " . val->load() . "\n";
+
+    // Compare exchange success
+    let succ = val->compare_exchange(100, 200, MemoryOrder::SeqCst, MemoryOrder::SeqCst);
+    if (succ) {
+        echo "compare_exchange(100 -> 200): success, value: " . val->load() . "\n";
+    } else {
+        echo "compare_exchange(100 -> 200): failed, value: " . val->load() . "\n";
+    }
+
+    // Compare exchange fail
+    let fail = val->compare_exchange(999, 300, MemoryOrder::SeqCst, MemoryOrder::SeqCst);
+    if (fail) {
+        echo "compare_exchange(999 -> 300): success, value: " . val->load() . "\n";
+    } else {
+        echo "compare_exchange(999 -> 300): failed, value: " . val->load() . "\n";
+    }
+
+    echo "--- Test 2: AtomicI64 and AtomicBool ---\n";
+    let mut a64 = new AtomicI64(1000000000);
+    a64->fetch_add(500000000);
+    echo "AtomicI64 value: " . a64->load() . "\n";
+
+    let mut abool = new AtomicBool(false);
+    echo "AtomicBool init: " . abool->load() . "\n";
+    abool->store(true);
+    echo "AtomicBool after store: " . abool->load() . "\n";
+
+    echo "--- Test 3: Multi-threaded Concurrency with Native Threads ---\n";
+    let mut shared_counter = new Atomic<i32>(0);
+    echo "Shared counter initial: " . shared_counter->load() . "\n";
+
+    let t1 = Thread::spawn(worker_inc, &shared_counter);
+    let t2 = Thread::spawn(worker_inc, &shared_counter);
+    let t3 = Thread::spawn(worker_dec, &shared_counter);
+
+    Thread::join(t1);
+    Thread::join(t2);
+    Thread::join(t3);
+
+    echo "Final shared counter: " . shared_counter->load() . "\n";
+    Thread::sleep_ms(10);
+    echo "Thread sleep completed successfully\n";
+
+    return 0;
+}
+

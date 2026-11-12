@@ -1,0 +1,27 @@
+<?php
+
+enum Status {
+    Pending,
+    Active,
+    Completed,
+}
+
+fn getStatusScore(status: Status): i32 {
+    if (status == Status::Active) {
+        return 100;
+    } else if (status == Status::Completed) {
+        return 200;
+    }
+    return 0;
+}
+
+fn main(): i32 {
+    let s1 = Status::Pending;
+    let s2 = Status::Active;
+    let s3 = Status::Completed;
+
+    let total = getStatusScore(s1) + getStatusScore(s2) + getStatusScore(s3);
+    println(total);
+    return 0;
+}
+

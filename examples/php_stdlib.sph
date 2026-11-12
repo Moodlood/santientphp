@@ -1,0 +1,61 @@
+<?php
+
+fn main(): i32 {
+    // 1. Array count & type check
+    $fruits = ["apple", "banana", "cherry"];
+    echo "Count: ", count($fruits), "\n";
+    echo "is_array: ", is_array($fruits), "\n";
+    echo "is_string: ", is_string("hello"), "\n";
+    echo "is_int: ", is_int(42), "\n";
+
+    // 2. array_push, array_pop, array_shift
+    $newCount = array_push($fruits, "date");
+    echo "After push: ", $newCount, "\n";
+    $popped = array_pop($fruits);
+    echo "Popped: ", $popped, "\n";
+    $shifted = array_shift($fruits);
+    echo "Shifted: ", $shifted, "\n";
+    echo "Remaining count: ", count($fruits), "\n";
+
+    // 3. in_array
+    $hasBanana = in_array("banana", $fruits);
+    echo "Has banana: ", $hasBanana, "\n";
+    $hasApple = in_array("apple", $fruits);
+    echo "Has apple: ", $hasApple, "\n";
+
+    // 4. Associative array keys & values
+    $user = ["name" => "Alice", "role" => "Admin"];
+    $keys = array_keys($user);
+    echo "Keys count: ", count($keys), "\n";
+    foreach ($keys as $k) {
+        echo "Key: ", $k, "\n";
+    }
+
+    $vals = array_values($user);
+    echo "Values count: ", count($vals), "\n";
+    foreach ($vals as $v) {
+        echo "Val: ", $v, "\n";
+    }
+
+    // 5. String functions: strlen, substr, strpos
+    $str = "Hello, SantientPHP!";
+    echo "Length: ", strlen($str), "\n";
+    $sub = substr($str, 7, 11);
+    echo "Substr: ", $sub, "\n";
+    $pos = strpos($str, "Santient");
+    echo "Pos of Santient: ", $pos, "\n";
+
+    // 6. explode & implode
+    $csv = "red,green,blue";
+    $colors = explode(",", $csv);
+    echo "Exploded count: ", count($colors), "\n";
+    foreach ($colors as $color) {
+        echo "Color: ", $color, "\n";
+    }
+
+    $joined = implode(" - ", $colors);
+    echo "Joined: ", $joined, "\n";
+
+    return 0;
+}
+

@@ -1,0 +1,15 @@
+<?php
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn main(): i32 {
+    mut p: Point = Point { x: 100, y: 200 };
+    p.x = p.x + 50;
+    println(p.x);
+    println(p.y);
+    return 0;
+}
+

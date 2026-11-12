@@ -1,0 +1,21 @@
+<?php
+
+fn swap(a: *i32, b: *i32): void {
+    unsafe {
+        let temp: i32 = *a;
+        *a = *b;
+        *b = temp;
+    }
+}
+
+fn main(): i32 {
+    mut x: i32 = 42;
+    mut y: i32 = 99;
+
+    swap(&x, &y);
+
+    println(x);
+    println(y);
+    return 0;
+}
+

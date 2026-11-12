@@ -1,0 +1,50 @@
+<?php
+
+class Exception {
+    public $message;
+
+    public function __construct($message) {
+        $this->message = $message;
+    }
+
+    public function getMessage() {
+        return $this->message;
+    }
+}
+
+function addFive(i32 &$val): void {
+    $val = $val + 5;
+}
+
+function divide(i32 $a, i32 $b, i32 &$result): void {
+    if ($b == 0) {
+        throw new Exception("Division by zero");
+    }
+    $result = $a / $b;
+}
+
+function main(): i32 {
+    echo "--- PHP By-Reference Parameters ---\n";
+    let mut num: i32 = 10;
+    echo "Ref before: " . num . "\n";
+    addFive(num);
+    echo "Ref after: " . num . "\n";
+
+    echo "--- PHP Exceptions & Unwinding ---\n";
+    let mut res: i32 = 0;
+    divide(100, 2, res);
+    echo "Div result: " . res . "\n";
+
+    try {
+        divide(100, 0, res);
+        echo "Should not reach here!\n";
+    } catch (Exception $e) {
+        echo "Caught Exception: " . $e->message . "\n";
+    } finally {
+        echo "Finally block executed\n";
+    }
+
+    echo "Exception handling completed successfully\n";
+    return 0;
+}
+

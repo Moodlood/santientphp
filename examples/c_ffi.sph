@@ -1,0 +1,14 @@
+<?php
+
+extern "C" fn abs(n: i32): i32;
+extern "C" fn puts(s: string): i32;
+
+fn main(): i32 {
+    let neg: i32 = -42;
+    let pos: i32 = abs(neg);
+    println(pos);
+
+    puts("Hello C FFI!");
+    return 0;
+}
+

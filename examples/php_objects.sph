@@ -1,0 +1,42 @@
+<?php
+
+class Person {
+    public $name;
+    public $age;
+
+    public function __construct($name, $age) {
+        $this->name = $name;
+        $this->age = $age;
+    }
+
+    public function greet(): string {
+        return "Hello, my name is " . $this->name;
+    }
+
+    public function getAge(): i32 {
+        return $this->age;
+    }
+}
+
+function main(): i32 {
+    $p = new Person("Alice", 30);
+
+    echo $p->greet();
+    echo "\n";
+
+    echo "Initial name: " . $p->name . "\n";
+    echo "Initial age: " . $p->age . "\n";
+
+    $p->name = "Bob";
+    echo "Updated name: " . $p->name . "\n";
+
+    echo "is_object: " . is_object($p) . "\n";
+    echo "get_class: " . get_class($p) . "\n";
+    echo "property_exists name: " . property_exists($p, "name") . "\n";
+    echo "property_exists missing: " . property_exists($p, "missing") . "\n";
+
+    var_dump($p);
+
+    return 0;
+}
+

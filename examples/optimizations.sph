@@ -1,0 +1,46 @@
+<?php
+
+fn square(x: i32): i32 {
+    return x * x;
+}
+
+fn compute_folded(): i32 {
+    let a: i32 = 100 + 50;
+    let b: i32 = 30 * 5;
+    let c: i32 = a + b;
+    return c;
+}
+
+fn compute_algebraic(x: i32): i32 {
+    let a: i32 = x + 0;
+    let b: i32 = a * 8; // Strength reduced to shift
+    let c: i32 = b - b; // 0
+    return a + c;
+}
+
+fn compute_cse(x: i32, y: i32): i32 {
+    let a: i32 = x + y;
+    let b: i32 = y + x; // Commutative match
+    return a + b;
+}
+
+fn main(): i32 {
+    // 1. Constant folding: 150 + 150 = 300
+    let folded: i32 = compute_folded();
+    println(folded);
+
+    // 2. Leaf inlining: square(5) = 25
+    let sq: i32 = square(5);
+    println(sq);
+
+    // 3. Algebraic simplification: 42 + 0 = 42
+    let alg: i32 = compute_algebraic(42);
+    println(alg);
+
+    // 4. CSE: (10 + 20) + (20 + 10) = 60
+    let cse: i32 = compute_cse(10, 20);
+    println(cse);
+
+    return 0;
+}
+

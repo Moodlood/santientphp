@@ -1,0 +1,19 @@
+<?php
+
+fn main(): i32 {
+    $user = "Alice";
+    echo "Hello, " . $user . "\n";
+
+    $x = 100;
+    $y = 50;
+    $sum = $x + $y;
+    echo "Sum: " . $sum . "\n";
+
+    $val = 42;
+    echo "Int value: " . $val . "\n";
+    $val = "reassigned string";
+    echo "Reassigned: " . $val . "\n";
+
+    return 0;
+}
+

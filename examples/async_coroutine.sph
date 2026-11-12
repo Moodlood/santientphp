@@ -1,0 +1,53 @@
+<?php
+// SentientPHP (SPH 0.1) - Milestone 11B Example
+// Asynchronous coroutines, Promises, and Cooperative Event Loop Runtime
+
+// 1. Cooperative Coroutine Function
+async fn compute_task(taskId: i32): Promise<i32> {
+    println(taskId * 10);
+    // Yield execution back to the event loop so other coroutines can progress
+    EventLoop::yield_now();
+    println(taskId * 10 + 1);
+    // Return final result resolving the underlying Promise
+    return taskId * 100;
+}
+
+// 2. Auxiliary worker for EventLoop::spawn
+fn background_job(workerId: i32): i32 {
+    println(workerId * 50);
+    return workerId * 500;
+}
+
+fn main(): i32 {
+    println(1); // Milestone 11B Started
+
+    // 3. First-class Promise lifecycle management
+    let manualPromise = new Promise<i32>();
+    println(manualPromise.is_ready()); // false (Pending)
+    manualPromise.resolve(42);
+    println(manualPromise.is_ready()); // true (Fulfilled)
+    let manualVal: i32 = await manualPromise;
+    println(manualVal); // 42
+
+    // 4. Invoking async functions spawns fibers onto the cooperative event loop
+    let p1 = compute_task(2);
+    let p2 = compute_task(3);
+
+    // 5. Spawning explicit function tasks via EventLoop::spawn
+    let p3: Promise<i32> = EventLoop::spawn(background_job, 4);
+
+    // 6. Cooperative EventLoop execution (interleaves compute_task 2 & 3, and runs background_job)
+    EventLoop::run();
+
+    // 7. Awaiting resolved promises
+    let res1: i32 = await p1;
+    let res2: i32 = await p2;
+    let res3: i32 = await p3;
+
+    println(res1); // 200
+    println(res2); // 300
+    println(res3); // 2000
+
+    return 0;
+}
+

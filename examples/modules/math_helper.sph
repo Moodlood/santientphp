@@ -1,0 +1,11 @@
+<?php
+
+struct Vector2 {
+    x: i32,
+    y: i32,
+}
+
+fn dot(v1: Vector2, v2: Vector2): i32 {
+    return v1.x * v2.x + v1.y * v2.y;
+}
+

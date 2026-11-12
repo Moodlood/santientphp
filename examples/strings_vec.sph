@@ -1,0 +1,31 @@
+<?php
+
+fn main(): i32 {
+    let s1: string = "Hello, ";
+    let s2: string = "SantientPHP!";
+    let s3: string = s1 + s2;
+    println(s3);
+    println(s3.len());
+
+    if (s1 + s2 == s3) {
+        println("strings equal!");
+    }
+
+    let mut v: Vec<i32> = Vec::new();
+    v.push(10);
+    v.push(20);
+    v.push(30);
+
+    println(v.len());
+    println(v[0]);
+    println(v[1]);
+    println(v[2]);
+
+    let last: i32 = v.pop();
+    println(last);
+    println(v.len());
+
+    v.destroy();
+    return 0;
+}
+

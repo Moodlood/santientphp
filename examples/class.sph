@@ -1,0 +1,34 @@
+<?php
+
+class BankAccount {
+    balance: i32,
+
+    fn deposit(amount: i32): void {
+        this.balance = this.balance + amount;
+    }
+
+    fn withdraw(amount: i32): bool {
+        if (amount <= this.balance) {
+            this.balance = this.balance - amount;
+            return true;
+        }
+        return false;
+    }
+
+    fn getBalance(): i32 {
+        return this.balance;
+    }
+}
+
+fn main(): i32 {
+    mut acc = BankAccount { balance: 100 };
+    acc.deposit(50);
+    let ok = acc.withdraw(30);
+    if (ok) {
+        println(acc.getBalance());
+    } else {
+        println(0);
+    }
+    return 0;
+}
+

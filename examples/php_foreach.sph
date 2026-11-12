@@ -1,0 +1,39 @@
+<?php
+
+fn main(): i32 {
+    // 1. Foreach over sequential array with value only
+    $fruits = ["apple", "banana", "cherry"];
+    foreach ($fruits as $fruit) {
+        echo $fruit, "\n";
+    }
+
+    // 2. Foreach over associative array with key => value
+    $capitals = [
+        "France" => "Paris",
+        "Japan" => "Tokyo"
+    ];
+    foreach ($capitals as $country => $city) {
+        echo $country, " => ", $city, "\n";
+    }
+
+    // 3. Foreach with break and continue
+    $nums = [1, 2, 3, 4, 5];
+    foreach ($nums as $n) {
+        if ($n == 2) {
+            continue;
+        }
+        if ($n == 4) {
+            break;
+        }
+        echo "Num: ", $n, "\n";
+    }
+
+    // 4. Foreach over native fixed-size array
+    let arr: [i32; 3] = [100, 200, 300];
+    foreach (arr as idx => val) {
+        println(val);
+    }
+
+    return 0;
+}
+

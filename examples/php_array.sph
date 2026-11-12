@@ -1,0 +1,38 @@
+<?php
+
+fn main(): i32 {
+    // 1. Associative array literal with string keys
+    $user = [
+        "name" => "Alice",
+        "role" => "Admin"
+    ];
+
+    echo "Name: " . $user["name"] . "\n";
+    echo "Role: " . $user["role"] . "\n";
+
+    // 2. Modifying elements
+    $user["role"] = "SuperAdmin";
+    echo "Updated Role: " . $user["role"] . "\n";
+
+    // 3. Array append with []
+    $list = [10, 20];
+    $list[] = 30;
+    $list[] = 40;
+
+    echo "List[0]: ", $list[0], "\n";
+    echo "List[1]: ", $list[1], "\n";
+    echo "List[2]: ", $list[2], "\n";
+    echo "List[3]: ", $list[3], "\n";
+
+    // 4. Mixed key array
+    $mixed = [0 => "zero", "tag" => "ok", 2 => "two"];
+    echo "Mixed[0]: " . $mixed[0] . "\n";
+    echo "Mixed[tag]: " . $mixed["tag"] . "\n";
+    echo "Mixed[2]: " . $mixed[2] . "\n";
+
+    // 5. var_dump
+    var_dump($user);
+
+    return 0;
+}
+

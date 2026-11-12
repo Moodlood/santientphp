@@ -1,0 +1,34 @@
+<?php
+
+fn main(): i32 {
+    let a: i32 = 0b1100;
+    let b: i32 = 0b1010;
+
+    let bit_and = a & b;
+    let bit_or  = a | b;
+    let bit_xor = a ^ b;
+    let bit_shl = a << 1;
+    let bit_shr = a >> 1;
+
+    println(bit_and);
+    println(bit_or);
+    println(bit_xor);
+    println(bit_shl);
+    println(bit_shr);
+
+    mut arr: [i32; 3] = [100, 200, 300];
+    unsafe {
+        let p: *i32 = &arr[0];
+        let p_next: *i32 = p + 1;
+        let p_third: *i32 = p + 2;
+
+        println(*p_next);
+        println(*p_third);
+
+        *p_next = 250;
+        println(arr[1]);
+    }
+
+    return 0;
+}
+

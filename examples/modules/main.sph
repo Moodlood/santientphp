@@ -1,0 +1,12 @@
+<?php
+
+import "math_helper.sph";
+
+fn main(): i32 {
+    let a = Vector2 { x: 3, y: 4 };
+    let b = Vector2 { x: 2, y: 5 };
+    let result = dot(a, b);
+    println(result);
+    return 0;
+}
+
