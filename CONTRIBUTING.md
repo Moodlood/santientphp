@@ -88,3 +88,4 @@ We follow Conventional Commits:
 3. Verify the build (`ninja -C build`) and tests (`sph_tests.exe`).
 4. Commit your changes with clear messages.
 5. Submit a Pull Request describing your changes and verification steps.
+

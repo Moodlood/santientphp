@@ -66,3 +66,4 @@ jobs:
       - name: Execute Full Test Suite
         run: |
           ./build/bin/sph_tests
+

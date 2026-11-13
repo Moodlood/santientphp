@@ -34,3 +34,4 @@ Paste compiler error or crash trace here
 - OS: [e.g. Windows 11 23H2, Ubuntu 24.04]
 - `sphc --version` or commit hash:
 - Output of `sphc doctor`:
+

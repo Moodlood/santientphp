@@ -18,3 +18,4 @@ If you discover a security vulnerability in SantientPHP, please follow responsib
 2. Email the core maintainers directly or use GitHub's private vulnerability reporting feature if enabled.
 3. Include detailed reproduction steps, example `.sph` source code, target platform, and compiler build flags.
 4. We acknowledge reports within 48 hours and work with you to coordinate a security advisory and fix.
+
