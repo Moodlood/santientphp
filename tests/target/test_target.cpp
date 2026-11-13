@@ -11,6 +11,11 @@
 #include <sstream>
 
 TEST_CASE("Target: Parsing and canonical normalization of short target names") {
+    // Host target alias
+    auto hostT = sph::Target::parse("host");
+    CHECK(hostT.has_value());
+    CHECK_EQ(hostT->getCanonicalTriple(), sph::Target::getHostTarget().getCanonicalTriple());
+
     // Windows x86-64
     auto win = sph::Target::parse("x86_64-windows");
     CHECK(win.has_value());

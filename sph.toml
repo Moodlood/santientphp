@@ -7,7 +7,7 @@ entry = "examples/hello.sph"
 language_version = "0.1"
 
 [target]
-triple = "x86_64-windows"
+triple = "host"
 
 [build]
 mode = "debug"

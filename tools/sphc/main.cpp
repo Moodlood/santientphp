@@ -786,6 +786,7 @@ int main(int argc, char* argv[]) {
     std::string srcFile;
     std::string outPath;
     std::string targetStr;
+    bool targetExplicit = false;
     bool forceDynamic = false;
     sph::OptimizationLevel optLevel = sph::OptimizationLevel::O0;
     bool optSpecified = false;
@@ -801,8 +802,10 @@ int main(int argc, char* argv[]) {
             outPath = argv[++i];
         } else if ((a == "-t" || a == "--target") && i + 1 < argc) {
             targetStr = argv[++i];
+            targetExplicit = true;
         } else if (a.rfind("--target=", 0) == 0) {
             targetStr = std::string(a.substr(9));
+            targetExplicit = true;
         } else if (a.rfind("--format=", 0) == 0) {
             docFormat = std::string(a.substr(9));
         } else if (a.rfind("--title=", 0) == 0) {
@@ -970,11 +973,13 @@ int main(int argc, char* argv[]) {
             std::cerr << "error: missing source file argument for 'run'\n";
             return 1;
         }
-        return cmdRun(srcFile, forceDynamic, optLevel, debugInfo, target);
+        sph::Target runTarget = targetExplicit ? target : sph::Target::getHostTarget();
+        return cmdRun(srcFile, forceDynamic, optLevel, debugInfo, runTarget);
     }
 
     if (arg1 == "test") {
-        return cmdTest(srcFile, optLevel, debugInfo, target);
+        sph::Target testTarget = targetExplicit ? target : sph::Target::getHostTarget();
+        return cmdTest(srcFile, optLevel, debugInfo, testTarget);
     }
 
     if (arg1 == "clean") {

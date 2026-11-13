@@ -53,6 +53,9 @@ std::optional<Target> Target::parse(const std::string& tripleStr) {
     }
 
     // Direct short names
+    if (s == "host") {
+        return getHostTarget();
+    }
     if (s == "x86_64-windows" || s == "x86_64-win" || s == "windows" || s == "win64") {
         return Target(TargetArch::X86_64, TargetOS::Windows, TargetVendor::W64, TargetEnvironment::GNU, "x86_64-windows");
     }

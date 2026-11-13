@@ -41,13 +41,10 @@ jobs:
       - name: Execute Full Test Suite
         shell: powershell
         run: |
-          .\build\bin\sph_tests.exe 2>&1 | Tee-Object -FilePath test_log.txt
-          $failures = Get-Content test_log.txt | Select-String -Pattern "FAILED|CHECK"
-          foreach ($f in $failures) {
-              Write-Output "::error::$f"
-          }
-          if ((Get-Content test_log.txt | Select-String "0 failed").Count -eq 0) {
-              exit 1
+          $ErrorActionPreference = 'Continue'
+          .\build\bin\sph_tests.exe
+          if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
           }
 
       - name: Verify CLI Compiler Run
@@ -81,11 +78,7 @@ jobs:
 
       - name: Execute Full Test Suite
         run: |
-          ./build/bin/sph_tests 2>&1 | tee test_log.txt || true
-          grep -E "FAILED|CHECK" test_log.txt | head -n 30 | while IFS= read -r line; do
-            echo "::error::$line"
-          done
-          grep -q "0 failed" test_log.txt
+          ./build/bin/sph_tests
 
       - name: Verify CLI Compiler Run
         run: |
