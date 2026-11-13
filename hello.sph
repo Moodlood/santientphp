@@ -12,5 +12,4 @@ fn main(): i32 {
     println(result);
     return 0;
 }
-echo "Hello World";
 

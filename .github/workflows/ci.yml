@@ -1,0 +1,68 @@
+name: SantientPHP CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test-windows:
+    name: Build & Test (Windows x86_64)
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Ninja
+        uses: ashutoshvarma/setup-ninja@v1.1
+        with:
+          version: '1.11.1'
+
+      - name: Set up MinGW-w64 GCC
+        uses: egor-tensin/setup-mingw@v2
+        with:
+          platform: x64
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
+
+      - name: Build Compiler, Runtime & Tests
+        run: |
+          ninja -C build
+
+      - name: Execute Full Test Suite
+        run: |
+          .\build\bin\sph_tests.exe
+
+      - name: Verify CLI Compiler Run
+        run: |
+          .\build\bin\sphc.exe doctor
+          .\build\bin\sphc.exe run hello.sph
+
+  build-and-test-linux:
+    name: Build & Test (Ubuntu Linux x86_64)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc g++ cmake ninja-build libsqlite3-dev
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build Compiler, Runtime & Tests
+        run: |
+          ninja -C build
+
+      - name: Execute Full Test Suite
+        run: |
+          ./build/bin/sph_tests

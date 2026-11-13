@@ -1,5 +1,11 @@
 # SantientPHP (SPH)
 
+[![CI](https://github.com/waula/santientphp/actions/workflows/ci.yml/badge.svg)](https://github.com/waula/santientphp/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-254%20passed%20(100%25)-brightgreen.svg)](tests/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![C++20](https://img.shields.io/badge/compiler-C%2B%2B20-00599C?logo=c%2B%2B)](compiler/)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey.svg)](docs/compiler/architecture.md)
+
 **SantientPHP** is an independent, compiled programming language that combines the familiar syntax and developer ergonomics of PHP with the bare-metal performance, memory safety, and concurrency capabilities of a modern systems language.
 
 It compiles directly to native machine code (`.exe` on Windows, native binaries on Linux and macOS) without requiring a PHP runtime or interpreter.
@@ -47,7 +53,7 @@ It compiles directly to native machine code (`.exe` on Windows, native binaries 
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 ninja -C build
 
-# Verify full test suite (252 tests)
+# Verify full test suite (254 tests)
 .\build\bin\sph_tests.exe
 ```
 
@@ -277,15 +283,36 @@ santientphp/
 │   └── vscode/            # Official VS Code extension and LSP client
 ├── docs/                  # Language specification (1.0 Freeze), architecture, tutorials
 ├── examples/              # Positive language examples and feature demonstrations
-├── tests/                 # 252 automated unit and integration tests (100% pass)
+├── tests/                 # 254 automated unit and integration tests (100% pass)
 ├── tools/sphc/            # Main compiler CLI driver
 ├── CMakeLists.txt         # Root build configuration
+├── CONTRIBUTING.md        # Contribution guidelines and coding conventions
+├── LICENSE                # MIT License
+├── SECURITY.md            # Security policy and vulnerability disclosure
 └── sph.toml               # Manifest configuration
 ```
 
 ---
 
+## Documentation Index
+
+- [Getting Started Tutorial](docs/tutorials/getting_started.md) - Build your first native app, SIMD physics, formatting, docgen.
+- [Language Specification 1.0](docs/specification/sph_1.0_spec.md) - Formal grammar, types, memory model, semantics.
+- [Compiler Architecture](docs/compiler/architecture.md) - Frontend, SPHIR IR, optimization passes, x86_64/LLVM codegen.
+- [Standard Library Reference](docs/standard_library/core.md) - Core types, atomics, coroutines, SIMD vectors, memory models.
+- [Standard Library Modules](docs/standard_library/modules.md) - Detailed API for `std/core`, `std/io`, `std/fs`, `std/collections`, `std/async`, `std/net`.
+- [Contributing Guide](CONTRIBUTING.md) - Prerequisites, build steps, coding standards, PR workflow.
+- [Security Policy](SECURITY.md) - Supported versions and vulnerability reporting.
+
+---
+
+## Contributing
+
+Contributions, bug reports, and suggestions are welcome! Please read our [Contributing Guide](CONTRIBUTING.md) and submit a pull request or issue.
+
+---
+
 ## License
 
-This project is licensed under the MIT License.
+This project is licensed under the [MIT License](LICENSE).
 

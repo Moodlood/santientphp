@@ -1,21 +1,51 @@
-# Build output
+# Build directories and CMake / Ninja outputs
 build/
+cmake-build-*/
+out/
 bin/
 lib/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+build.ninja
+.ninja_deps
+.ninja_log
+
+# Compiled binaries, libraries, and debug symbols
 *.exe
-*.obj
-*.o
+*.dll
+*.so
+*.dylib
 *.a
+*.lib
+*.o
+*.obj
 *.pdb
+*.ilk
+*.exp
 
-# IDE and editors
-.vscode/
-.idea/
-*.swp
-*~
-
-# Node and VS Code packaging
-node_modules/
+# Intermediate assembly / LLVM / packaging outputs
+*.s
+*.ll
+*.bc
 *.vsix
+
+# VS Code extension & Node dependencies
+node_modules/
+editors/vscode/node_modules/
 editors/vscode/out/
 
+# IDE & OS metadata
+.vs/
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/tasks.json
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# Secrets and local environment overrides
+.env
+*.local
