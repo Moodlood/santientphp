@@ -1,6 +1,6 @@
 # SantientPHP (SPH)
 
-[![CI](https://github.com/waula/santientphp/actions/workflows/ci.yml/badge.svg)](https://github.com/waula/santientphp/actions/workflows/ci.yml)
+[![CI](https://github.com/Moodlood/santientphp/actions/workflows/ci.yml/badge.svg)](https://github.com/Moodlood/santientphp/actions/workflows/ci.yml)
 [![Tests](https://img.shields.io/badge/tests-254%20passed%20(100%25)-brightgreen.svg)](tests/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![C++20](https://img.shields.io/badge/compiler-C%2B%2B20-00599C?logo=c%2B%2B)](compiler/)
