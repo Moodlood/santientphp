@@ -87,7 +87,7 @@ TEST_CASE("LLVMEmitter generates valid LLVM IR text") {
     llvmEmitter.emit(*irModule);
     std::string llvmText = ss.str();
 
-    CHECK(llvmText.find("target triple = \"x86_64-w64-windows-gnu\"") != std::string::npos);
+    CHECK(llvmText.find("target triple = \"" + sph::Target::getHostTarget().getLLVMTriple() + "\"") != std::string::npos);
     CHECK(llvmText.find("declare void @sph_println_i32(i32)") != std::string::npos);
     CHECK(llvmText.find("define i32 @add(i32 %arg_a, i32 %arg_b)") != std::string::npos);
     CHECK(llvmText.find("ret i32") != std::string::npos);

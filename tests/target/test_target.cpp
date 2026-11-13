@@ -106,6 +106,9 @@ TEST_CASE("Target: Parsing canonical triples and rejecting malformed triples") {
 #if defined(_WIN32)
     CHECK(host.isWindows());
     CHECK(host.isX86_64());
+#elif defined(__linux__)
+    CHECK(host.isLinux());
+    CHECK(host.isX86_64());
 #endif
 
     // Supported targets list

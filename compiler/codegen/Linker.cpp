@@ -42,16 +42,20 @@ bool Linker::linkExecutable(const std::filesystem::path& asmPath,
                            const Target& target) const {
     std::string tool;
     if (target.isHost()) {
-        tool = "gcc";
+        static std::string cachedHostTool;
+        if (cachedHostTool.empty()) {
+            cachedHostTool = "gcc";
 #if defined(_WIN32)
-        if (std::system("where.exe gcc >nul 2>&1") != 0) {
-            if (std::filesystem::exists("C:\\msys64\\ucrt64\\bin\\gcc.exe")) {
-                tool = "C:\\msys64\\ucrt64\\bin\\gcc.exe";
-            } else if (std::filesystem::exists("C:\\msys64\\mingw64\\bin\\gcc.exe")) {
-                tool = "C:\\msys64\\mingw64\\bin\\gcc.exe";
+            if (std::system("where.exe gcc >nul 2>&1") != 0) {
+                if (std::filesystem::exists("C:\\msys64\\ucrt64\\bin\\gcc.exe")) {
+                    cachedHostTool = "C:\\msys64\\ucrt64\\bin\\gcc.exe";
+                } else if (std::filesystem::exists("C:\\msys64\\mingw64\\bin\\gcc.exe")) {
+                    cachedHostTool = "C:\\msys64\\mingw64\\bin\\gcc.exe";
+                }
             }
-        }
 #endif
+        }
+        tool = cachedHostTool;
     } else {
         auto crossToolOpt = findCrossToolchain(target);
         if (!crossToolOpt) {
@@ -88,9 +92,9 @@ bool Linker::linkExecutable(const std::filesystem::path& asmPath,
         cmd << "\"" << runtimeLibPath.string() << "\" ";
     }
 #if defined(_WIN32)
-    cmd << "-lws2_32 ";
+    cmd << "-static-libgcc -lws2_32 ";
 #else
-    cmd << "-lpthread -ldl -lm ";
+    cmd << "-no-pie -lpthread -ldl -lm ";
 #endif
 
     cmd << "-o \"" << outputPath.string() << "\"";
