@@ -51,8 +51,11 @@ jobs:
           }
 
       - name: Verify CLI Compiler Run
+        shell: powershell
         run: |
+          Write-Host "=== Running: sphc.exe doctor ==="
           .\build\bin\sphc.exe doctor
+          Write-Host "=== Running: sphc.exe run hello.sph ==="
           .\build\bin\sphc.exe run hello.sph
 
   build-and-test-linux:
@@ -86,5 +89,7 @@ jobs:
 
       - name: Verify CLI Compiler Run
         run: |
+          echo "=== Running: sphc doctor ==="
           ./build/bin/sphc doctor
+          echo "=== Running: sphc run hello.sph ==="
           ./build/bin/sphc run hello.sph

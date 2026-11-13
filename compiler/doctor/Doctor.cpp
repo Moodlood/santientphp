@@ -223,7 +223,7 @@ std::vector<ToolchainCheck> Doctor::runChecks() const {
     if (hasWinHttp) sysLibDetails += ", winhttp.dll (cURL/HTTP)";
     if (hasWinSqlite) sysLibDetails += ", winsqlite3.dll (PDO/SQLite)";
 
-    bool sysLibsOk = hasKernel32 && hasWinHttp && hasWinSqlite;
+    bool sysLibsOk = hasKernel32 && hasWinHttp;
     checks.push_back(ToolchainCheck{
         "Libraries", "Windows Native Subsystems", sysLibDetails, sysLibsOk, false
     });

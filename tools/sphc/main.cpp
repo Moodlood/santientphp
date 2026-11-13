@@ -32,8 +32,10 @@
 #include <windows.h>
 #elif defined(__APPLE__)
 #include <mach-o/dyld.h>
+#include <sys/wait.h>
 #else
 #include <unistd.h>
+#include <sys/wait.h>
 #endif
 
 namespace {
@@ -489,6 +491,11 @@ int cmdRun(const std::string& path, bool forceDynamic = false,
 
     std::string runCmd = "\"" + tempExe + "\"";
     int exitCode = std::system(runCmd.c_str());
+#if !defined(_WIN32)
+    if (WIFEXITED(exitCode)) {
+        exitCode = WEXITSTATUS(exitCode);
+    }
+#endif
     std::filesystem::remove(tempExe);
     return exitCode;
 }
