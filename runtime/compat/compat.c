@@ -1209,6 +1209,7 @@ int64_t sph_exception_frame_size(void) {
     return (int64_t)sizeof(sph_exception_frame);
 }
 
+#if defined(_WIN32)
 __attribute__((naked)) int sph_setjmp(__attribute__((unused)) void* env) {
     __asm__(
         "movq %rbx, 0(%rcx)\n\t"
@@ -1264,6 +1265,43 @@ __attribute__((naked)) void sph_longjmp(__attribute__((unused)) void* env, __att
         "jmp *%r8\n\t"
     );
 }
+#else
+__attribute__((naked)) int sph_setjmp(__attribute__((unused)) void* env) {
+    __asm__(
+        "movq %rbx, 0(%rdi)\n\t"
+        "movq %rbp, 8(%rdi)\n\t"
+        "leaq 8(%rsp), %rax\n\t"
+        "movq %rax, 16(%rdi)\n\t"
+        "movq %r12, 24(%rdi)\n\t"
+        "movq %r13, 32(%rdi)\n\t"
+        "movq %r14, 40(%rdi)\n\t"
+        "movq %r15, 48(%rdi)\n\t"
+        "movq (%rsp), %rax\n\t"
+        "movq %rax, 56(%rdi)\n\t"
+        "xorl %eax, %eax\n\t"
+        "ret\n\t"
+    );
+}
+
+__attribute__((naked)) void sph_longjmp(__attribute__((unused)) void* env, __attribute__((unused)) int val) {
+    __asm__(
+        "movl %esi, %eax\n\t"
+        "testl %eax, %eax\n\t"
+        "jnz 1f\n\t"
+        "incl %eax\n\t"
+        "1:\n\t"
+        "movq 0(%rdi), %rbx\n\t"
+        "movq 8(%rdi), %rbp\n\t"
+        "movq 16(%rdi), %rsp\n\t"
+        "movq 24(%rdi), %r12\n\t"
+        "movq 32(%rdi), %r13\n\t"
+        "movq 40(%rdi), %r14\n\t"
+        "movq 48(%rdi), %r15\n\t"
+        "movq 56(%rdi), %rdx\n\t"
+        "jmp *%rdx\n\t"
+    );
+}
+#endif
 
 void sph_exception_throw(void* exception_obj) {
     g_sph_current_exception = exception_obj;

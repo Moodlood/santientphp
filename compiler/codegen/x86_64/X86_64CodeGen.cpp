@@ -266,24 +266,46 @@ void X86_64CodeGen::generateFunction(const IRFunction& fn) {
     m_out << "  sub rsp, " << m_frameSize << "\n";
 
     // Copy incoming parameters from calling convention registers into stack slots
-    for (size_t i = 0; i < params.size() && i < maxRegs; ++i) {
-        int32_t offset = getSlotOffset(*params[i]);
-        if (params[i]->getType()->isFloatingPoint()) {
-            if (params[i]->getType()->isF32()) {
-                m_out << "  movss dword ptr [rbp - " << offset << "], xmm" << i << "\n";
+    if (isSysV()) {
+        size_t intRegIdx = 0;
+        size_t floatRegIdx = 0;
+        size_t stackParamIdx = 0;
+        for (size_t i = 0; i < params.size(); ++i) {
+            int32_t offset = getSlotOffset(*params[i]);
+            bool isFloat = params[i]->getType()->isFloatingPoint();
+            if (isFloat && floatRegIdx < 8) {
+                if (params[i]->getType()->isF32()) {
+                    m_out << "  movss dword ptr [rbp - " << offset << "], xmm" << floatRegIdx++ << "\n";
+                } else {
+                    m_out << "  movsd qword ptr [rbp - " << offset << "], xmm" << floatRegIdx++ << "\n";
+                }
+            } else if (!isFloat && intRegIdx < 6) {
+                storeRegToSlot(getParamReg(intRegIdx++), offset);
             } else {
-                m_out << "  movsd qword ptr [rbp - " << offset << "], xmm" << i << "\n";
+                int32_t stackOffset = 16 + static_cast<int32_t>(stackParamIdx++ * 8);
+                m_out << "  mov rax, [rbp + " << stackOffset << "]\n";
+                storeRegToSlot("rax", offset);
             }
-        } else {
-            storeRegToSlot(getParamReg(i), offset);
         }
-    }
-    for (size_t i = maxRegs; i < params.size(); ++i) {
-        int32_t offset = getSlotOffset(*params[i]);
-        int32_t stackOffset = isSysV() ? (16 + static_cast<int32_t>((i - maxRegs) * 8))
-                                       : (48 + static_cast<int32_t>((i - maxRegs) * 8));
-        m_out << "  mov rax, [rbp + " << stackOffset << "]\n";
-        storeRegToSlot("rax", offset);
+    } else {
+        for (size_t i = 0; i < params.size() && i < maxRegs; ++i) {
+            int32_t offset = getSlotOffset(*params[i]);
+            if (params[i]->getType()->isFloatingPoint()) {
+                if (params[i]->getType()->isF32()) {
+                    m_out << "  movss dword ptr [rbp - " << offset << "], xmm" << i << "\n";
+                } else {
+                    m_out << "  movsd qword ptr [rbp - " << offset << "], xmm" << i << "\n";
+                }
+            } else {
+                storeRegToSlot(getParamReg(i), offset);
+            }
+        }
+        for (size_t i = maxRegs; i < params.size(); ++i) {
+            int32_t offset = getSlotOffset(*params[i]);
+            int32_t stackOffset = 48 + static_cast<int32_t>((i - maxRegs) * 8);
+            m_out << "  mov rax, [rbp + " << stackOffset << "]\n";
+            storeRegToSlot("rax", offset);
+        }
     }
 
     for (const auto& bb : fn.getBlocks()) {
@@ -635,24 +657,59 @@ void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunct
             const auto& args = callInst.getArgs();
             size_t maxRegs = getMaxRegisterParams();
 
-            // Store outgoing stack arguments beyond register capacity
-            for (size_t i = maxRegs; i < args.size(); ++i) {
-                loadValueToReg(*args[i], "rax");
-                int32_t stackOffset = isSysV() ? static_cast<int32_t>((i - maxRegs) * 8)
-                                               : (32 + static_cast<int32_t>((i - maxRegs) * 8));
-                m_out << "  mov [rsp + " << stackOffset << "], rax\n";
-            }
-
-            // Load arguments into register parameters according to calling convention
-            for (size_t i = 0; i < args.size() && i < maxRegs; ++i) {
-                const char* regName = getParamReg(i);
-                loadValueToReg(*args[i], regName);
-                if (args[i]->getType()->isFloatingPoint()) {
-                    if (args[i]->getType()->isF32()) {
-                        std::string r32 = getReg32(regName);
-                        m_out << "  movd xmm" << i << ", " << r32 << "\n";
+            if (isSysV()) {
+                size_t intIdx = 0;
+                size_t floatIdx = 0;
+                size_t stackIdx = 0;
+                for (size_t i = 0; i < args.size(); ++i) {
+                    bool isFloat = args[i]->getType()->isFloatingPoint();
+                    if ((isFloat && floatIdx >= 8) || (!isFloat && intIdx >= 6)) {
+                        loadValueToReg(*args[i], "rax");
+                        int32_t stackOffset = static_cast<int32_t>(stackIdx++ * 8);
+                        m_out << "  mov [rsp + " << stackOffset << "], rax\n";
+                    } else if (isFloat) {
+                        floatIdx++;
                     } else {
-                        m_out << "  movq xmm" << i << ", " << regName << "\n";
+                        intIdx++;
+                    }
+                }
+
+                intIdx = 0;
+                floatIdx = 0;
+                for (size_t i = 0; i < args.size(); ++i) {
+                    bool isFloat = args[i]->getType()->isFloatingPoint();
+                    if (isFloat && floatIdx < 8) {
+                        loadValueToReg(*args[i], "rax");
+                        if (args[i]->getType()->isF32()) {
+                            m_out << "  movd xmm" << floatIdx++ << ", eax\n";
+                        } else {
+                            m_out << "  movq xmm" << floatIdx++ << ", rax\n";
+                        }
+                    } else if (!isFloat && intIdx < 6) {
+                        const char* regName = getParamReg(intIdx++);
+                        loadValueToReg(*args[i], regName);
+                    }
+                }
+                m_out << "  mov al, " << floatIdx << "\n";
+            } else {
+                // Store outgoing stack arguments beyond register capacity
+                for (size_t i = maxRegs; i < args.size(); ++i) {
+                    loadValueToReg(*args[i], "rax");
+                    int32_t stackOffset = 32 + static_cast<int32_t>((i - maxRegs) * 8);
+                    m_out << "  mov [rsp + " << stackOffset << "], rax\n";
+                }
+
+                // Load arguments into register parameters according to calling convention
+                for (size_t i = 0; i < args.size() && i < maxRegs; ++i) {
+                    const char* regName = getParamReg(i);
+                    loadValueToReg(*args[i], regName);
+                    if (args[i]->getType()->isFloatingPoint()) {
+                        if (args[i]->getType()->isF32()) {
+                            std::string r32 = getReg32(regName);
+                            m_out << "  movd xmm" << i << ", " << r32 << "\n";
+                        } else {
+                            m_out << "  movq xmm" << i << ", " << regName << "\n";
+                        }
                     }
                 }
             }
