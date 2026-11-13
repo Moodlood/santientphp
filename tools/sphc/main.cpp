@@ -479,7 +479,8 @@ int cmdRun(const std::string& path, bool forceDynamic = false,
     }
 
     std::filesystem::path srcPath(path);
-    std::string tempExe = (std::filesystem::temp_directory_path() / (srcPath.stem().string() + "_run.exe")).string();
+    std::string ext = target.isWindows() ? "_run.exe" : "_run";
+    std::string tempExe = (std::filesystem::temp_directory_path() / (srcPath.stem().string() + ext)).string();
 
     int buildRes = cmdBuild(path, tempExe, forceDynamic, optLevel, debugInfo, target);
     if (buildRes != 0) {

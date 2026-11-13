@@ -61,7 +61,7 @@ std::vector<std::string> runPhpCode(const std::string& code, const std::string& 
 
     if (!linkOk || !std::filesystem::exists(tempExe)) return {};
 
-    std::string runCmd = ".\\" + tempExe.string() + " > " + outputLog.string();
+    std::string runCmd = SPH_RUN_PREFIX + tempExe.string() + " > " + outputLog.string();
     int runRes = std::system(runCmd.c_str());
 
     std::vector<std::string> lines;

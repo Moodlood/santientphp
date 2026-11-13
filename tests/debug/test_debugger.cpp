@@ -213,7 +213,7 @@ TEST_CASE("End-to-End Acceptance Test: Compiles debug_example.sph with -g produc
 
     // 1. Run executable and verify computation (compute_sum(10) -> 55)
     std::string outputLog = "test_debugger_out.txt";
-    std::string runCmd = ".\\" + tempExe.string() + " > " + outputLog;
+    std::string runCmd = SPH_RUN_PREFIX + tempExe.string() + " > " + outputLog;
     int runRes = std::system(runCmd.c_str());
     CHECK_EQ(runRes, 0);
 

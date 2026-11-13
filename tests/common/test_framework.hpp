@@ -117,6 +117,12 @@ inline int runAllTests() {
 
 } // namespace sph::testing
 
+#if defined(_WIN32)
+#define SPH_RUN_PREFIX ".\\"
+#else
+#define SPH_RUN_PREFIX "./"
+#endif
+
 #define SPH_CONCAT_INTERNAL(a, b) a##b
 #define SPH_CONCAT(a, b) SPH_CONCAT_INTERNAL(a, b)
 

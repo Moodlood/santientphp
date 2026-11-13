@@ -43,6 +43,15 @@ bool Linker::linkExecutable(const std::filesystem::path& asmPath,
     std::string tool;
     if (target.isHost()) {
         tool = "gcc";
+#if defined(_WIN32)
+        if (std::system("where.exe gcc >nul 2>&1") != 0) {
+            if (std::filesystem::exists("C:\\msys64\\ucrt64\\bin\\gcc.exe")) {
+                tool = "C:\\msys64\\ucrt64\\bin\\gcc.exe";
+            } else if (std::filesystem::exists("C:\\msys64\\mingw64\\bin\\gcc.exe")) {
+                tool = "C:\\msys64\\mingw64\\bin\\gcc.exe";
+            }
+        }
+#endif
     } else {
         auto crossToolOpt = findCrossToolchain(target);
         if (!crossToolOpt) {

@@ -141,7 +141,7 @@ TEST_CASE("End-to-End Acceptance Test: Compiles and runs hello.sph producing 42"
 
     // Run executable and verify stdout is 300
     std::string outputLog = "test_hello_out.txt";
-    std::string runCmd = ".\\" + tempExe.string() + " > " + outputLog;
+    std::string runCmd = SPH_RUN_PREFIX + tempExe.string() + " > " + outputLog;
     int runRes = std::system(runCmd.c_str());
     CHECK_EQ(runRes, 0);
 
@@ -206,7 +206,7 @@ TEST_CASE("End-to-End Acceptance Test: Compiles and runs struct.sph producing 15
 
     // Run executable and verify stdout is 150 followed by 200
     std::string outputLog = "test_struct_out.txt";
-    std::string runCmd = ".\\" + tempExe.string() + " > " + outputLog;
+    std::string runCmd = SPH_RUN_PREFIX + tempExe.string() + " > " + outputLog;
     int runRes = std::system(runCmd.c_str());
     CHECK_EQ(runRes, 0);
 
@@ -272,7 +272,7 @@ TEST_CASE("End-to-End Acceptance Test: Compiles and runs array.sph producing 190
 
     // Run executable and verify stdout is 190
     std::string outputLog = "test_array_out.txt";
-    std::string runCmd = ".\\" + tempExe.string() + " > " + outputLog;
+    std::string runCmd = SPH_RUN_PREFIX + tempExe.string() + " > " + outputLog;
     int runRes = std::system(runCmd.c_str());
     CHECK_EQ(runRes, 0);
 
@@ -336,7 +336,7 @@ TEST_CASE("End-to-End Acceptance Test: Compiles and runs enum.sph producing 300"
 
     // Run executable and verify stdout is 300
     std::string outputLog = "test_enum_out.txt";
-    std::string runCmd = ".\\" + tempExe.string() + " > " + outputLog;
+    std::string runCmd = SPH_RUN_PREFIX + tempExe.string() + " > " + outputLog;
     int runRes = std::system(runCmd.c_str());
     CHECK_EQ(runRes, 0);
 
@@ -400,7 +400,7 @@ TEST_CASE("End-to-End Acceptance Test: Compiles and runs modules/main.sph produc
 
     // Run executable and verify stdout is 26
     std::string outputLog = "test_modules_out.txt";
-    std::string runCmd = ".\\" + tempExe.string() + " > " + outputLog;
+    std::string runCmd = SPH_RUN_PREFIX + tempExe.string() + " > " + outputLog;
     int runRes = std::system(runCmd.c_str());
     CHECK_EQ(runRes, 0);
 
@@ -464,7 +464,7 @@ TEST_CASE("End-to-End Acceptance Test: Compiles and runs slice.sph producing 90"
 
     // Run executable and verify stdout is 90
     std::string outputLog = "test_slice_out.txt";
-    std::string runCmd = ".\\" + tempExe.string() + " > " + outputLog;
+    std::string runCmd = SPH_RUN_PREFIX + tempExe.string() + " > " + outputLog;
     int runRes = std::system(runCmd.c_str());
     CHECK_EQ(runRes, 0);
 
@@ -528,7 +528,7 @@ TEST_CASE("End-to-End Acceptance Test: Compiles and runs class.sph producing 120
 
     // Run executable and verify stdout is 120
     std::string outputLog = "test_class_out.txt";
-    std::string runCmd = ".\\" + tempExe.string() + " > " + outputLog;
+    std::string runCmd = SPH_RUN_PREFIX + tempExe.string() + " > " + outputLog;
     int runRes = std::system(runCmd.c_str());
     CHECK_EQ(runRes, 0);
 
@@ -592,7 +592,7 @@ TEST_CASE("End-to-End Acceptance Test: Compiles and runs interface.sph producing
 
     // Run executable and verify stdout is 50 and 25
     std::string outputLog = "test_interface_out.txt";
-    std::string runCmd = ".\\" + tempExe.string() + " > " + outputLog;
+    std::string runCmd = SPH_RUN_PREFIX + tempExe.string() + " > " + outputLog;
     int runRes = std::system(runCmd.c_str());
     CHECK_EQ(runRes, 0);
 
@@ -660,7 +660,7 @@ TEST_CASE("End-to-End Acceptance Test: Compiles and runs generics.sph producing 
 
     // Run executable and verify stdout is 30 and 100
     std::string outputLog = "test_generics_out.txt";
-    std::string runCmd = ".\\" + tempExe.string() + " > " + outputLog;
+    std::string runCmd = SPH_RUN_PREFIX + tempExe.string() + " > " + outputLog;
     int runRes = std::system(runCmd.c_str());
     CHECK_EQ(runRes, 0);
 
@@ -731,7 +731,7 @@ TEST_CASE("End-to-End Acceptance Test: Compiles and runs pointers.sph producing 
 
     // Run executable and verify stdout is 99 and 42
     std::string outputLog = "test_pointers_out.txt";
-    std::string runCmd = ".\\" + tempExe.string() + " > " + outputLog;
+    std::string runCmd = SPH_RUN_PREFIX + tempExe.string() + " > " + outputLog;
     int runRes = std::system(runCmd.c_str());
     CHECK_EQ(runRes, 0);
 
@@ -802,7 +802,7 @@ TEST_CASE("End-to-End Acceptance Test: Compiles and runs c_ffi.sph producing 42 
 
     // Run executable and verify stdout is 42 and Hello C FFI!
     std::string outputLog = "test_c_ffi_out.txt";
-    std::string runCmd = ".\\" + tempExe.string() + " > " + outputLog;
+    std::string runCmd = SPH_RUN_PREFIX + tempExe.string() + " > " + outputLog;
     int runRes = std::system(runCmd.c_str());
     CHECK_EQ(runRes, 0);
 
@@ -873,7 +873,7 @@ TEST_CASE("End-to-End Acceptance Test: Compiles and runs bitwise_ptr.sph produci
 
     // Run executable
     std::string outputLog = "test_bitwise_ptr_out.txt";
-    std::string runCmd = ".\\" + tempExe.string() + " > " + outputLog;
+    std::string runCmd = SPH_RUN_PREFIX + tempExe.string() + " > " + outputLog;
     int runRes = std::system(runCmd.c_str());
     CHECK_EQ(runRes, 0);
 
@@ -965,7 +965,7 @@ TEST_CASE("End-to-End Acceptance Test: Bitwise NOT, pointer difference, and expl
 
     // Run executable
     std::string outputLog = "test_cast_diff_out.txt";
-    std::string runCmd = ".\\" + tempExe.string() + " > " + outputLog;
+    std::string runCmd = SPH_RUN_PREFIX + tempExe.string() + " > " + outputLog;
     int runRes = std::system(runCmd.c_str());
     CHECK_EQ(runRes, 0);
 
@@ -1039,7 +1039,7 @@ TEST_CASE("End-to-End Acceptance Test: Compiles and runs heap_layout.sph produci
 
     // Run executable
     std::string outputLog = "test_heap_layout_out.txt";
-    std::string runCmd = ".\\" + tempExe.string() + " > " + outputLog;
+    std::string runCmd = SPH_RUN_PREFIX + tempExe.string() + " > " + outputLog;
     int runRes = std::system(runCmd.c_str());
     CHECK_EQ(runRes, 0);
 
@@ -1121,7 +1121,7 @@ TEST_CASE("End-to-End Acceptance Test: Uses sph_alloc and sph_free runtime memor
     CHECK(std::filesystem::exists(tempExe));
 
     std::string outputLog = "test_sph_alloc_out.txt";
-    std::string runCmd = ".\\" + tempExe.string() + " > " + outputLog;
+    std::string runCmd = SPH_RUN_PREFIX + tempExe.string() + " > " + outputLog;
     int runRes = std::system(runCmd.c_str());
     CHECK_EQ(runRes, 0);
 
@@ -1185,7 +1185,7 @@ TEST_CASE("End-to-End Acceptance Test: Compiles and runs rc_basic.sph producing 
     CHECK(std::filesystem::exists(tempExe));
 
     std::string outputLog = "test_rc_basic_out.txt";
-    std::string runCmd = ".\\" + tempExe.string() + " > " + outputLog;
+    std::string runCmd = SPH_RUN_PREFIX + tempExe.string() + " > " + outputLog;
     int runRes = std::system(runCmd.c_str());
     CHECK_EQ(runRes, 0);
 
@@ -1259,7 +1259,7 @@ TEST_CASE("End-to-End Acceptance Test: Compiles and runs ownership_move.sph prod
     CHECK(std::filesystem::exists(tempExe));
 
     std::string outputLog = "test_ownership_move_out.txt";
-    std::string runCmd = ".\\" + tempExe.string() + " > " + outputLog;
+    std::string runCmd = SPH_RUN_PREFIX + tempExe.string() + " > " + outputLog;
     int runRes = std::system(runCmd.c_str());
     CHECK_EQ(runRes, 0);
 
@@ -1331,7 +1331,7 @@ TEST_CASE("End-to-End Acceptance Test: Compiles and runs arena_basic.sph produci
     CHECK(std::filesystem::exists(tempExe));
 
     std::string outputLog = "test_arena_basic_out.txt";
-    std::string runCmd = ".\\" + tempExe.string() + " > " + outputLog;
+    std::string runCmd = SPH_RUN_PREFIX + tempExe.string() + " > " + outputLog;
     int runRes = std::system(runCmd.c_str());
     CHECK_EQ(runRes, 0);
 
@@ -1406,7 +1406,7 @@ TEST_CASE("End-to-End Acceptance Test: Compiles and runs strings_vec.sph produci
     CHECK(std::filesystem::exists(tempExe));
 
     std::string outputLog = "test_strings_vec_out.txt";
-    std::string runCmd = ".\\" + tempExe.string() + " > " + outputLog;
+    std::string runCmd = SPH_RUN_PREFIX + tempExe.string() + " > " + outputLog;
     int runRes = std::system(runCmd.c_str());
     CHECK_EQ(runRes, 0);
 
@@ -1484,7 +1484,7 @@ TEST_CASE("End-to-End Acceptance Test: Compiles and runs file_io.sph producing f
     CHECK(std::filesystem::exists(tempExe));
 
     std::string outputLog = "test_file_io_out.txt";
-    std::string runCmd = ".\\" + tempExe.string() + " > " + outputLog;
+    std::string runCmd = SPH_RUN_PREFIX + tempExe.string() + " > " + outputLog;
     int runRes = std::system(runCmd.c_str());
     CHECK_EQ(runRes, 0);
 
@@ -1564,7 +1564,7 @@ TEST_CASE("End-to-End Acceptance Test: Compiles and runs result_handling.sph pro
     CHECK(std::filesystem::exists(tempExe));
 
     std::string outputLog = "test_result_handling_out.txt";
-    std::string runCmd = ".\\" + tempExe.string() + " > " + outputLog;
+    std::string runCmd = SPH_RUN_PREFIX + tempExe.string() + " > " + outputLog;
     int runRes = std::system(runCmd.c_str());
     CHECK_EQ(runRes, 0);
 
@@ -1640,7 +1640,7 @@ TEST_CASE("Code generation compiles and executes dynamic PHP operations") {
     CHECK(std::filesystem::exists(tempExe));
 
     std::string outputLog = "test_php_dynamic_out.txt";
-    std::string runCmd = ".\\" + tempExe.string() + " > " + outputLog;
+    std::string runCmd = SPH_RUN_PREFIX + tempExe.string() + " > " + outputLog;
     int runRes = std::system(runCmd.c_str());
     CHECK_EQ(runRes, 0);
 
@@ -1714,7 +1714,7 @@ TEST_CASE("End-to-End Acceptance Test: Compiles and runs php_array.sph producing
     CHECK(std::filesystem::exists(tempExe));
 
     std::string outputLog = "test_php_array_out.txt";
-    std::string runCmd = ".\\" + tempExe.string() + " > " + outputLog;
+    std::string runCmd = SPH_RUN_PREFIX + tempExe.string() + " > " + outputLog;
     int runRes = std::system(runCmd.c_str());
     CHECK_EQ(runRes, 0);
 
@@ -1794,7 +1794,7 @@ TEST_CASE("End-to-End Acceptance Test: Compiles and runs php_foreach.sph produci
     CHECK(std::filesystem::exists(tempExe));
 
     std::string outputLog = "test_php_foreach_out.txt";
-    std::string runCmd = ".\\" + tempExe.string() + " > " + outputLog;
+    std::string runCmd = SPH_RUN_PREFIX + tempExe.string() + " > " + outputLog;
     int runRes = std::system(runCmd.c_str());
     CHECK_EQ(runRes, 0);
 
@@ -1874,7 +1874,7 @@ TEST_CASE("End-to-End Acceptance Test: Compiles and runs php_stdlib.sph producin
     CHECK(std::filesystem::exists(tempExe));
 
     std::string outputLog = "test_php_stdlib_out.txt";
-    std::string runCmd = ".\\" + tempExe.string() + " > " + outputLog;
+    std::string runCmd = SPH_RUN_PREFIX + tempExe.string() + " > " + outputLog;
     int runRes = std::system(runCmd.c_str());
     CHECK_EQ(runRes, 0);
 
@@ -1968,7 +1968,7 @@ TEST_CASE("End-to-End Acceptance Test: Compiles and runs php_objects.sph produci
     CHECK(std::filesystem::exists(tempExe));
 
     std::string outputLog = "test_php_objects_out.txt";
-    std::string runCmd = ".\\" + tempExe.string() + " > " + outputLog;
+    std::string runCmd = SPH_RUN_PREFIX + tempExe.string() + " > " + outputLog;
     int runRes = std::system(runCmd.c_str());
     CHECK_EQ(runRes, 0);
 
@@ -2047,7 +2047,7 @@ TEST_CASE("End-to-End Acceptance Test: Compiles and runs php_exceptions.sph") {
     CHECK(std::filesystem::exists(tempExe));
 
     std::string outputLog = "test_php_exceptions_out.txt";
-    std::string runCmd = ".\\" + tempExe.string() + " > " + outputLog;
+    std::string runCmd = SPH_RUN_PREFIX + tempExe.string() + " > " + outputLog;
     int runRes = std::system(runCmd.c_str());
     CHECK_EQ(runRes, 0);
 
@@ -2126,7 +2126,7 @@ TEST_CASE("End-to-End Acceptance Test: Compiles and runs php_db_http.sph produci
     CHECK(std::filesystem::exists(tempExe));
 
     std::string outputLog = "test_php_db_http_out.txt";
-    std::string runCmd = ".\\" + tempExe.string() + " > " + outputLog;
+    std::string runCmd = SPH_RUN_PREFIX + tempExe.string() + " > " + outputLog;
     int runRes = std::system(runCmd.c_str());
     CHECK_EQ(runRes, 0);
 
@@ -2206,7 +2206,7 @@ TEST_CASE("End-to-End Acceptance Test: Compiles and runs atomics_threads.sph pro
     CHECK(std::filesystem::exists(tempExe));
 
     std::string outputLog = "test_atomics_threads_out.txt";
-    std::string runCmd = ".\\" + tempExe.string() + " > " + outputLog;
+    std::string runCmd = SPH_RUN_PREFIX + tempExe.string() + " > " + outputLog;
     int runRes = std::system(runCmd.c_str());
     CHECK_EQ(runRes, 0);
 
@@ -2292,7 +2292,7 @@ TEST_CASE("End-to-End Acceptance Test: Compiles and runs async_coroutine.sph pro
     CHECK(std::filesystem::exists(tempExe));
 
     std::string outputLog = "test_async_coro_out.txt";
-    std::string runCmd = ".\\" + tempExe.string() + " > " + outputLog;
+    std::string runCmd = SPH_RUN_PREFIX + tempExe.string() + " > " + outputLog;
     int runRes = std::system(runCmd.c_str());
     CHECK_EQ(runRes, 0);
 
@@ -2376,7 +2376,7 @@ TEST_CASE("End-to-End Acceptance Test: Compiles and runs simd_vectors.sph produc
     CHECK(std::filesystem::exists(tempExe));
 
     std::string outputLog = "test_simd_vectors_out.txt";
-    std::string runCmd = ".\\" + tempExe.string() + " > " + outputLog;
+    std::string runCmd = SPH_RUN_PREFIX + tempExe.string() + " > " + outputLog;
     int runRes = std::system(runCmd.c_str());
     CHECK_EQ(runRes, 0);
 
@@ -2495,7 +2495,7 @@ TEST_CASE("End-to-End Acceptance Test: Compiles and runs optimizations.sph with 
     CHECK(std::filesystem::exists(tempExe));
 
     std::string outputLog = "test_opt_e2e_out.txt";
-    std::string runCmd = ".\\" + tempExe.string() + " > " + outputLog;
+    std::string runCmd = SPH_RUN_PREFIX + tempExe.string() + " > " + outputLog;
     int runRes = std::system(runCmd.c_str());
     CHECK_EQ(runRes, 0);
 
