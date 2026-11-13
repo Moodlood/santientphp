@@ -23,6 +23,7 @@ jobs:
           path-type: inherit
           install: >-
             mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-binutils
             mingw-w64-ucrt-x86_64-ninja
             mingw-w64-ucrt-x86_64-cmake
 
@@ -39,8 +40,24 @@ jobs:
           ninja -C build
 
       - name: Execute Full Test Suite
+        shell: powershell
         run: |
-          .\build\bin\sph_tests.exe
+          $testExit = 0
+          try {
+              .\build\bin\sph_tests.exe 2>&1 | Tee-Object -FilePath test_log.txt
+          } catch {
+              Write-Host "Error running tests: $_"
+              $testExit = 1
+          }
+          if ($LASTEXITCODE -ne 0) { $testExit = $LASTEXITCODE }
+
+          "### Windows Test Suite Results" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          "Exit code: $testExit" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          "```" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          Get-Content test_log.txt | Select-String -Pattern "FAILED|assertion failure|Test Summary" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          "```" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+
+          if ($testExit -ne 0) { exit $testExit }
 
       - name: Verify CLI Compiler Run
         run: |
@@ -58,7 +75,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc g++ cmake ninja-build libsqlite3-dev
+          sudo apt-get install -y gcc g++ cmake ninja-build libsqlite3-dev binutils
 
       - name: Configure CMake
         run: |
@@ -70,7 +87,15 @@ jobs:
 
       - name: Execute Full Test Suite
         run: |
-          ./build/bin/sph_tests
+          set +e
+          ./build/bin/sph_tests 2>&1 | tee test_log.txt
+          test_res=${PIPESTATUS[0]}
+          echo "### Linux Test Suite Results" >> $GITHUB_STEP_SUMMARY
+          echo "Exit code: $test_res" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          grep -E "FAILED|assertion failure|Test Summary" test_log.txt >> $GITHUB_STEP_SUMMARY || true
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          exit $test_res
 
       - name: Verify CLI Compiler Run
         run: |
