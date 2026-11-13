@@ -32,11 +32,36 @@ std::string IRGenerator::nextTemp() {
 void IRGenerator::pushScope() {
     m_variableScopes.emplace_back();
     m_activeBoxes.emplace_back();
+    m_deferredStmts.emplace_back();
+}
+
+void IRGenerator::executeDeferredInCurrentScope() {
+    if (!m_deferredStmts.empty()) {
+        auto stmts = std::move(m_deferredStmts.back());
+        m_deferredStmts.back().clear();
+        for (auto it = stmts.rbegin(); it != stmts.rend(); ++it) {
+            if (m_currentBlock && !m_currentBlock->hasTerminator()) {
+                (*it)->accept(*this);
+            }
+        }
+    }
+}
+
+void IRGenerator::executeDeferredAcrossAllScopes() {
+    for (auto sIt = m_deferredStmts.rbegin(); sIt != m_deferredStmts.rend(); ++sIt) {
+        auto stmts = *sIt;
+        for (auto it = stmts.rbegin(); it != stmts.rend(); ++it) {
+            if (m_currentBlock && !m_currentBlock->hasTerminator()) {
+                (*it)->accept(*this);
+            }
+        }
+    }
 }
 
 void IRGenerator::popScope() {
     if (!m_variableScopes.empty()) {
         if (m_currentBlock && !m_currentBlock->hasTerminator()) {
+            executeDeferredInCurrentScope();
             for (const auto& [name, slot] : m_variableScopes.back()) {
                 if (slot->getType()->isRc()) {
                     auto loadVal = std::make_shared<LoadInst>(slot, nextTemp());
@@ -58,6 +83,9 @@ void IRGenerator::popScope() {
         m_variableScopes.pop_back();
         if (!m_activeBoxes.empty()) {
             m_activeBoxes.pop_back();
+        }
+        if (!m_deferredStmts.empty()) {
+            m_deferredStmts.pop_back();
         }
     }
 }
@@ -507,6 +535,12 @@ void IRGenerator::visit(UnsafeBlockStmt& node) {
     node.getBlock().accept(*this);
 }
 
+void IRGenerator::visit(DeferStmt& node) {
+    if (!m_deferredStmts.empty()) {
+        m_deferredStmts.back().push_back(&node.getStatement());
+    }
+}
+
 std::shared_ptr<IRValue> IRGenerator::coerceToInterface(std::shared_ptr<IRValue> val, const std::shared_ptr<Type>& targetType) {
     if (!targetType || !targetType->isInterface() || !val || !val->getType()->isClass()) {
         return val;
@@ -557,6 +591,15 @@ std::shared_ptr<IRValue> IRGenerator::boxToDynamic(std::shared_ptr<IRValue> val)
     if (val->getType()->isI64()) {
         auto call = std::make_shared<CallInst>("sph_value_create_int",
                                               std::vector<std::shared_ptr<IRValue>>{val},
+                                              Type::getDynamic(), nextTemp());
+        emitInst(call);
+        return call;
+    }
+    if (val->getType()->isF32()) {
+        auto ext = std::make_shared<CastInst>(val, Type::getF64(), nextTemp());
+        emitInst(ext);
+        auto call = std::make_shared<CallInst>("sph_value_create_float",
+                                              std::vector<std::shared_ptr<IRValue>>{ext},
                                               Type::getDynamic(), nextTemp());
         emitInst(call);
         return call;
@@ -612,6 +655,48 @@ std::shared_ptr<IRValue> IRGenerator::boxToDynamic(std::shared_ptr<IRValue> val)
     return call;
 }
 
+std::shared_ptr<IRValue> IRGenerator::unboxFromDynamic(std::shared_ptr<IRValue> val, const std::shared_ptr<Type>& targetType) {
+    if (!val || !val->getType()->isDynamic() || !targetType || targetType->isDynamic()) {
+        return val;
+    }
+
+    if (targetType->isI64()) {
+        auto unbox = std::make_shared<CallInst>("sph_value_to_int", std::vector<std::shared_ptr<IRValue>>{val}, Type::getI64(), nextTemp());
+        emitInst(unbox);
+        return unbox;
+    }
+    if (targetType->isI32()) {
+        auto unbox = std::make_shared<CallInst>("sph_value_to_int", std::vector<std::shared_ptr<IRValue>>{val}, Type::getI64(), nextTemp());
+        emitInst(unbox);
+        auto cast = std::make_shared<CastInst>(unbox, Type::getI32(), nextTemp());
+        emitInst(cast);
+        return cast;
+    }
+    if (targetType->isF64()) {
+        auto unbox = std::make_shared<CallInst>("sph_value_to_float", std::vector<std::shared_ptr<IRValue>>{val}, Type::getF64(), nextTemp());
+        emitInst(unbox);
+        return unbox;
+    }
+    if (targetType->isF32()) {
+        auto unbox = std::make_shared<CallInst>("sph_value_to_float", std::vector<std::shared_ptr<IRValue>>{val}, Type::getF64(), nextTemp());
+        emitInst(unbox);
+        auto cast = std::make_shared<CastInst>(unbox, Type::getF32(), nextTemp());
+        emitInst(cast);
+        return cast;
+    }
+    if (targetType->isBoolean()) {
+        auto unbox = std::make_shared<CallInst>("sph_value_to_bool", std::vector<std::shared_ptr<IRValue>>{val}, Type::getBool(), nextTemp());
+        emitInst(unbox);
+        return unbox;
+    }
+    if (targetType->isString()) {
+        auto unbox = std::make_shared<CallInst>("sph_value_to_string", std::vector<std::shared_ptr<IRValue>>{val}, Type::getString(), nextTemp());
+        emitInst(unbox);
+        return unbox;
+    }
+    return val;
+}
+
 void IRGenerator::visit(VarDeclStmt& node) {
     LocGuard locGuard(*this, node.getSpan().start);
     node.getInitializer().accept(*this);
@@ -620,6 +705,10 @@ void IRGenerator::visit(VarDeclStmt& node) {
     std::shared_ptr<Type> annotType = nullptr;
     if (node.getTypeAnnotation().has_value()) {
         annotType = resolveType(*node.getTypeAnnotation());
+    }
+
+    if (annotType && !annotType->isDynamic() && initVal && initVal->getType()->isDynamic()) {
+        initVal = unboxFromDynamic(initVal, annotType);
     }
 
     if (annotType && annotType->isInterface() && initVal->getType()->isClass()) {
@@ -669,8 +758,11 @@ void IRGenerator::visit(VarDeclStmt& node) {
         return;
     }
 
-    if (initVal->getType()->isStruct() || initVal->getType()->isClass()) {
-        if (dynamic_cast<VariableExpr*>(&node.getInitializer())) {
+    if (initVal->getType()->isStruct() && !initVal->getType()->isClass()) {
+        bool isAlloca = initVal->isInstruction() &&
+            static_cast<const IRInstruction*>(initVal.get())->getOpcode() == IROpcode::Alloca;
+
+        if (dynamic_cast<VariableExpr*>(&node.getInitializer()) || !isAlloca) {
             // Copy struct fields into a new alloca
             auto structType = std::static_pointer_cast<StructType>(initVal->getType());
             auto newAlloca = std::make_shared<AllocaInst>(structType, "%var_" + node.getName());
@@ -688,16 +780,26 @@ void IRGenerator::visit(VarDeclStmt& node) {
                 emitInst(std::make_shared<StoreInst>(val, dstPtr));
             }
             setVariable(node.getName(), newAlloca);
+            return;
         } else {
             // Direct initialization (e.g. StructInitExpr) - reuse alloca
             initVal->setName("%var_" + node.getName());
             setVariable(node.getName(), initVal);
+            return;
         }
+    }
+
+    if (initVal->getType()->isClass()) {
+        initVal->setName("%var_" + node.getName());
+        setVariable(node.getName(), initVal);
         return;
     }
 
     if (initVal->getType()->isArray()) {
-        if (dynamic_cast<VariableExpr*>(&node.getInitializer())) {
+        bool isAlloca = initVal->isInstruction() &&
+            static_cast<const IRInstruction*>(initVal.get())->getOpcode() == IROpcode::Alloca;
+
+        if (dynamic_cast<VariableExpr*>(&node.getInitializer()) || !isAlloca) {
             // Copy array elements into a new alloca
             auto arrType = std::static_pointer_cast<ArrayType>(initVal->getType());
             auto newAlloca = std::make_shared<AllocaInst>(arrType, "%var_" + node.getName());
@@ -806,6 +908,9 @@ void IRGenerator::visit(ReturnStmt& node) {
         node.getValue()->accept(*this);
         retVal = m_lastValue;
     }
+
+    // Execute all deferred statements across all active scopes in LIFO order
+    executeDeferredAcrossAllScopes();
 
     // Release all Rc variables in all active scopes (except the returned variable if any)
     for (auto it = m_variableScopes.rbegin(); it != m_variableScopes.rend(); ++it) {
@@ -1339,14 +1444,13 @@ void IRGenerator::visit(TryStmt& node) {
     node.getTryBlock().accept(*this);
     popScope();
 
-    emitInst(std::make_shared<CallInst>("sph_exception_pop_frame",
-                                                              std::vector<std::shared_ptr<IRValue>>{},
-                                                              Type::getVoid(), nextTemp()));
-    m_activeExceptionFrames.pop_back();
-
     if (!m_currentBlock->hasTerminator()) {
+        emitInst(std::make_shared<CallInst>("sph_exception_pop_frame",
+                                            std::vector<std::shared_ptr<IRValue>>{},
+                                            Type::getVoid(), nextTemp()));
         emitInst(std::make_shared<BranchInst>(targetFinallyOrEnd));
     }
+    m_activeExceptionFrames.pop_back();
 
     // Catch Dispatcher block (arrived via longjmp)
     m_currentBlock = catchDispatcherBlock;
@@ -1634,6 +1738,8 @@ void IRGenerator::visit(AssignExpr& node) {
             } else {
                 if (slot->getType()->isDynamic() && !val->getType()->isDynamic()) {
                     val = boxToDynamic(val);
+                } else if (!slot->getType()->isDynamic() && val->getType()->isDynamic()) {
+                    val = unboxFromDynamic(val, slot->getType());
                 }
                 emitInst(std::make_shared<StoreInst>(val, slot));
             }
@@ -2440,6 +2546,15 @@ void IRGenerator::visit(CastExpr& node) {
         targetType = Type::getI32();
     }
 
+    if (operand && operand->getType()->isDynamic() && !targetType->isDynamic()) {
+        m_lastValue = unboxFromDynamic(operand, targetType);
+        return;
+    }
+    if (operand && !operand->getType()->isDynamic() && targetType->isDynamic()) {
+        m_lastValue = boxToDynamic(operand);
+        return;
+    }
+
     auto castInst = std::make_shared<CastInst>(operand, targetType, nextTemp());
     emitInst(castInst);
     m_lastValue = castInst;
@@ -2461,6 +2576,94 @@ void IRGenerator::visit(CallExpr& node) {
                                                        Type::getVoid(), nextTemp());
             emitInst(callInst);
             m_lastValue = callInst;
+            return;
+        }
+    }
+
+    if (callee == "intval" || callee == "as_i32") {
+        if (!node.getArgs().empty()) {
+            node.getArgs()[0]->accept(*this);
+            auto val = m_lastValue;
+            if (val->getType()->isDynamic()) {
+                val = unboxFromDynamic(val, Type::getI32());
+            } else if (!val->getType()->isI32()) {
+                auto c = std::make_shared<CastInst>(val, Type::getI32(), nextTemp());
+                emitInst(c);
+                val = c;
+            }
+            m_lastValue = val;
+            return;
+        }
+    }
+
+    if (callee == "as_i64") {
+        if (!node.getArgs().empty()) {
+            node.getArgs()[0]->accept(*this);
+            auto val = m_lastValue;
+            if (val->getType()->isDynamic()) {
+                val = unboxFromDynamic(val, Type::getI64());
+            } else if (!val->getType()->isI64()) {
+                auto c = std::make_shared<CastInst>(val, Type::getI64(), nextTemp());
+                emitInst(c);
+                val = c;
+            }
+            m_lastValue = val;
+            return;
+        }
+    }
+
+    if (callee == "floatval" || callee == "as_f64") {
+        if (!node.getArgs().empty()) {
+            node.getArgs()[0]->accept(*this);
+            auto val = m_lastValue;
+            if (val->getType()->isDynamic()) {
+                val = unboxFromDynamic(val, Type::getF64());
+            } else if (!val->getType()->isF64()) {
+                auto c = std::make_shared<CastInst>(val, Type::getF64(), nextTemp());
+                emitInst(c);
+                val = c;
+            }
+            m_lastValue = val;
+            return;
+        }
+    }
+
+    if (callee == "as_f32") {
+        if (!node.getArgs().empty()) {
+            node.getArgs()[0]->accept(*this);
+            auto val = m_lastValue;
+            if (val->getType()->isDynamic()) {
+                val = unboxFromDynamic(val, Type::getF32());
+            } else if (!val->getType()->isF32()) {
+                auto c = std::make_shared<CastInst>(val, Type::getF32(), nextTemp());
+                emitInst(c);
+                val = c;
+            }
+            m_lastValue = val;
+            return;
+        }
+    }
+
+    if (callee == "strval" || callee == "as_string") {
+        if (!node.getArgs().empty()) {
+            node.getArgs()[0]->accept(*this);
+            auto val = m_lastValue;
+            if (val->getType()->isDynamic()) {
+                val = unboxFromDynamic(val, Type::getString());
+            }
+            m_lastValue = val;
+            return;
+        }
+    }
+
+    if (callee == "boolval" || callee == "as_bool") {
+        if (!node.getArgs().empty()) {
+            node.getArgs()[0]->accept(*this);
+            auto val = m_lastValue;
+            if (val->getType()->isDynamic()) {
+                val = unboxFromDynamic(val, Type::getBool());
+            }
+            m_lastValue = val;
             return;
         }
     }
@@ -2655,7 +2858,9 @@ void IRGenerator::visit(CallExpr& node) {
             }
             node.getArgs()[1]->accept(*this);
             auto startVal = m_lastValue;
-            if (startVal->getType()->isI32()) {
+            if (startVal->getType()->isDynamic()) {
+                startVal = unboxFromDynamic(startVal, Type::getI64());
+            } else if (startVal->getType()->isI32()) {
                 auto c = std::make_shared<CastInst>(startVal, Type::getI64(), nextTemp());
                 emitInst(c);
                 startVal = c;
@@ -2664,7 +2869,9 @@ void IRGenerator::visit(CallExpr& node) {
             if (node.getArgs().size() >= 3) {
                 node.getArgs()[2]->accept(*this);
                 lenVal = m_lastValue;
-                if (lenVal->getType()->isI32()) {
+                if (lenVal->getType()->isDynamic()) {
+                    lenVal = unboxFromDynamic(lenVal, Type::getI64());
+                } else if (lenVal->getType()->isI32()) {
                     auto c = std::make_shared<CastInst>(lenVal, Type::getI64(), nextTemp());
                     emitInst(c);
                     lenVal = c;
@@ -2900,6 +3107,8 @@ void IRGenerator::visit(CallExpr& node) {
                 argVal = coerceToInterface(argVal, paramType);
             } else if (paramType && paramType->isDynamic() && argVal && !argVal->getType()->isDynamic()) {
                 argVal = boxToDynamic(argVal);
+            } else if (paramType && !paramType->isDynamic() && argVal && argVal->getType()->isDynamic()) {
+                argVal = unboxFromDynamic(argVal, paramType);
             } else if (paramType && paramType->isI64() && argVal && argVal->getType()->isI32()) {
                 auto c = std::make_shared<CastInst>(argVal, Type::getI64(), nextTemp());
                 emitInst(c);

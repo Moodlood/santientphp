@@ -20,14 +20,51 @@ else()
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
-# Minimal SPH Modular Runtime Library
+# ============================================================================
+# Modular SPH Runtime Libraries (Milestone 2)
+# ============================================================================
+
+# 1. Core Native Runtime (libsph_core.a: memory, rc, arena, strings, vec, io, simd)
+add_library(sph_runtime_core STATIC
+    runtime/core/core.h
+    runtime/core/core.c
+)
+target_include_directories(sph_runtime_core PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/runtime
+)
+set_target_properties(sph_runtime_core PROPERTIES OUTPUT_NAME "sph_core")
+
+# 2. Async & Concurrency Runtime (libsph_async.a: atomics, threads, fibers, promises)
+add_library(sph_runtime_async STATIC
+    runtime/async/async.h
+    runtime/async/async.c
+)
+target_include_directories(sph_runtime_async PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/runtime
+)
+set_target_properties(sph_runtime_async PROPERTIES OUTPUT_NAME "sph_async")
+
+# 3. PHP Compatibility Runtime (libsph_compat.a: dynamic values, arrays, pdo, curl)
+add_library(sph_runtime_compat STATIC
+    runtime/compat/compat.h
+    runtime/compat/compat.c
+)
+target_include_directories(sph_runtime_compat PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/runtime
+)
+set_target_properties(sph_runtime_compat PROPERTIES OUTPUT_NAME "sph_compat")
+
+# 4. Aggregate SPH Runtime Library (libsph_runtime.a)
 add_library(sph_runtime STATIC
     runtime/core/runtime.h
     runtime/core/runtime.c
 )
-
 target_include_directories(sph_runtime PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/runtime
 )
 set_target_properties(sph_runtime PROPERTIES OUTPUT_NAME "sph_runtime")
 
@@ -126,12 +163,18 @@ target_include_directories(sphc_core PUBLIC
 )
 
 # Compiler CLI driver: sphc
+set(SPHC_EXTRA_SOURCES "")
+if(WIN32)
+    set(SPHC_EXTRA_SOURCES tools/sphc/sphc.rc)
+endif()
+
 add_executable(sphc
     tools/sphc/main.cpp
+    ${SPHC_EXTRA_SOURCES}
 )
 
 target_link_libraries(sphc PRIVATE sphc_core)
-add_dependencies(sphc sph_runtime)
+add_dependencies(sphc sph_runtime sph_runtime_core sph_runtime_async sph_runtime_compat)
 
 # Test Suite
 enable_testing()
@@ -155,6 +198,7 @@ add_executable(sph_tests
     tests/package/test_package.cpp
     tests/lsp/test_lsp.cpp
     tests/doctor/test_doctor.cpp
+    tests/stdlib/test_stdlib.cpp
 )
 
 target_link_libraries(sph_tests PRIVATE sphc_core)
@@ -162,3 +206,38 @@ target_include_directories(sph_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 add_dependencies(sph_tests sph_runtime)
 
 add_test(NAME UnitTests COMMAND sph_tests)
+set_tests_properties(UnitTests PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+
+# ==============================================================================
+# Installation Targets
+# ==============================================================================
+include(GNUInstallDirs)
+
+install(TARGETS sphc
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+install(TARGETS sph_runtime sph_runtime_core sph_runtime_async sph_runtime_compat sphc_core
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+)
+
+install(DIRECTORY stdlib/
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/santientphp/stdlib
+    FILES_MATCHING PATTERN "*.sph"
+)
+
+install(DIRECTORY runtime/
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/santientphp/runtime
+    FILES_MATCHING PATTERN "*.h" PATTERN "*.c"
+)
+
+install(DIRECTORY runtime/core/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/santientphp
+    FILES_MATCHING PATTERN "*.h"
+)
+
+install(FILES sph.ini sph.ini-development sph.ini-production
+    DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/santientphp
+)
+

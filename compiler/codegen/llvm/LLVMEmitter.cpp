@@ -436,6 +436,10 @@ void LLVMEmitter::emitInstruction(const IRInstruction& inst) {
                 castOp = "fptosi";
             } else if (srcType->isInteger() && dstType->isFloatingPoint()) {
                 castOp = "sitofp";
+            } else if (srcType->isFloatingPoint() && dstType->isFloatingPoint()) {
+                if (srcType->getSize() < dstType->getSize()) castOp = "fpext";
+                else if (srcType->getSize() > dstType->getSize()) castOp = "fptrunc";
+                else castOp = "bitcast";
             }
 
             m_out << formatValue(castInst) << " = " << castOp << " "

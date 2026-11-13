@@ -1,0 +1,20 @@
+<?php
+import "std/core.sph";
+import "std/io.sph";
+import "std/collections.sph";
+
+fn main(): i32 {
+    let a: i32 = 15;
+    let b: i32 = 42;
+    let maximum = max_i32(a, b);
+    println_str("--- SantientPHP Standard Library Demo ---");
+    println_i32(maximum);
+
+    let r = range(1, 5);
+    let len = range_length(r);
+    println_i32(len);
+
+    println_str("Standard library execution verified successfully!");
+    return 0;
+}
+

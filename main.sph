@@ -50,28 +50,28 @@ fn demonstrate_simd_physics(): void {
 fn demonstrate_native_structures(): void {
     println("--- 2. Native Value Structs & Layout ---");
     mut starship = CelestialVector {x: 100, y: 250, z: 500, mass: 42};
-        starship.x = starship.x + 50;
+    starship.x = starship.x + 50;
 
-        let thrust = calculate_orbital_thrust(starship.mass, 10);
-        println(starship.x);
-        println(starship.y);
-        println(thrust);
-    }
+    let thrust = calculate_orbital_thrust(starship.mass, 10);
+    println(starship.x);
+    println(starship.y);
+    println(thrust);
+}
 
-    fn main(): i32 {
-        println("========================================");
-        println("    SantientPHP 1.0 Flagship Showcase   ");
-        println("========================================");
+fn main(): i32 {
+    println("========================================");
+    println("    SantientPHP 1.0 Flagship Showcase   ");
+    println("========================================");
 
-        demonstrate_native_structures();
-        demonstrate_simd_physics();
+    demonstrate_native_structures();
+    demonstrate_simd_physics();
 
-        println("--- 3. Native Enumerations ---");
-        let status = PropulsionStatus::Warp;
-        let warp_factor = get_propulsion_warp_factor(status);
-        println(warp_factor);
+    println("--- 3. Native Enumerations ---");
+    let status = PropulsionStatus::Warp;
+    let warp_factor = get_propulsion_warp_factor(status);
+    println(warp_factor);
 
-        println("========================================");
-        println("SantientPHP execution completed cleanly.");
-        return 0;
-    }
+    println("========================================");
+    println("SantientPHP execution completed cleanly.");
+    return 0;
+}

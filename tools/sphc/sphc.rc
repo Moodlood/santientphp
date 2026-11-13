@@ -1,0 +1,35 @@
+#include <windows.h>
+
+// 1. Application Icon
+1 ICON "../../assets/icons/sphc.ico"
+
+// 2. Version Information
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION     0,1,0,0
+PRODUCTVERSION  0,1,0,0
+FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
+FILEFLAGS       0
+FILEOS          VOS_NT_WINDOWS32
+FILETYPE        VFT_APP
+FILESUBTYPE     0
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904E4"
+        BEGIN
+            VALUE "CompanyName",      "SantientPHP Project"
+            VALUE "FileDescription",  "SantientPHP Compiler (sphc)"
+            VALUE "FileVersion",      "0.1.0.0"
+            VALUE "InternalName",     "sphc"
+            VALUE "LegalCopyright",   "Copyright (C) 2026 SantientPHP Contributors"
+            VALUE "OriginalFilename", "sphc.exe"
+            VALUE "ProductName",      "SantientPHP"
+            VALUE "ProductVersion",   "0.1.0.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1252
+    END
+END
+

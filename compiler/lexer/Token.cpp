@@ -44,6 +44,7 @@ const char* tokenKindToString(TokenKind kind) noexcept {
         case TokenKind::KwThrow:      return "throw";
         case TokenKind::KwAsync:      return "async";
         case TokenKind::KwAwait:      return "await";
+        case TokenKind::KwDefer:      return "defer";
         case TokenKind::KwI32:        return "i32";
         case TokenKind::KwI64:        return "i64";
         case TokenKind::KwF32:        return "f32";

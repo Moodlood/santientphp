@@ -52,6 +52,7 @@ enum class TokenKind {
     KwThrow,
     KwAsync,
     KwAwait,
+    KwDefer,
 
     // Primitive Type Keywords
     KwI32,

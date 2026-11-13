@@ -119,3 +119,4 @@ The `PassManager` executes fixed-point iterative passes:
 ### Linker (`Linker`)
 - Discovers host tools (`gcc`, `clang`, `ld`) and target cross-compilers (`x86_64-linux-gnu-gcc`, `aarch64-linux-gnu-gcc`).
 - Links against the modular runtime library `libsph_runtime.a` with automatic retry logic for Windows file locking.
+

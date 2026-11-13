@@ -17,12 +17,15 @@ bool FunctionInliningPass::isInlineCandidate(const IRFunction& fn) const noexcep
         return false;
     }
 
-    // Check that it doesn't call itself or other functions, or perform complex control flow
+    // Check that it doesn't call itself or other functions, or perform complex control flow / resource cleanup
     for (const auto& inst : insts) {
         if (inst->getOpcode() == IROpcode::Call) {
             return false;
         }
         if (inst->getOpcode() == IROpcode::SetJmp) {
+            return false;
+        }
+        if (inst->getOpcode() == IROpcode::RcRelease) {
             return false;
         }
     }
@@ -127,6 +130,29 @@ bool FunctionInliningPass::inlineFunctionCall(IRFunction& caller, size_t blockId
                 auto op = orig.getOperand();
                 if (valueMap.count(op.get())) op = valueMap[op.get()];
                 cloned = std::make_shared<CastInst>(op, orig.getType(), newName);
+                break;
+            }
+            case IROpcode::GetFieldPtr: {
+                const auto& orig = static_cast<const GetFieldPtrInst&>(*cInst);
+                auto base = orig.getBasePtr();
+                if (valueMap.count(base.get())) base = valueMap[base.get()];
+                cloned = std::make_shared<GetFieldPtrInst>(base, orig.getFieldIndex(), orig.getByteOffset(), orig.getType(), newName);
+                break;
+            }
+            case IROpcode::GetElementPtr: {
+                const auto& orig = static_cast<const GetElementPtrInst&>(*cInst);
+                auto base = orig.getBasePtr();
+                auto idx = orig.getIndex();
+                if (valueMap.count(base.get())) base = valueMap[base.get()];
+                if (valueMap.count(idx.get())) idx = valueMap[idx.get()];
+                cloned = std::make_shared<GetElementPtrInst>(base, idx, orig.getElementSize(), orig.getType(), newName);
+                break;
+            }
+            case IROpcode::AddressOf: {
+                const auto& orig = static_cast<const AddressOfInst&>(*cInst);
+                auto target = orig.getTarget();
+                if (valueMap.count(target.get())) target = valueMap[target.get()];
+                cloned = std::make_shared<AddressOfInst>(target, orig.getType(), newName);
                 break;
             }
             default:

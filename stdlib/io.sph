@@ -1,0 +1,55 @@
+<?php
+
+// SantientPHP Standard Library: Standard I/O
+
+extern "C" fn sph_println_i32(val: i32): void;
+extern "C" fn sph_println_i64(val: i64): void;
+extern "C" fn sph_println_f32(val: f32): void;
+extern "C" fn sph_println_f64(val: f64): void;
+extern "C" fn sph_println_bool(val: i32): void;
+extern "C" fn sph_println_string(val: string): void;
+
+fn print_str(val: string): void {
+    sph_println_string(val);
+}
+
+fn println_str(val: string): void {
+    sph_println_string(val);
+}
+
+fn print_i32(val: i32): void {
+    sph_println_i32(val);
+}
+
+fn println_i32(val: i32): void {
+    sph_println_i32(val);
+}
+
+fn print_i64(val: i64): void {
+    sph_println_i64(val);
+}
+
+fn println_i64(val: i64): void {
+    sph_println_i64(val);
+}
+
+fn print_f64(val: f64): void {
+    sph_println_f64(val);
+}
+
+fn println_f64(val: f64): void {
+    sph_println_f64(val);
+}
+
+fn print_bool(val: bool): void {
+    if (val) {
+        sph_println_bool(1);
+    } else {
+        sph_println_bool(0);
+    }
+}
+
+fn println_bool(val: bool): void {
+    print_bool(val);
+}
+

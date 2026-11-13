@@ -47,6 +47,7 @@ class UnsafeBlockStmt;
 class EchoStmt;
 class ThrowStmt;
 class TryStmt;
+class DeferStmt;
 
 // Declarations
 class ImportDecl;
@@ -102,6 +103,7 @@ public:
     virtual void visit(EchoStmt& node) = 0;
     virtual void visit(ThrowStmt& node) = 0;
     virtual void visit(TryStmt& node) = 0;
+    virtual void visit(DeferStmt& node) = 0;
     virtual void visit(BlockStmt& node) = 0;
     virtual void visit(UnsafeBlockStmt& node) = 0;
 

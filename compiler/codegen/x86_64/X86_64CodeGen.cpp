@@ -268,7 +268,15 @@ void X86_64CodeGen::generateFunction(const IRFunction& fn) {
     // Copy incoming parameters from calling convention registers into stack slots
     for (size_t i = 0; i < params.size() && i < maxRegs; ++i) {
         int32_t offset = getSlotOffset(*params[i]);
-        storeRegToSlot(getParamReg(i), offset);
+        if (params[i]->getType()->isFloatingPoint()) {
+            if (params[i]->getType()->isF32()) {
+                m_out << "  movss dword ptr [rbp - " << offset << "], xmm" << i << "\n";
+            } else {
+                m_out << "  movsd qword ptr [rbp - " << offset << "], xmm" << i << "\n";
+            }
+        } else {
+            storeRegToSlot(getParamReg(i), offset);
+        }
     }
     for (size_t i = maxRegs; i < params.size(); ++i) {
         int32_t offset = getSlotOffset(*params[i]);
@@ -411,27 +419,53 @@ void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunct
             loadValueToReg(*binInst.getLhs(), "rax");
             loadValueToReg(*binInst.getRhs(), "rcx");
 
-            switch (binInst.getOpcode()) {
-                case IROpcode::Add:
-                    m_out << "  add rax, rcx\n";
-                    break;
-                case IROpcode::Sub:
-                    m_out << "  sub rax, rcx\n";
-                    break;
-                case IROpcode::Mul:
-                    m_out << "  imul rax, rcx\n";
-                    break;
-                case IROpcode::Div:
-                    m_out << "  cqo\n";
-                    m_out << "  idiv rcx\n";
-                    break;
-                case IROpcode::Mod:
-                    m_out << "  cqo\n";
-                    m_out << "  idiv rcx\n";
-                    m_out << "  mov rax, rdx\n";
-                    break;
-                default:
-                    break;
+            if (binInst.getType()->isFloatingPoint()) {
+                if (binInst.getType()->isF32()) {
+                    m_out << "  movd xmm0, eax\n";
+                    m_out << "  movd xmm1, ecx\n";
+                    switch (binInst.getOpcode()) {
+                        case IROpcode::Add: m_out << "  addss xmm0, xmm1\n"; break;
+                        case IROpcode::Sub: m_out << "  subss xmm0, xmm1\n"; break;
+                        case IROpcode::Mul: m_out << "  mulss xmm0, xmm1\n"; break;
+                        case IROpcode::Div: m_out << "  divss xmm0, xmm1\n"; break;
+                        default: break;
+                    }
+                    m_out << "  movd eax, xmm0\n";
+                } else {
+                    m_out << "  movq xmm0, rax\n";
+                    m_out << "  movq xmm1, rcx\n";
+                    switch (binInst.getOpcode()) {
+                        case IROpcode::Add: m_out << "  addsd xmm0, xmm1\n"; break;
+                        case IROpcode::Sub: m_out << "  subsd xmm0, xmm1\n"; break;
+                        case IROpcode::Mul: m_out << "  mulsd xmm0, xmm1\n"; break;
+                        case IROpcode::Div: m_out << "  divsd xmm0, xmm1\n"; break;
+                        default: break;
+                    }
+                    m_out << "  movq rax, xmm0\n";
+                }
+            } else {
+                switch (binInst.getOpcode()) {
+                    case IROpcode::Add:
+                        m_out << "  add rax, rcx\n";
+                        break;
+                    case IROpcode::Sub:
+                        m_out << "  sub rax, rcx\n";
+                        break;
+                    case IROpcode::Mul:
+                        m_out << "  imul rax, rcx\n";
+                        break;
+                    case IROpcode::Div:
+                        m_out << "  cqo\n";
+                        m_out << "  idiv rcx\n";
+                        break;
+                    case IROpcode::Mod:
+                        m_out << "  cqo\n";
+                        m_out << "  idiv rcx\n";
+                        m_out << "  mov rax, rdx\n";
+                        break;
+                    default:
+                        break;
+                }
             }
 
             int32_t dstOffset = getSlotOffset(binInst);

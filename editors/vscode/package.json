@@ -29,6 +29,13 @@
     "workspaceContains:**/*.sph"
   ],
   "contributes": {
+    "iconThemes": [
+      {
+        "id": "santientphp-icons",
+        "label": "SantientPHP Icons",
+        "path": "./icons/icon-theme.json"
+      }
+    ],
     "languages": [
       {
         "id": "santientphp",

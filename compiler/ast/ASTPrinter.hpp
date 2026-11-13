@@ -53,6 +53,7 @@ public:
     void visit(EchoStmt& node) override;
     void visit(ThrowStmt& node) override;
     void visit(TryStmt& node) override;
+    void visit(DeferStmt& node) override;
     void visit(BlockStmt& node) override;
     void visit(UnsafeBlockStmt& node) override;
 

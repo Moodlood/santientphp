@@ -1,0 +1,37 @@
+{
+  "iconDefinitions": {
+    "_sph_file": {
+      "iconPath": "./sph-file-icon.svg"
+    },
+    "_sph_file_light": {
+      "iconPath": "./sph-file-icon-light.svg"
+    },
+    "_sph_manifest": {
+      "iconPath": "./sph-manifest-icon.svg"
+    },
+    "_sph_manifest_light": {
+      "iconPath": "./sph-manifest-icon-light.svg"
+    }
+  },
+  "fileExtensions": {
+    "sph": "_sph_file"
+  },
+  "fileNames": {
+    "sph.toml": "_sph_manifest"
+  },
+  "languageIds": {
+    "santientphp": "_sph_file"
+  },
+  "light": {
+    "fileExtensions": {
+      "sph": "_sph_file_light"
+    },
+    "fileNames": {
+      "sph.toml": "_sph_manifest_light"
+    },
+    "languageIds": {
+      "santientphp": "_sph_file_light"
+    }
+  }
+}
+

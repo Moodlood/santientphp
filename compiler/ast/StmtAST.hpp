@@ -237,5 +237,19 @@ private:
     std::unique_ptr<BlockStmt> m_finallyBlock;
 };
 
+class DeferStmt : public StmtAST {
+public:
+    DeferStmt(std::unique_ptr<StmtAST> statement, SourceSpan span)
+        : StmtAST(span), m_statement(std::move(statement)) {}
+
+    [[nodiscard]] const StmtAST& getStatement() const noexcept { return *m_statement; }
+    [[nodiscard]] StmtAST& getStatement() noexcept { return *m_statement; }
+
+    void accept(ASTVisitor& visitor) override { visitor.visit(*this); }
+
+private:
+    std::unique_ptr<StmtAST> m_statement;
+};
+
 } // namespace sph
 

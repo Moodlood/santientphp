@@ -67,6 +67,11 @@ bool CommonSubexpressionEliminationPass::runOnFunction(IRFunction& fn) {
                           (curr->getOpcode() >= IROpcode::Negate && curr->getOpcode() <= IROpcode::BitwiseNot) ||
                           (curr->getOpcode() == IROpcode::Cast);
 
+            // Dynamic types (sph_value) may have implicit coercion side effects or allocate memory
+            if (curr->getType() && curr->getType()->isDynamic()) {
+                isPure = false;
+            }
+
             if (!isPure) continue;
 
             std::shared_ptr<IRValue> existing = nullptr;

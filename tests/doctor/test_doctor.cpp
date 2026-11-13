@@ -11,13 +11,14 @@ TEST_CASE("Doctor: runChecks verifies environment and toolchain sanity") {
     bool foundHost = false;
     bool foundCompiler = false;
     bool foundRuntime = false;
+    bool foundStdlib = false;
 
     for (const auto& c : checks) {
         if (c.name.find("Operating System") != std::string::npos) {
             foundHost = true;
             CHECK(c.isHealthy);
         }
-        if (c.name.find("Compiler") != std::string::npos) {
+        if (c.name.find("Host C/C++ Compiler") != std::string::npos) {
             foundCompiler = true;
             CHECK(c.isHealthy);
             CHECK(!c.details.empty());
@@ -26,11 +27,16 @@ TEST_CASE("Doctor: runChecks verifies environment and toolchain sanity") {
             foundRuntime = true;
             CHECK(c.isHealthy);
         }
+        if (c.name.find("Standard Library") != std::string::npos) {
+            foundStdlib = true;
+            CHECK(c.isHealthy);
+        }
     }
 
     CHECK(foundHost);
     CHECK(foundCompiler);
     CHECK(foundRuntime);
+    CHECK(foundStdlib);
 }
 
 TEST_CASE("Doctor: report generates clean health report") {
@@ -45,4 +51,28 @@ TEST_CASE("Doctor: report generates clean health report") {
     CHECK(text.find("[OK]") != std::string::npos);
     CHECK(text.find("Status: All required toolchains and system dependencies are healthy.") != std::string::npos);
 }
+
+TEST_CASE("Doctor: reports optional LLVM check and runtime library detection") {
+    sph::Doctor doctor;
+    auto checks = doctor.runChecks();
+
+    bool foundLlc = false;
+    bool runtimeSatisfied = false;
+
+    for (const auto& c : checks) {
+        if (c.name.find("LLVM Tools") != std::string::npos) {
+            foundLlc = true;
+            CHECK(c.isOptional);
+        }
+        if (c.name.find("Core Runtime") != std::string::npos) {
+            runtimeSatisfied = c.isHealthy;
+            CHECK(c.details.find("libsph_runtime.a") != std::string::npos ||
+                  c.details.find("runtime/core/runtime.c") != std::string::npos);
+        }
+    }
+
+    CHECK(foundLlc);
+    CHECK(runtimeSatisfied);
+}
+
 

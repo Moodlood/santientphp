@@ -1,0 +1,6 @@
+<?php
+
+fn main(): i32 {
+    println("Hello, SantientPHP!");
+    return 0;
+}

@@ -182,6 +182,39 @@ std::unique_ptr<ProgramAST> Parser::parseProgram() {
                     } else if (std::filesystem::exists(importPath)) {
                         targetFileId = m_sourceManager.loadFile(importPath);
                         canonicalKey = std::filesystem::weakly_canonical(importPath).string();
+                    } else {
+                        // Search in standard library locations
+                        std::vector<std::filesystem::path> candidateRoots;
+                        if (const char* envHome = std::getenv("SPH_HOME")) {
+                            candidateRoots.push_back(std::filesystem::path(envHome) / "stdlib");
+                        }
+                        candidateRoots.push_back(std::filesystem::current_path() / "stdlib");
+                        if (!currentFilename.empty()) {
+                            candidateRoots.push_back(std::filesystem::path(currentFilename).parent_path() / "stdlib");
+                            candidateRoots.push_back(std::filesystem::path(currentFilename).parent_path().parent_path() / "stdlib");
+                        }
+
+                        std::string subPath = importPath;
+                        if (subPath.rfind("std/", 0) == 0) {
+                            subPath = subPath.substr(4);
+                        } else if (subPath.rfind("stdlib/", 0) == 0) {
+                            subPath = subPath.substr(7);
+                        }
+
+                        for (const auto& root : candidateRoots) {
+                            auto cand1 = root / importPath;
+                            auto cand2 = root / subPath;
+                            if (std::filesystem::exists(cand1)) {
+                                targetFileId = m_sourceManager.loadFile(cand1);
+                                canonicalKey = std::filesystem::weakly_canonical(cand1).string();
+                                break;
+                            }
+                            if (std::filesystem::exists(cand2)) {
+                                targetFileId = m_sourceManager.loadFile(cand2);
+                                canonicalKey = std::filesystem::weakly_canonical(cand2).string();
+                                break;
+                            }
+                        }
                     }
                 } else {
                     canonicalKey = importPath;
@@ -820,6 +853,9 @@ std::unique_ptr<StmtAST> Parser::parseStatement() {
     if (match(TokenKind::KwThrow)) {
         return parseThrow();
     }
+    if (match(TokenKind::KwDefer)) {
+        return parseDefer();
+    }
     if (check(TokenKind::LBrace)) {
         return parseBlock();
     }
@@ -973,6 +1009,14 @@ std::unique_ptr<ThrowStmt> Parser::parseThrow() {
     const Token* semi = expect(TokenKind::Semicolon, "expected ';' after throw statement");
     SourceLocation endLoc = semi ? semi->span.end : expr->getSpan().end;
     return std::make_unique<ThrowStmt>(std::move(expr), SourceSpan(startLoc, endLoc));
+}
+
+std::unique_ptr<DeferStmt> Parser::parseDefer() {
+    SourceLocation startLoc = previous().span.start;
+    auto stmt = parseStatement();
+    if (!stmt) return nullptr;
+    SourceSpan span(startLoc, stmt->getSpan().end);
+    return std::make_unique<DeferStmt>(std::move(stmt), span);
 }
 
 std::unique_ptr<TryStmt> Parser::parseTry() {

@@ -1,0 +1,30 @@
+; ==============================================================================
+; SantientPHP Development Configuration (sph.ini-development)
+; ==============================================================================
+; Recommended settings for active local software development.
+
+[santientphp]
+version = "0.1.0"
+default_target = "x86_64-windows"
+default_optimization = "0"
+color_diagnostics = On
+show_source_context = On
+
+[paths]
+runtime_path = "lib/libsph_runtime.a"
+runtime_source = "runtime/core/runtime.c"
+include_path = ".;lib;include"
+
+[runtime]
+arena_initial_mb = 32
+memory_limit = 1024M
+thread_safety = On
+
+[subsystems]
+winhttp_enabled = On
+winsqlite3_enabled = On
+
+[debug]
+debug_symbols = On
+verbose_codegen = On
+

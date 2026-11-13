@@ -111,3 +111,4 @@ Hardware-accelerated vector types utilizing x86_64 SSE/AVX instructions:
 - `substr(str, start, length)`: Substring slice
 - `explode(delim, str)`: Splits string into array
 - `implode(glue, arr)`: Joins array elements into string
+

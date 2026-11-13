@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <defs>
+    <linearGradient id="sphBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#5E70A6"/>
+      <stop offset="100%" stop-color="#3B466D"/>
+    </linearGradient>
+    <linearGradient id="sphWing" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#00E5FF"/>
+      <stop offset="100%" stop-color="#7C4DFF"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Document Outline with folded corner -->
+  <path d="M 6 3 L 20 3 L 26 9 L 26 29 C 26 29.6 25.6 30 25 30 L 7 30 C 6.4 30 6 29.6 6 29 Z" fill="url(#sphBg)" stroke="#8191C6" stroke-width="0.8"/>
+  <path d="M 20 3 L 20 9 L 26 9 Z" fill="#2E3754" opacity="0.8"/>
+  <path d="M 20 3 L 20 9 L 26 9 Z" fill="none" stroke="#8191C6" stroke-width="0.8"/>
+
+  <!-- Sentient Cyber Spark / Wing -->
+  <path d="M 10 13 L 6.5 9 L 9 9 L 11.5 12.5 Z" fill="url(#sphWing)"/>
+  <path d="M 11 16 L 8 13 L 10 13 L 12.2 15.5 Z" fill="#00E5FF"/>
+
+  <!-- Elephant Head Silhouette -->
+  <path d="M 12 11 C 15 11 18.5 12 18.5 15.5 C 18.5 17 17.5 18 16.5 18.5 C 17.5 19.5 18.5 21 17.5 21.5 C 16.5 22 15 20.5 14.5 19 C 13.5 19 12.5 18 12.5 16.5 C 12.5 15 11.5 14 11 14 Z" fill="#FFFFFF" opacity="0.95"/>
+  <circle cx="16" cy="14" r="0.9" fill="#00E5FF"/>
+
+  <!-- SPH Text Plate -->
+  <rect x="7" y="22.5" width="18" height="6" rx="1.5" fill="#141A29" stroke="#00E5FF" stroke-width="0.6"/>
+  <text x="16" y="27" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="4.2" font-weight="900" fill="#FFFFFF" text-anchor="middle" letter-spacing="0.4">SPH</text>
+</svg>
+

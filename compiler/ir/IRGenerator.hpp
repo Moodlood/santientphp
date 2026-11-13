@@ -65,6 +65,7 @@ public:
     void visit(EchoStmt& node) override;
     void visit(ThrowStmt& node) override;
     void visit(TryStmt& node) override;
+    void visit(DeferStmt& node) override;
     void visit(BlockStmt& node) override;
     void visit(UnsafeBlockStmt& node) override;
 
@@ -85,6 +86,9 @@ private:
     [[nodiscard]] std::shared_ptr<IRValue> getVariable(const std::string& name) const;
     std::shared_ptr<IRValue> coerceToInterface(std::shared_ptr<IRValue> val, const std::shared_ptr<Type>& targetType);
     std::shared_ptr<IRValue> boxToDynamic(std::shared_ptr<IRValue> val);
+    std::shared_ptr<IRValue> unboxFromDynamic(std::shared_ptr<IRValue> val, const std::shared_ptr<Type>& targetType);
+    void executeDeferredInCurrentScope();
+    void executeDeferredAcrossAllScopes();
     std::shared_ptr<IRValue> emitArenaAlloc(std::shared_ptr<IRValue> arenaVal, ExprAST& valueExpr);
     void emitInst(std::shared_ptr<IRInstruction> inst);
 
@@ -101,6 +105,7 @@ private:
     std::unordered_map<std::string, std::unordered_map<std::string, int64_t>> m_enumVariants;
     std::vector<std::unordered_map<std::string, std::shared_ptr<IRValue>>> m_variableScopes;
     std::vector<std::unordered_set<std::string>> m_activeBoxes;
+    std::vector<std::vector<StmtAST*>> m_deferredStmts;
     std::vector<std::shared_ptr<IRValue>> m_activeExceptionFrames;
     std::unordered_set<std::string> m_byRefVars;
     std::unordered_set<std::string> m_asyncFunctions;

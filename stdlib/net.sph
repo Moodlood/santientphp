@@ -1,0 +1,10 @@
+<?php
+
+// SantientPHP Standard Library: Networking & HTTP
+
+extern "C" fn sph_file_read(url: string): string;
+
+fn http_get(url: string): string {
+    return sph_file_read(url);
+}
+

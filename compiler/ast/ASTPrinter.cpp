@@ -345,6 +345,14 @@ void ASTPrinter::visit(TryStmt& node) {
     }
 }
 
+void ASTPrinter::visit(DeferStmt& node) {
+    indent();
+    m_out << "DeferStmt:\n";
+    m_indentLevel += 2;
+    node.getStatement().accept(*this);
+    m_indentLevel -= 2;
+}
+
 void ASTPrinter::visit(IntegerLiteralExpr& node) {
     indent();
     m_out << "IntegerLiteral: " << node.getValue() << "\n";

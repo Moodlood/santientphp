@@ -9,9 +9,39 @@
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#else
+#include <unistd.h>
 #endif
 
 namespace sph {
+
+static std::filesystem::path getProcessExecutableDir() {
+#if defined(_WIN32)
+    wchar_t buffer[MAX_PATH];
+    DWORD len = GetModuleFileNameW(NULL, buffer, MAX_PATH);
+    if (len > 0 && len < MAX_PATH) {
+        return std::filesystem::path(buffer).parent_path();
+    }
+#elif defined(__APPLE__)
+    char buffer[1024];
+    uint32_t size = sizeof(buffer);
+    if (_NSGetExecutablePath(buffer, &size) == 0) {
+        std::error_code ec;
+        return std::filesystem::canonical(buffer, ec).parent_path();
+    }
+#else
+    char buffer[1024];
+    ssize_t len = readlink("/proc/self/exe", buffer, sizeof(buffer) - 1);
+    if (len > 0) {
+        buffer[len] = '\0';
+        std::error_code ec;
+        return std::filesystem::canonical(buffer, ec).parent_path();
+    }
+#endif
+    return std::filesystem::current_path();
+}
 
 static std::string execCommand(const std::string& cmd) {
     std::string result;
@@ -143,6 +173,19 @@ std::vector<ToolchainCheck> Doctor::runChecks() const {
         });
     }
 
+    // 3b. LLVM Tools (Optional for LLVM backend verification)
+    std::string llcVer;
+    bool hasLlc = findTool("llc", llcVer);
+    if (hasLlc) {
+        checks.push_back(ToolchainCheck{
+            "Toolchain", "LLVM Tools (llc)", llcVer, true, true
+        });
+    } else {
+        checks.push_back(ToolchainCheck{
+            "Toolchain", "LLVM Tools (llc)", "Not found in PATH (optional for LLVM IR verification)", false, true
+        });
+    }
+
     // 4. Native Debugger
     std::string gdbVer;
     bool hasGdb = findTool("gdb", gdbVer);
@@ -187,22 +230,88 @@ std::vector<ToolchainCheck> Doctor::runChecks() const {
 #endif
 
     // 7. SantientPHP Runtime Sources
-    bool hasRuntimeC = std::filesystem::exists("runtime/core/runtime.c");
-    bool hasRuntimeH = std::filesystem::exists("runtime/core/runtime.h");
-    bool hasRuntimeLib = std::filesystem::exists("build/lib/libsph_runtime.a") ||
-                         std::filesystem::exists("lib/libsph_runtime.a");
+    std::filesystem::path exeDir = getProcessExecutableDir();
+    std::vector<std::filesystem::path> searchRoots = {
+        exeDir,
+        exeDir.parent_path(),
+        exeDir.parent_path().parent_path(),
+        "C:/Program Files/SantientPHP",
+        "C:/SantientPHP"
+    };
+    if (const char* sphHome = std::getenv("SPH_HOME")) {
+        searchRoots.insert(searchRoots.begin(), sphHome);
+    }
+    if (const char* sphHome2 = std::getenv("SANTIENTPHP_HOME")) {
+        searchRoots.insert(searchRoots.begin(), sphHome2);
+    }
 
-    if (hasRuntimeC && hasRuntimeH) {
-        std::string rtInfo = "runtime/core/runtime.c present";
+    bool hasRuntimeC = false;
+    bool hasRuntimeH = false;
+    bool hasRuntimeLib = false;
+
+    std::error_code ec;
+    for (const auto& root : searchRoots) {
+        if (!hasRuntimeC && (std::filesystem::exists(root / "runtime" / "core" / "runtime.c", ec) ||
+                             std::filesystem::exists(root / "runtime" / "core" / "core.c", ec))) hasRuntimeC = true;
+        if (!hasRuntimeH && (std::filesystem::exists(root / "runtime" / "core" / "runtime.h", ec) ||
+                             std::filesystem::exists(root / "runtime" / "core" / "core.h", ec))) hasRuntimeH = true;
+        if (!hasRuntimeLib && (std::filesystem::exists(root / "lib" / "libsph_runtime.a", ec) ||
+                               std::filesystem::exists(root / "lib" / "libsph_core.a", ec))) hasRuntimeLib = true;
+        if (!hasRuntimeLib && (std::filesystem::exists(root / "build" / "lib" / "libsph_runtime.a", ec) ||
+                               std::filesystem::exists(root / "build" / "lib" / "libsph_core.a", ec))) hasRuntimeLib = true;
+        if (!hasRuntimeLib && (std::filesystem::exists(root / "libsph_runtime.a", ec) ||
+                               std::filesystem::exists(root / "libsph_core.a", ec))) hasRuntimeLib = true;
+    }
+    if (!hasRuntimeC) hasRuntimeC = std::filesystem::exists("runtime/core/runtime.c", ec) || std::filesystem::exists("runtime/core/core.c", ec) || std::filesystem::exists("../runtime/core/runtime.c", ec);
+    if (!hasRuntimeH) hasRuntimeH = std::filesystem::exists("runtime/core/runtime.h", ec) || std::filesystem::exists("runtime/core/core.h", ec) || std::filesystem::exists("../runtime/core/runtime.h", ec);
+    if (!hasRuntimeLib) hasRuntimeLib = std::filesystem::exists("build/lib/libsph_runtime.a", ec) || std::filesystem::exists("build/lib/libsph_core.a", ec) || std::filesystem::exists("lib/libsph_runtime.a", ec) || std::filesystem::exists("../build/lib/libsph_runtime.a", ec);
+
+    if (hasRuntimeLib || (hasRuntimeC && hasRuntimeH)) {
+        std::string rtInfo;
         if (hasRuntimeLib) {
-            rtInfo += " (precompiled libsph_runtime.a available)";
+            rtInfo = "Precompiled runtime libraries present (libsph_runtime.a / libsph_core.a)";
+            if (hasRuntimeC && hasRuntimeH) {
+                rtInfo += " (modular runtime sources available)";
+            }
+        } else {
+            rtInfo = "Modular runtime sources present (core, async, compat)";
         }
         checks.push_back(ToolchainCheck{
             "Runtime", "SantientPHP Core Runtime", rtInfo, true, false
         });
     } else {
         checks.push_back(ToolchainCheck{
-            "Runtime", "SantientPHP Core Runtime", "Missing runtime/core/runtime.c", false, false
+            "Runtime", "SantientPHP Core Runtime", "Missing libsph_runtime.a or runtime sources", false, false
+        });
+    }
+
+    // 7b. SantientPHP Standard Library
+    bool hasStdlib = false;
+    std::filesystem::path foundStdlibPath;
+    for (const auto& root : searchRoots) {
+        if (std::filesystem::exists(root / "stdlib" / "core.sph", ec)) {
+            hasStdlib = true;
+            foundStdlibPath = root / "stdlib";
+            break;
+        }
+    }
+    if (!hasStdlib) {
+        if (std::filesystem::exists("stdlib/core.sph", ec)) {
+            hasStdlib = true;
+            foundStdlibPath = "stdlib";
+        } else if (std::filesystem::exists("../stdlib/core.sph", ec)) {
+            hasStdlib = true;
+            foundStdlibPath = "../stdlib";
+        }
+    }
+
+    if (hasStdlib) {
+        checks.push_back(ToolchainCheck{
+            "Stdlib", "SantientPHP Standard Library (stdlib/)", "Found at " + foundStdlibPath.lexically_normal().string(), true, false
+        });
+    } else {
+        checks.push_back(ToolchainCheck{
+            "Stdlib", "SantientPHP Standard Library (stdlib/)", "Missing standard library (core.sph not found)", false, false
         });
     }
 

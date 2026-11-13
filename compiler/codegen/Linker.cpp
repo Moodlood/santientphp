@@ -78,6 +78,9 @@ bool Linker::linkExecutable(const std::filesystem::path& asmPath,
     if (std::filesystem::exists(runtimeLibPath)) {
         cmd << "\"" << runtimeLibPath.string() << "\" ";
     }
+#if defined(_WIN32)
+    cmd << "-lws2_32 ";
+#endif
 
     cmd << "-o \"" << outputPath.string() << "\"";
 

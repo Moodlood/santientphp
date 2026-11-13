@@ -1,0 +1,35 @@
+<?php
+
+// SantientPHP Standard Library: Collections & Data Structures
+
+struct KeyValuePair {
+    key: string,
+    value: string,
+}
+
+fn make_pair(key: string, value: string): KeyValuePair {
+    return KeyValuePair {
+        key: key,
+        value: value,
+    };
+}
+
+struct IntRange {
+    start: i32,
+    end: i32,
+}
+
+fn range(start: i32, end: i32): IntRange {
+    return IntRange {
+        start: start,
+        end: end,
+    };
+}
+
+fn range_length(r: IntRange): i32 {
+    if (r.end <= r.start) {
+        return 0;
+    }
+    return r.end - r.start;
+}
+

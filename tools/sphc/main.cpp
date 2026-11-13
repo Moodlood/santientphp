@@ -27,7 +27,42 @@
 #include <string_view>
 #include <vector>
 
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#else
+#include <unistd.h>
+#endif
+
 namespace {
+
+static std::filesystem::path getExecutableDir() {
+#if defined(_WIN32)
+    wchar_t buffer[MAX_PATH];
+    DWORD len = GetModuleFileNameW(NULL, buffer, MAX_PATH);
+    if (len > 0 && len < MAX_PATH) {
+        return std::filesystem::path(buffer).parent_path();
+    }
+#elif defined(__APPLE__)
+    char buffer[1024];
+    uint32_t size = sizeof(buffer);
+    if (_NSGetExecutablePath(buffer, &size) == 0) {
+        std::error_code ec;
+        return std::filesystem::canonical(buffer, ec).parent_path();
+    }
+#else
+    char buffer[1024];
+    ssize_t len = readlink("/proc/self/exe", buffer, sizeof(buffer) - 1);
+    if (len > 0) {
+        buffer[len] = '\0';
+        std::error_code ec;
+        return std::filesystem::canonical(buffer, ec).parent_path();
+    }
+#endif
+    return std::filesystem::current_path();
+}
 
 void printVersion() {
     std::cout << "sphc 0.1.0 (SantientPHP)\n"
@@ -56,14 +91,17 @@ void printTargets() {
 void printHelp() {
     std::cout << "Usage: sphc <command> [options] [file.sph]\n\n"
               << "Commands:\n"
+              << "  build      [file.sph]   Compile source file to target binary\n"
+              << "  run        [file.sph]   Compile and run executable (host only)\n"
+              << "  check      [file.sph]   Check syntax and semantics\n"
+              << "  test       [file.sph]   Run unit tests or test suite\n"
+              << "  clean                   Clean build artifacts and cache\n"
+              << "  inspect    <file.sph>   Inspect compiler stages (--tokens, --ast, --ir, --asm, --llvm)\n"
               << "  tokens     <file.sph>   Tokenize file and print token stream\n"
               << "  ast        <file.sph>   Parse file and display AST\n"
-              << "  check      [file.sph]   Check syntax and semantics\n"
               << "  ir         [file.sph]   Compile to verified IR and display\n"
               << "  emit-asm   [file.sph]   Emit target machine assembly\n"
               << "  emit-llvm  [file.sph]   Emit standard LLVM IR (.ll)\n"
-              << "  build      [file.sph]   Compile source file to target binary\n"
-              << "  run        [file.sph]   Compile and run executable (host only)\n"
               << "  fmt        [file.sph]   Format source code (--check, --stdout)\n"
               << "  doc        [file.sph]   Generate API documentation (--format=html|md, -o <path>)\n"
               << "  lsp                     Run Language Server Protocol engine (JSON-RPC over stdio)\n"
@@ -132,15 +170,38 @@ int cmdFmt(const std::string& path, bool checkOnly, bool toStdout) {
 }
 
 std::filesystem::path findRuntimeLibrary() {
-    std::vector<std::filesystem::path> candidates = {
-        "build/lib/libsph_runtime.a",
-        "lib/libsph_runtime.a",
-        "../lib/libsph_runtime.a",
-        "../../lib/libsph_runtime.a"
-    };
+    std::vector<std::filesystem::path> candidates;
+
+    if (const char* sphHome = std::getenv("SPH_HOME")) {
+        candidates.push_back(std::filesystem::path(sphHome) / "lib" / "libsph_runtime.a");
+        candidates.push_back(std::filesystem::path(sphHome) / "libsph_runtime.a");
+    }
+    if (const char* sphHome2 = std::getenv("SANTIENTPHP_HOME")) {
+        candidates.push_back(std::filesystem::path(sphHome2) / "lib" / "libsph_runtime.a");
+        candidates.push_back(std::filesystem::path(sphHome2) / "libsph_runtime.a");
+    }
+
+    std::filesystem::path exeDir = getExecutableDir();
+    candidates.push_back(exeDir / "libsph_runtime.a");
+    candidates.push_back(exeDir / "lib" / "libsph_runtime.a");
+    candidates.push_back(exeDir.parent_path() / "lib" / "libsph_runtime.a");
+    candidates.push_back(exeDir.parent_path() / "libsph_runtime.a");
+    candidates.push_back(exeDir.parent_path().parent_path() / "build" / "lib" / "libsph_runtime.a");
+    candidates.push_back(exeDir.parent_path().parent_path() / "lib" / "libsph_runtime.a");
+
+    candidates.push_back("C:/Program Files/SantientPHP/lib/libsph_runtime.a");
+    candidates.push_back("C:/SantientPHP/lib/libsph_runtime.a");
+
+    candidates.push_back("build/lib/libsph_runtime.a");
+    candidates.push_back("lib/libsph_runtime.a");
+    candidates.push_back("../lib/libsph_runtime.a");
+    candidates.push_back("../../lib/libsph_runtime.a");
+    candidates.push_back("../build/lib/libsph_runtime.a");
+
     for (const auto& c : candidates) {
-        if (std::filesystem::exists(c)) {
-            return std::filesystem::absolute(c);
+        std::error_code ec;
+        if (!c.empty() && std::filesystem::exists(c, ec)) {
+            return std::filesystem::canonical(c, ec);
         }
     }
     return "build/lib/libsph_runtime.a";
@@ -341,6 +402,32 @@ int cmdEmitLlvm(const std::string& path, const std::string& outPath, bool forceD
     return 0;
 }
 
+int cmdInspect(const std::string& path, const std::string& stage, bool forceDynamic = false,
+               sph::OptimizationLevel optLevel = sph::OptimizationLevel::O0, bool debugInfo = false,
+               const sph::Target& target = sph::Target::getHostTarget()) {
+    if (stage == "--tokens" || stage == "-tokens" || stage == "tokens") {
+        return cmdTokens(path);
+    }
+    if (stage == "--ast" || stage == "-ast" || stage == "ast") {
+        return cmdAst(path);
+    }
+    if (stage == "--ir" || stage == "-ir" || stage == "ir") {
+        return cmdIr(path, forceDynamic, optLevel);
+    }
+    if (stage == "--asm" || stage == "-asm" || stage == "asm" || stage == "--emit-asm") {
+        return cmdEmitAsm(path, "", forceDynamic, optLevel, debugInfo, target);
+    }
+    if (stage == "--llvm" || stage == "-llvm" || stage == "llvm" || stage == "--emit-llvm") {
+        return cmdEmitLlvm(path, "", forceDynamic, optLevel, debugInfo, target);
+    }
+
+    std::cout << "=== AST: " << path << " ===\n";
+    int r = cmdAst(path);
+    if (r != 0) return r;
+    std::cout << "\n=== SPHIR: " << path << " ===\n";
+    return cmdIr(path, forceDynamic, optLevel);
+}
+
 int cmdBuild(const std::string& path, std::string outExe, bool forceDynamic = false,
              sph::OptimizationLevel optLevel = sph::OptimizationLevel::O0, bool debugInfo = false,
              const sph::Target& target = sph::Target::getHostTarget()) {
@@ -399,10 +486,59 @@ int cmdRun(const std::string& path, bool forceDynamic = false,
         return buildRes;
     }
 
-    std::string runCmd = "\"\"" + tempExe + "\"\"";
+    std::string runCmd = "\"" + tempExe + "\"";
     int exitCode = std::system(runCmd.c_str());
     std::filesystem::remove(tempExe);
     return exitCode;
+}
+
+int cmdTest(const std::string& path, sph::OptimizationLevel optLevel = sph::OptimizationLevel::O0, bool debugInfo = false,
+            const sph::Target& target = sph::Target::getHostTarget()) {
+    if (!path.empty()) {
+        std::cout << "Running test: " << path << "\n";
+        return cmdRun(path, false, optLevel, debugInfo, target);
+    }
+    std::filesystem::path exeDir = getExecutableDir();
+    std::vector<std::filesystem::path> testBins = {
+        exeDir / "sph_tests.exe",
+        exeDir / "sph_tests",
+        exeDir.parent_path() / "build" / "bin" / "sph_tests.exe",
+        "build/bin/sph_tests.exe",
+        "bin/sph_tests.exe"
+    };
+    for (const auto& tb : testBins) {
+        if (std::filesystem::exists(tb)) {
+            std::cout << "Executing SantientPHP test suite (" << tb.string() << ")...\n";
+            std::string cmd = "\"" + tb.string() + "\"";
+            return std::system(cmd.c_str());
+        }
+    }
+    std::cout << "No test suite executable found. Specify a test file: sphc test <test_file.sph>\n";
+    return 1;
+}
+
+int cmdClean() {
+    std::cout << "Cleaning SantientPHP build artifacts...\n";
+    std::error_code ec;
+    size_t removedCount = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(".")) {
+        if (!entry.is_regular_file()) continue;
+        std::string ext = entry.path().extension().string();
+        if (ext == ".asm" || ext == ".ll" || ext == ".o" || ext == ".obj") {
+            std::filesystem::remove(entry.path(), ec);
+            if (!ec) {
+                std::cout << "  removed: " << entry.path().filename().string() << "\n";
+                ++removedCount;
+            }
+        }
+    }
+    if (std::filesystem::exists(".sph_cache")) {
+        std::filesystem::remove_all(".sph_cache", ec);
+        std::cout << "  removed: .sph_cache/\n";
+        ++removedCount;
+    }
+    std::cout << "Clean complete (" << removedCount << " items removed).\n";
+    return 0;
 }
 
 int cmdDoc(const std::string& inputPath, const std::string& outputPath, std::string_view format,
@@ -737,7 +873,8 @@ int main(int argc, char* argv[]) {
     }
 
     if (srcFile.empty() && (arg1 == "check" || arg1 == "ir" || arg1 == "emit-asm" ||
-                            arg1 == "emit-llvm" || arg1 == "build" || arg1 == "run" || arg1 == "fmt")) {
+                            arg1 == "emit-llvm" || arg1 == "build" || arg1 == "run" || arg1 == "fmt" ||
+                            arg1 == "inspect")) {
         auto manifest = sph::Manifest::findInPath(".");
         if (manifest && !manifest->entry.empty()) {
             srcFile = manifest->entry;
@@ -745,6 +882,23 @@ int main(int argc, char* argv[]) {
                 forceDynamic = true;
             }
         }
+    }
+
+    if (arg1 == "inspect") {
+        if (srcFile.empty()) {
+            std::cerr << "error: missing source file argument for 'inspect'\n";
+            return 1;
+        }
+        std::string stage;
+        for (int i = 2; i < argc; ++i) {
+            std::string_view a = argv[i];
+            if (a == "--tokens" || a == "--ast" || a == "--ir" || a == "--asm" || a == "--llvm" ||
+                a == "-tokens" || a == "-ast" || a == "-ir" || a == "-asm" || a == "-llvm" ||
+                a == "tokens" || a == "ast" || a == "ir" || a == "asm" || a == "llvm") {
+                stage = std::string(a);
+            }
+        }
+        return cmdInspect(srcFile, stage, forceDynamic, optLevel, debugInfo, target);
     }
 
     if (arg1 == "tokens") {
@@ -809,6 +963,14 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         return cmdRun(srcFile, forceDynamic, optLevel, debugInfo, target);
+    }
+
+    if (arg1 == "test") {
+        return cmdTest(srcFile, optLevel, debugInfo, target);
+    }
+
+    if (arg1 == "clean") {
+        return cmdClean();
     }
 
     if (arg1 == "fmt") {

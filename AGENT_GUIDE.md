@@ -5,7 +5,7 @@
 **Source extension:** `.sph`\
 **Compiler:** `sphc`\
 **Manifest:** `sph.toml`\
-**Specification baseline:** SPH 0.1
+**Specification baseline:** SPH 0.1 & SPH 1.0 ([docs/specification/sph_1.0_spec.md](docs/specification/sph_1.0_spec.md))
 
 This document defines how AI coding agents and automated contributors
 must work in the SantientPHP repository.

@@ -59,6 +59,7 @@ private:
     std::unique_ptr<EchoStmt> parseEcho();
     std::unique_ptr<TryStmt> parseTry();
     std::unique_ptr<ThrowStmt> parseThrow();
+    std::unique_ptr<DeferStmt> parseDefer();
     std::unique_ptr<ExprStmt> parseExprStatement();
 
     // Expression parsing (precedence hierarchy)

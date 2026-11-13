@@ -45,6 +45,7 @@ const std::unordered_map<std::string_view, TokenKind> kKeywords = {
     {"throw",      TokenKind::KwThrow},
     {"async",      TokenKind::KwAsync},
     {"await",      TokenKind::KwAwait},
+    {"defer",      TokenKind::KwDefer},
     {"i32",    TokenKind::KwI32},
     {"i64",    TokenKind::KwI64},
     {"f32",    TokenKind::KwF32},

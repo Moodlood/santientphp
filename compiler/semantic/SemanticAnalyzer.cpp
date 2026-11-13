@@ -1137,6 +1137,10 @@ void SemanticAnalyzer::visit(TryStmt& node) {
     }
 }
 
+void SemanticAnalyzer::visit(DeferStmt& node) {
+    node.getStatement().accept(*this);
+}
+
 void SemanticAnalyzer::visit(IntegerLiteralExpr& node) {
     node.setInferredType(Type::getI32());
 }
@@ -1892,6 +1896,12 @@ void SemanticAnalyzer::visit(CastExpr& node) {
         return;
     }
 
+    // Dynamic boundary cast: dynamic to concrete or concrete to dynamic
+    if (srcType->isDynamic() || targetType->isDynamic()) {
+        node.setInferredType(targetType);
+        return;
+    }
+
     // Numeric to numeric
     if (srcType->isNumeric() && targetType->isNumeric()) {
         node.setInferredType(targetType);
@@ -2072,6 +2082,67 @@ void SemanticAnalyzer::visit(CallExpr& node) {
             node.getArgs()[0]->accept(*this);
         }
         node.setInferredType(Type::getVoid());
+        return;
+    }
+
+    // Built-in Dynamic-to-Static and Primitive Conversion Intrinsics
+    if (node.getCallee() == "intval" || node.getCallee() == "as_i32") {
+        if (node.getArgs().size() != 1) {
+            error(node.getSpan(), "'" + node.getCallee() + "' expects 1 argument, found " + std::to_string(node.getArgs().size()));
+        } else {
+            node.getArgs()[0]->accept(*this);
+        }
+        node.setInferredType(Type::getI32());
+        return;
+    }
+
+    if (node.getCallee() == "as_i64") {
+        if (node.getArgs().size() != 1) {
+            error(node.getSpan(), "'as_i64' expects 1 argument, found " + std::to_string(node.getArgs().size()));
+        } else {
+            node.getArgs()[0]->accept(*this);
+        }
+        node.setInferredType(Type::getI64());
+        return;
+    }
+
+    if (node.getCallee() == "floatval" || node.getCallee() == "as_f64") {
+        if (node.getArgs().size() != 1) {
+            error(node.getSpan(), "'" + node.getCallee() + "' expects 1 argument, found " + std::to_string(node.getArgs().size()));
+        } else {
+            node.getArgs()[0]->accept(*this);
+        }
+        node.setInferredType(Type::getF64());
+        return;
+    }
+
+    if (node.getCallee() == "as_f32") {
+        if (node.getArgs().size() != 1) {
+            error(node.getSpan(), "'as_f32' expects 1 argument, found " + std::to_string(node.getArgs().size()));
+        } else {
+            node.getArgs()[0]->accept(*this);
+        }
+        node.setInferredType(Type::getF32());
+        return;
+    }
+
+    if (node.getCallee() == "strval" || node.getCallee() == "as_string") {
+        if (node.getArgs().size() != 1) {
+            error(node.getSpan(), "'" + node.getCallee() + "' expects 1 argument, found " + std::to_string(node.getArgs().size()));
+        } else {
+            node.getArgs()[0]->accept(*this);
+        }
+        node.setInferredType(Type::getString());
+        return;
+    }
+
+    if (node.getCallee() == "boolval" || node.getCallee() == "as_bool") {
+        if (node.getArgs().size() != 1) {
+            error(node.getSpan(), "'" + node.getCallee() + "' expects 1 argument, found " + std::to_string(node.getArgs().size()));
+        } else {
+            node.getArgs()[0]->accept(*this);
+        }
+        node.setInferredType(Type::getBool());
         return;
     }
 

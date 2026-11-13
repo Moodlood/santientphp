@@ -160,3 +160,4 @@ Open `docs/api/index.html` in your browser to explore interactive symbol docs an
    - Real-time compiler error squiggles from `sphc lsp`.
    - Hover type signatures and docstrings.
    - Autocompletion for keywords, native types, and PHP functions.
+

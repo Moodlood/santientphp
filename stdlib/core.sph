@@ -1,0 +1,74 @@
+<?php
+
+// SantientPHP Standard Library: Core Primitives & Diagnostics
+
+extern "C" fn sph_panic(msg: string): void;
+extern "C" fn sph_process_exit(code: i32): void;
+extern "C" fn sph_time_millis(): i64;
+
+fn assert(condition: bool, message: string): void {
+    if (!condition) {
+        sph_panic(message);
+    }
+}
+
+fn panic_str(message: string): void {
+    sph_panic(message);
+}
+
+fn process_exit(code: i32): void {
+    sph_process_exit(code);
+}
+
+fn min_i32(a: i32, b: i32): i32 {
+    if (a < b) {
+        return a;
+    }
+    return b;
+}
+
+fn max_i32(a: i32, b: i32): i32 {
+    if (a > b) {
+        return a;
+    }
+    return b;
+}
+
+fn clamp_i32(val: i32, min_val: i32, max_val: i32): i32 {
+    if (val < min_val) {
+        return min_val;
+    }
+    if (val > max_val) {
+        return max_val;
+    }
+    return val;
+}
+
+fn abs_i32(val: i32): i32 {
+    if (val < 0) {
+        return -val;
+    }
+    return val;
+}
+
+fn min_f64(a: f64, b: f64): f64 {
+    if (a < b) {
+        return a;
+    }
+    return b;
+}
+
+fn max_f64(a: f64, b: f64): f64 {
+    if (a > b) {
+        return a;
+    }
+    return b;
+}
+
+fn abs_f64(val: f64): f64 {
+    if (val < 0.0) {
+        return -val;
+    }
+    return val;
+}
+

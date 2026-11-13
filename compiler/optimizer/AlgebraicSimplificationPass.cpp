@@ -43,53 +43,62 @@ std::shared_ptr<IRValue> AlgebraicSimplificationPass::simplifyBinary(BinaryInst&
         case IROpcode::Sub:
             // x - 0 -> x
             if (cRhsInt && cRhsInt->getValue() == 0) return lhs;
-            // x - x -> 0
-            if (sameOperands) return ConstantInt::get(0, bin.getType());
+            // x - x -> 0 (only valid for integers, not for IEEE-754 floats where NaN - NaN is NaN and Inf - Inf is NaN)
+            if (sameOperands && bin.getType()->isInteger()) return ConstantInt::get(0, bin.getType());
             break;
 
         case IROpcode::Mul:
-            // x * 0 -> 0
-            if (cRhsInt && cRhsInt->getValue() == 0) return rhs;
-            // 0 * x -> 0
-            if (cLhsInt && cLhsInt->getValue() == 0) return lhs;
+            // x * 0 -> 0 and 0 * x -> 0 (only for integers; for floats, Inf * 0 is NaN and NaN * 0 is NaN)
+            if (bin.getType()->isInteger()) {
+                if (cRhsInt && cRhsInt->getValue() == 0) return rhs;
+                if (cLhsInt && cLhsInt->getValue() == 0) return lhs;
+            }
             // x * 1 -> x
             if (cRhsInt && cRhsInt->getValue() == 1) return lhs;
             // 1 * x -> x
             if (cLhsInt && cLhsInt->getValue() == 1) return rhs;
 
-            // Strength reduction: x * 2^k -> x << k
-            if (cRhsInt && isPowerOfTwo(cRhsInt->getValue())) {
-                int shift = countTrailingZeros(cRhsInt->getValue());
-                bin.setOpcode(IROpcode::ShiftLeft);
-                bin.setRhs(ConstantInt::get(shift, bin.getType()));
-                inPlaceChanged = true;
-                return nullptr; // Transformed in place
-            }
-            if (cLhsInt && isPowerOfTwo(cLhsInt->getValue())) {
-                int shift = countTrailingZeros(cLhsInt->getValue());
-                bin.setOpcode(IROpcode::ShiftLeft);
-                bin.setLhs(rhs);
-                bin.setRhs(ConstantInt::get(shift, bin.getType()));
-                inPlaceChanged = true;
-                return nullptr; // Transformed in place
+            // Strength reduction: x * 2^k -> x << k (valid for integers)
+            if (bin.getType()->isInteger()) {
+                if (cRhsInt && isPowerOfTwo(cRhsInt->getValue())) {
+                    int shift = countTrailingZeros(cRhsInt->getValue());
+                    bin.setOpcode(IROpcode::ShiftLeft);
+                    bin.setRhs(ConstantInt::get(shift, bin.getType()));
+                    inPlaceChanged = true;
+                    return nullptr; // Transformed in place
+                }
+                if (cLhsInt && isPowerOfTwo(cLhsInt->getValue())) {
+                    int shift = countTrailingZeros(cLhsInt->getValue());
+                    bin.setOpcode(IROpcode::ShiftLeft);
+                    bin.setLhs(rhs);
+                    bin.setRhs(ConstantInt::get(shift, bin.getType()));
+                    inPlaceChanged = true;
+                    return nullptr; // Transformed in place
+                }
             }
             break;
 
         case IROpcode::Div:
             // x / 1 -> x
             if (cRhsInt && cRhsInt->getValue() == 1) return lhs;
-            // 0 / x -> 0
-            if (cLhsInt && cLhsInt->getValue() == 0) return lhs;
-            // x / x -> 1
-            if (sameOperands) return ConstantInt::get(1, bin.getType());
+            // 0 / x -> 0 (only when x is known non-zero constant, avoiding division by zero elimination)
+            if (cLhsInt && cLhsInt->getValue() == 0 && cRhsInt && cRhsInt->getValue() != 0) return lhs;
+            // x / x -> 1 (only when x is known non-zero integer constant; folding variable x / x when x == 0 silently drops hardware exception)
+            if (sameOperands && cLhsInt && cLhsInt->getValue() != 0 && bin.getType()->isInteger()) {
+                return ConstantInt::get(1, bin.getType());
+            }
 
-            // Strength reduction: x / 2^k -> x >> k (for unsigned/positive divisors)
-            if (cRhsInt && isPowerOfTwo(cRhsInt->getValue()) && cRhsInt->getValue() > 1) {
-                int shift = countTrailingZeros(cRhsInt->getValue());
-                bin.setOpcode(IROpcode::ShiftRight);
-                bin.setRhs(ConstantInt::get(shift, bin.getType()));
-                inPlaceChanged = true;
-                return nullptr;
+            // Strength reduction: x / 2^k -> x >> k
+            // For signed integers, SAR rounds towards -infinity (-3 >> 1 == -2) while integer division
+            // truncates toward zero (-3 / 2 == -1). Only reduce when dividend is provably non-negative.
+            if (bin.getType()->isInteger() && cRhsInt && isPowerOfTwo(cRhsInt->getValue()) && cRhsInt->getValue() > 1) {
+                if (cLhsInt && cLhsInt->getValue() >= 0) {
+                    int shift = countTrailingZeros(cRhsInt->getValue());
+                    bin.setOpcode(IROpcode::ShiftRight);
+                    bin.setRhs(ConstantInt::get(shift, bin.getType()));
+                    inPlaceChanged = true;
+                    return nullptr;
+                }
             }
             break;
 
