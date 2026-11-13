@@ -76,6 +76,7 @@ inline int runAllTests() {
     auto& tests = TestRegistry::instance().getTests();
     int testsPassed = 0;
     int testsFailed = 0;
+    std::vector<std::pair<std::string, std::vector<std::string>>> failedTests;
 
     std::cout << "========================================\n";
     std::cout << " Running " << tests.size() << " test case(s)...\n";
@@ -103,9 +104,23 @@ inline int runAllTests() {
             std::cout << "[  FAILED  ] " << test.name << " (" << ctx.assertionsFailed << " assertion failure(s))\n";
             for (const auto& msg : ctx.failureMessages) {
                 std::cout << "    " << msg << "\n";
+                std::cout << "::error title=" << test.name << "::" << msg << "\n";
             }
+            failedTests.push_back({test.name, ctx.failureMessages});
             testsFailed++;
         }
+    }
+
+    if (!failedTests.empty()) {
+        std::cout << "\n========================================\n";
+        std::cout << " SUMMARY OF FAILED TESTS (" << failedTests.size() << "):\n";
+        for (const auto& [name, msgs] : failedTests) {
+            std::cout << " [FAIL] " << name << "\n";
+            for (const auto& m : msgs) {
+                std::cout << "        " << m << "\n";
+            }
+        }
+        std::cout << "========================================\n";
     }
 
     std::cout << "\n========================================\n";

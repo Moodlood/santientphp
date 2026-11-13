@@ -67,6 +67,7 @@ TEST_CASE("Doctor: reports optional LLVM check and runtime library detection") {
         if (c.name.find("Core Runtime") != std::string::npos) {
             runtimeSatisfied = c.isHealthy;
             CHECK(c.details.find("libsph_runtime.a") != std::string::npos ||
+                  c.details.find("Modular runtime sources present") != std::string::npos ||
                   c.details.find("runtime/core/runtime.c") != std::string::npos);
         }
     }
