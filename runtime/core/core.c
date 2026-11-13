@@ -5,7 +5,6 @@
 #include <string.h>
 #include <errno.h>
 #include <math.h>
-#include <windows.h>
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
 #if defined(_MSC_VER)
 #include <intrin.h>

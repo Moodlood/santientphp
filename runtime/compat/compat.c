@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include <math.h>
 
 // PHP Compatibility Subsystem: Dynamic Values (sph_value)
@@ -1349,8 +1350,11 @@ static pfn_sqlite3_bind_null fn_sqlite3_bind_null = NULL;
 static pfn_sqlite3_bind_parameter_index fn_sqlite3_bind_parameter_index = NULL;
 static pfn_sqlite3_errmsg fn_sqlite3_errmsg = NULL;
 
+#if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wcast-function-type"
+#pragma GCC diagnostic ignored "-Wpedantic"
+#endif
 
 static int sph_sqlite_ensure_loaded(void) {
     if (g_sph_sqlite_initialized) {
@@ -1874,7 +1878,9 @@ void* sph_curl_exec(void* ch) {
             h->response_len = 2;
         }
     }
+#if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic pop
+#endif
 
     if (h->return_transfer) {
         return sph_value_create_string(h->response_body ? h->response_body : "");

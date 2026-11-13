@@ -17,8 +17,11 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 if(MSVC)
     add_compile_options(/W4 /permissive-)
 else()
-    add_compile_options(-Wall -Wextra -Wpedantic)
+    add_compile_options(-Wall -Wextra)
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-Wpedantic>)
 endif()
+
+find_package(Threads)
 
 # ============================================================================
 # Modular SPH Runtime Libraries (Milestone 2)
@@ -174,6 +177,9 @@ add_executable(sphc
 )
 
 target_link_libraries(sphc PRIVATE sphc_core)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(sphc PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+endif()
 add_dependencies(sphc sph_runtime sph_runtime_core sph_runtime_async sph_runtime_compat)
 
 # Test Suite
@@ -202,6 +208,9 @@ add_executable(sph_tests
 )
 
 target_link_libraries(sph_tests PRIVATE sphc_core)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(sph_tests PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+endif()
 target_include_directories(sph_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 add_dependencies(sph_tests sph_runtime)
 

@@ -6,6 +6,9 @@
 #include <stdint.h>
 
 #if !defined(_WIN32)
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE 1
+#endif
 #if defined(__APPLE__)
 #define _XOPEN_SOURCE 600
 #endif
@@ -492,8 +495,8 @@ void* sph_event_loop_spawn(void* fn_ptr, void* arg) {
     if (!fn_ptr) return NULL;
     sph_event_loop_init();
 
-    void* promise = sph_promise_create();
-    sph_posix_coro* coro = (sph_posix_coro*)malloc(sizeof(sph_posix_coro));
+    void* volatile promise = sph_promise_create();
+    sph_posix_coro* volatile coro = (sph_posix_coro*)malloc(sizeof(sph_posix_coro));
     if (!coro) return NULL;
     coro->fn_ptr = fn_ptr;
     coro->arg = arg;

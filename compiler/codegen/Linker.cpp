@@ -80,6 +80,8 @@ bool Linker::linkExecutable(const std::filesystem::path& asmPath,
     }
 #if defined(_WIN32)
     cmd << "-lws2_32 ";
+#else
+    cmd << "-lpthread -ldl -lm ";
 #endif
 
     cmd << "-o \"" << outputPath.string() << "\"";
