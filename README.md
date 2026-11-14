@@ -1,14 +1,20 @@
-# SantientPHP (SPH)
+<p align="center">
+  <img src="assets/logo.png" alt="SantientPHP (SPH) Logo" width="160" />
+</p>
 
-[![CI](https://github.com/Moodlood/santientphp/actions/workflows/ci.yml/badge.svg)](https://github.com/Moodlood/santientphp/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-254%20passed%20(100%25)-brightgreen.svg)](tests/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![C++20](https://img.shields.io/badge/compiler-C%2B%2B20-00599C?logo=c%2B%2B)](compiler/)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey.svg)](docs/compiler/architecture.md)
+<h1 align="center">SantientPHP (SPH)</h1>
 
-**SantientPHP** is an independent, compiled programming language that combines the familiar syntax and developer ergonomics of PHP with the bare-metal performance, memory safety, and concurrency capabilities of a modern systems language.
+<p align="center">
+  <a href="https://github.com/Moodlood/santientphp/actions/workflows/ci.yml"><img src="https://github.com/Moodlood/santientphp/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="tests/"><img src="https://img.shields.io/badge/tests-264%20passed%20(100%25)-brightgreen.svg" alt="Tests" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
+  <a href="compiler/"><img src="https://img.shields.io/badge/compiler-C%2B%2B20-00599C?logo=c%2B%2B" alt="C++20" /></a>
+  <a href="docs/compiler/architecture.md"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey.svg" alt="Platform" /></a>
+</p>
 
-It compiles directly to native machine code (`.exe` on Windows, native binaries on Linux and macOS) without requiring a PHP runtime or interpreter.
+<p align="center">
+  <strong>An independent, native-compiled programming language combining PHP developer ergonomics with bare-metal performance, memory safety, and zero-dependency GUI compilation.</strong>
+</p>
 
 ---
 
@@ -18,6 +24,10 @@ It compiles directly to native machine code (`.exe` on Windows, native binaries 
   - **Static Mode**: Deterministic static typing with value structs, enums, OOP classes, interfaces, and generics.
   - **Systems Mode**: Raw pointers, memory layout controls, arenas, and direct C FFI integration.
   - **Dynamic PHP Compatibility Mode**: First-class `dynamic` values (`sph_value`), associative arrays (`sph_array`), loose coercions, PHP object models, WinHTTP cURL, and SQLite PDO.
+- **Native GUI & Hardware-Accelerated Rendering**:
+  - **Native OS Controls**: Direct Win32 bindings (buttons, text inputs, progress bars, dialogs, ComCtl32 v6, Per-Monitor High-DPI V2) with suppressed console window (`--gui`).
+  - **SIMD Framebuffer Canvas**: 32-bit RGBA pixel surface accelerated by 128-bit SIMD vectors (SSE2/AVX) and OpenGL context support.
+  - **Async EventLoop Fusion**: Non-blocking message pump integrated with cooperative Fiber coroutines and thread-safe UI task queues (`sph_gui_post_to_main`).
 - **Hardware Concurrency & Async**:
   - Native OS threading (`Thread::spawn`, `Thread::sleep_ms`) and hardware atomic primitives (`AtomicI32`, `AtomicI64`, `AtomicBool`).
   - Cooperative coroutines (`async fn`, `await`, `Promise<T>`) backed by an integrated event loop runtime.
@@ -53,7 +63,7 @@ It compiles directly to native machine code (`.exe` on Windows, native binaries 
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 ninja -C build
 
-# Verify full test suite (254 tests)
+# Verify full test suite (264 tests)
 .\build\bin\sph_tests.exe
 ```
 
@@ -136,7 +146,7 @@ sphc build hello.sph -O3 -o hello.exe
 
 | Command | Description |
 | :--- | :--- |
-| `sphc build [file.sph]` | Compiles source file to a native executable or object |
+| `sphc build [file.sph]` | Compiles source file to a native executable or object (`--gui` for windowed GUI) |
 | `sphc run [file.sph]` | Compiles and executes in one step |
 | `sphc check [file.sph]` | Validates syntax and semantic types without code generation |
 | `sphc test [file.sph]` | Executes unit tests or runs the complete test suite |
