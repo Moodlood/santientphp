@@ -1,0 +1,41 @@
+<?php
+
+// ============================================================================
+// SantientPHP GUI & Cooperative Fiber EventLoop Concurrency (Tier 1 + Async)
+// Compile with: sphc build --gui examples/gui_async_fiber.sph
+// ============================================================================
+
+import "std/gui.sph";
+import "std/async.sph";
+
+async fn background_worker(pb: ProgressBar): Promise<i32> {
+    mut step: i32 = 0;
+    while (step <= 100) {
+        progressbar_set_pos(pb, step);
+        sleep_ms(20);
+        yield_now();
+        step = step + 5;
+    }
+    return 100;
+}
+
+fn main(): i32 {
+    let win: Window = window_create("Fiber Concurrency in Native GUI", 500, 300);
+    let pb: ProgressBar = progressbar_create(win, 50, 100, 400, 30, 201);
+    progressbar_set_range(pb, 0, 100);
+
+    window_show(win);
+
+    // Launch background cooperative fiber coroutine
+    let task = background_worker(pb);
+
+    // Run unified event loop
+    while (window_is_open(win)) {
+        if (!gui_pump()) {
+            break;
+        }
+    }
+
+    return 0;
+}
+

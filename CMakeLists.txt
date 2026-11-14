@@ -71,6 +71,17 @@ target_include_directories(sph_runtime PUBLIC
 )
 set_target_properties(sph_runtime PROPERTIES OUTPUT_NAME "sph_runtime")
 
+# 5. Native GUI Runtime (libsph_gui.a: Win32 controls, SIMD canvas, WebView bridge, WinMain shim)
+add_library(sph_runtime_gui STATIC
+    runtime/gui/gui.h
+    runtime/gui/gui.c
+)
+target_include_directories(sph_runtime_gui PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/runtime
+)
+set_target_properties(sph_runtime_gui PROPERTIES OUTPUT_NAME "sph_gui")
+
 # Core compiler static library
 add_library(sphc_core STATIC
     compiler/source/SourceLocation.hpp
@@ -180,7 +191,7 @@ target_link_libraries(sphc PRIVATE sphc_core)
 if(UNIX AND NOT APPLE)
     target_link_libraries(sphc PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
 endif()
-add_dependencies(sphc sph_runtime sph_runtime_core sph_runtime_async sph_runtime_compat)
+add_dependencies(sphc sph_runtime sph_runtime_core sph_runtime_async sph_runtime_compat sph_runtime_gui)
 
 # Test Suite
 enable_testing()
@@ -205,14 +216,18 @@ add_executable(sph_tests
     tests/lsp/test_lsp.cpp
     tests/doctor/test_doctor.cpp
     tests/stdlib/test_stdlib.cpp
+    tests/gui/test_gui.cpp
 )
 
-target_link_libraries(sph_tests PRIVATE sphc_core)
+target_link_libraries(sph_tests PRIVATE sphc_core sph_runtime_gui)
+if(WIN32)
+    target_link_libraries(sph_tests PRIVATE comctl32 gdi32 user32 opengl32 ole32)
+endif()
 if(UNIX AND NOT APPLE)
     target_link_libraries(sph_tests PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
 endif()
 target_include_directories(sph_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
-add_dependencies(sph_tests sph_runtime)
+add_dependencies(sph_tests sph_runtime sph_runtime_gui)
 
 add_test(NAME UnitTests COMMAND sph_tests)
 set_tests_properties(UnitTests PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -226,7 +241,7 @@ install(TARGETS sphc
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
-install(TARGETS sph_runtime sph_runtime_core sph_runtime_async sph_runtime_compat sphc_core
+install(TARGETS sph_runtime sph_runtime_core sph_runtime_async sph_runtime_compat sph_runtime_gui sphc_core
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )

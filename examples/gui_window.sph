@@ -1,0 +1,32 @@
+<?php
+
+// ============================================================================
+// SantientPHP Native GUI Example: Native OS Controls (Tier 1)
+// Compile with: sphc build --gui examples/gui_window.sph
+// ============================================================================
+
+import "std/gui.sph";
+
+fn main(): i32 {
+    let win: Window = window_create("SantientPHP Native GUI", 600, 400);
+
+    // Create native buttons, text inputs, and progress bar
+    let btn: Button = button_create(win, "Click Me", 30, 30, 120, 35, 101);
+    let tb: TextBox = textbox_create(win, "Hello from compiled SantientPHP!", 30, 80, 300, 30, 102, false);
+    let pb: ProgressBar = progressbar_create(win, 30, 130, 300, 25, 103);
+
+    progressbar_set_range(pb, 0, 100);
+    progressbar_set_pos(pb, 65);
+
+    window_show(win);
+
+    // Non-blocking message pump
+    while (window_is_open(win)) {
+        if (!gui_pump()) {
+            break;
+        }
+    }
+
+    return 0;
+}
+

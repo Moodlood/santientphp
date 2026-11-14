@@ -1,0 +1,327 @@
+<?php
+
+// ============================================================================
+// SantientPHP Standard Library: Native GUI Subsystem (stdlib/gui.sph)
+// Triple-Mode Support: Systems Mode, Statically Typed Mode, Dynamic PHP Mode
+// ============================================================================
+
+// ----------------------------------------------------------------------------
+// Tier 1 & 2 Systems-Level C FFI Declarations
+// ----------------------------------------------------------------------------
+
+#[repr(C)]
+struct GuiEvent {
+    eventType: i32,
+    hwnd: *void,
+    id: i32,
+    param1: i64,
+    param2: i64,
+}
+
+extern "C" fn sph_gui_window_create(title: string, width: i32, height: i32): *void;
+extern "C" fn sph_gui_window_show(hwnd: *void, show: i32): void;
+extern "C" fn sph_gui_window_set_title(hwnd: *void, title: string): void;
+extern "C" fn sph_gui_window_close(hwnd: *void): void;
+extern "C" fn sph_gui_window_is_open(hwnd: *void): i32;
+extern "C" fn sph_gui_window_destroy(hwnd: *void): void;
+
+extern "C" fn sph_gui_button_create(parent: *void, text: string, x: i32, y: i32, w: i32, h: i32, id: i32): *void;
+extern "C" fn sph_gui_label_create(parent: *void, text: string, x: i32, y: i32, w: i32, h: i32, id: i32): *void;
+extern "C" fn sph_gui_textbox_create(parent: *void, text: string, x: i32, y: i32, w: i32, h: i32, id: i32, multiline: i32): *void;
+extern "C" fn sph_gui_checkbox_create(parent: *void, text: string, x: i32, y: i32, w: i32, h: i32, id: i32): *void;
+extern "C" fn sph_gui_checkbox_is_checked(ctrl: *void): i32;
+extern "C" fn sph_gui_checkbox_set_checked(ctrl: *void, checked: i32): void;
+extern "C" fn sph_gui_progressbar_create(parent: *void, x: i32, y: i32, w: i32, h: i32, id: i32): *void;
+extern "C" fn sph_gui_progressbar_set_pos(ctrl: *void, pos: i32): void;
+extern "C" fn sph_gui_progressbar_set_range(ctrl: *void, min_val: i32, max_val: i32): void;
+extern "C" fn sph_gui_listview_create(parent: *void, x: i32, y: i32, w: i32, h: i32, id: i32): *void;
+extern "C" fn sph_gui_listview_add_item(ctrl: *void, text: string): i32;
+extern "C" fn sph_gui_listview_get_selected(ctrl: *void): i32;
+
+extern "C" fn sph_gui_get_text(ctrl: *void): string;
+extern "C" fn sph_gui_set_text(ctrl: *void, text: string): void;
+extern "C" fn sph_gui_messagebox(parent: *void, text: string, title: string, utype: i32): i32;
+extern "C" fn sph_gui_file_picker_open(parent: *void, title: string, filter: string): string;
+extern "C" fn sph_gui_file_picker_save(parent: *void, title: string, filter: string): string;
+extern "C" fn sph_gui_clipboard_get_text(): string;
+extern "C" fn sph_gui_clipboard_set_text(text: string): void;
+extern "C" fn sph_gui_set_cursor(cursor_type: i32): void;
+
+extern "C" fn sph_canvas_create(hwnd: *void, width: i32, height: i32): *void;
+extern "C" fn sph_canvas_destroy(canvas: *void): void;
+extern "C" fn sph_canvas_clear(canvas: *void, color: i32): void;
+extern "C" fn sph_canvas_draw_rect(canvas: *void, x: i32, y: i32, w: i32, h: i32, color: i32): void;
+extern "C" fn sph_canvas_fill_rect(canvas: *void, x: i32, y: i32, w: i32, h: i32, color: i32): void;
+extern "C" fn sph_canvas_present(canvas: *void): void;
+
+extern "C" fn sph_gui_pump_events(): i32;
+extern "C" fn sph_gui_run_event_loop(): void;
+extern "C" fn sph_gui_quit(): void;
+extern "C" fn sph_gui_is_running(): i32;
+extern "C" fn sph_gui_post_to_main(task_fn: *void, arg: *void): void;
+extern "C" fn sph_gui_set_wndproc_hook(hwnd: *void, hook_fn: *void): void;
+extern "C" fn sph_gui_exec_hidden(cmd: string): i32;
+
+// ----------------------------------------------------------------------------
+// Static Mode High-Level Type-Safe API
+// ----------------------------------------------------------------------------
+
+struct Window {
+    hwnd: *void,
+    title: string,
+    width: i32,
+    height: i32,
+}
+
+fn window_create(title: string, width: i32, height: i32): Window {
+    let h: *void = sph_gui_window_create(title, width, height);
+    return Window { hwnd: h, title: title, width: width, height: height };
+}
+
+fn window_show(win: Window): void {
+    sph_gui_window_show(win.hwnd, 1);
+}
+
+fn window_hide(win: Window): void {
+    sph_gui_window_show(win.hwnd, 0);
+}
+
+fn window_set_title(win: Window, title: string): void {
+    sph_gui_window_set_title(win.hwnd, title);
+}
+
+fn window_is_open(win: Window): bool {
+    let open: i32 = sph_gui_window_is_open(win.hwnd);
+    return open != 0;
+}
+
+fn window_close(win: Window): void {
+    sph_gui_window_close(win.hwnd);
+}
+
+struct Button {
+    hwnd: *void,
+    id: i32,
+}
+
+fn button_create(win: Window, text: string, x: i32, y: i32, w: i32, h: i32, id: i32): Button {
+    let ctrl: *void = sph_gui_button_create(win.hwnd, text, x, y, w, h, id);
+    return Button { hwnd: ctrl, id: id };
+}
+
+fn button_set_text(btn: Button, text: string): void {
+    sph_gui_set_text(btn.hwnd, text);
+}
+
+fn button_get_text(btn: Button): string {
+    return sph_gui_get_text(btn.hwnd);
+}
+
+extern "C" fn SendMessageA(hwnd: *void, msg: i32, wparam: i64, lparam: i64): i64;
+
+fn button_is_pushed(btn: Button): bool {
+    let state: i64 = SendMessageA(btn.hwnd, 242, 0 as i64, 0 as i64);
+    return (state & (4 as i64)) != (0 as i64);
+}
+
+struct Label {
+    hwnd: *void,
+    id: i32,
+}
+
+fn label_create(win: Window, text: string, x: i32, y: i32, w: i32, h: i32, id: i32): Label {
+    let ctrl: *void = sph_gui_label_create(win.hwnd, text, x, y, w, h, id);
+    return Label { hwnd: ctrl, id: id };
+}
+
+fn label_set_text(lbl: Label, text: string): void {
+    sph_gui_set_text(lbl.hwnd, text);
+}
+
+fn label_get_text(lbl: Label): string {
+    return sph_gui_get_text(lbl.hwnd);
+}
+
+struct TextBox {
+    hwnd: *void,
+    id: i32,
+}
+
+fn textbox_create(win: Window, text: string, x: i32, y: i32, w: i32, h: i32, id: i32, multiline: bool): TextBox {
+    mut m: i32 = 0;
+    if (multiline) {
+        m = 1;
+    }
+    let ctrl: *void = sph_gui_textbox_create(win.hwnd, text, x, y, w, h, id, m);
+    return TextBox { hwnd: ctrl, id: id };
+}
+
+fn textbox_set_text(tb: TextBox, text: string): void {
+    sph_gui_set_text(tb.hwnd, text);
+}
+
+fn textbox_get_text(tb: TextBox): string {
+    return sph_gui_get_text(tb.hwnd);
+}
+
+struct ProgressBar {
+    hwnd: *void,
+    id: i32,
+}
+
+fn progressbar_create(win: Window, x: i32, y: i32, w: i32, h: i32, id: i32): ProgressBar {
+    let ctrl: *void = sph_gui_progressbar_create(win.hwnd, x, y, w, h, id);
+    return ProgressBar { hwnd: ctrl, id: id };
+}
+
+fn progressbar_set_pos(pb: ProgressBar, pos: i32): void {
+    sph_gui_progressbar_set_pos(pb.hwnd, pos);
+}
+
+fn progressbar_set_range(pb: ProgressBar, min_val: i32, max_val: i32): void {
+    sph_gui_progressbar_set_range(pb.hwnd, min_val, max_val);
+}
+
+struct Canvas2D {
+    canvas: *void,
+    width: i32,
+    height: i32,
+}
+
+fn canvas_create(win: Window, width: i32, height: i32): Canvas2D {
+    let c: *void = sph_canvas_create(win.hwnd, width, height);
+    return Canvas2D { canvas: c, width: width, height: height };
+}
+
+fn canvas_clear(c: Canvas2D, color: i32): void {
+    sph_canvas_clear(c.canvas, color);
+}
+
+fn canvas_fill_rect(c: Canvas2D, x: i32, y: i32, w: i32, h: i32, color: i32): void {
+    sph_canvas_fill_rect(c.canvas, x, y, w, h, color);
+}
+
+fn canvas_draw_rect(c: Canvas2D, x: i32, y: i32, w: i32, h: i32, color: i32): void {
+    sph_canvas_draw_rect(c.canvas, x, y, w, h, color);
+}
+
+fn canvas_present(c: Canvas2D): void {
+    sph_canvas_present(c.canvas);
+}
+
+fn canvas_destroy(c: Canvas2D): void {
+    sph_canvas_destroy(c.canvas);
+}
+
+fn gui_run(): void {
+    sph_gui_run_event_loop();
+}
+
+fn gui_pump(): bool {
+    let r: i32 = sph_gui_pump_events();
+    return r != 0;
+}
+
+fn gui_quit(): void {
+    sph_gui_quit();
+}
+
+fn gui_message_box(win: Window, text: string, title: string): i32 {
+    return sph_gui_messagebox(win.hwnd, text, title, 0);
+}
+
+// ----------------------------------------------------------------------------
+// Dynamic PHP Mode OOP Classes
+// ----------------------------------------------------------------------------
+
+class GuiWindow {
+    public $hwnd;
+    public $title;
+    public $width;
+    public $height;
+
+    function __construct($title, $width, $height) {
+        $this->title = $title;
+        $this->width = $width;
+        $this->height = $height;
+        $this->hwnd = sph_gui_window_create($title, $width, $height);
+    }
+
+    public function show(): void {
+        sph_gui_window_show($this->hwnd, 1);
+    }
+
+    public function hide(): void {
+        sph_gui_window_show($this->hwnd, 0);
+    }
+
+    public function close(): void {
+        sph_gui_window_close($this->hwnd);
+    }
+
+    public function setTitle($title): void {
+        sph_gui_window_set_title($this->hwnd, $title);
+    }
+
+    public function isOpen(): bool {
+        return sph_gui_window_is_open($this->hwnd) != 0;
+    }
+}
+
+class GuiButton {
+    public $hwnd;
+    public $id;
+
+    function __construct($parentWindow, $text, $x, $y, $w, $h, $id) {
+        $this->id = $id;
+        $this->hwnd = sph_gui_button_create($parentWindow->hwnd, $text, $x, $y, $w, $h, $id);
+    }
+
+    public function setText($text): void {
+        sph_gui_set_text($this->hwnd, $text);
+    }
+
+    public function getText(): string {
+        return sph_gui_get_text($this->hwnd);
+    }
+}
+
+class GuiInput {
+    public $hwnd;
+    public $id;
+
+    function __construct($parentWindow, $text, $x, $y, $w, $h, $id) {
+        $this->id = $id;
+        $this->hwnd = sph_gui_textbox_create($parentWindow->hwnd, $text, $x, $y, $w, $h, $id, 0);
+    }
+
+    public function setText($text): void {
+        sph_gui_set_text($this->hwnd, $text);
+    }
+
+    public function getText(): string {
+        return sph_gui_get_text($this->hwnd);
+    }
+
+    public function val(): string {
+        return sph_gui_get_text($this->hwnd);
+    }
+}
+
+class GuiTable {
+    public $hwnd;
+    public $id;
+
+    function __construct($parentWindow, $x, $y, $w, $h, $id) {
+        $this->id = $id;
+        $this->hwnd = sph_gui_listview_create($parentWindow->hwnd, $x, $y, $w, $h, $id);
+    }
+
+    public function addRow($text): i32 {
+        return sph_gui_listview_add_item($this->hwnd, $text);
+    }
+
+    public function getSelected(): i32 {
+        return sph_gui_listview_get_selected($this->hwnd);
+    }
+}

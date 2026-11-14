@@ -37,6 +37,8 @@ struct Manifest {
     // [build]
     std::string buildMode = "debug";
     std::string optimization = "0";
+    std::string subsystem = "console";
+    std::string icon;
 
     // [memory]
     std::string memory = "automatic";
@@ -47,6 +49,10 @@ struct Manifest {
 
     [[nodiscard]] bool isDynamicMode() const noexcept {
         return compatPhp || compatMode == CompatibilityMode::Dynamic || compatMode == CompatibilityMode::Transitional;
+    }
+
+    [[nodiscard]] bool isGuiSubsystem() const noexcept {
+        return subsystem == "windows" || subsystem == "gui";
     }
 
     static std::optional<Manifest> fromString(const std::string& tomlContent);

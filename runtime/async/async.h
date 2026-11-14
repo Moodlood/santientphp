@@ -81,6 +81,9 @@ void* sph_event_loop_spawn(void* fn_ptr, void* arg);
 void sph_event_loop_yield(void);
 void sph_event_loop_run(void);
 
+typedef int32_t (*sph_event_loop_pump_hook_fn)(void);
+void sph_event_loop_set_pump_hook(sph_event_loop_pump_hook_fn hook);
+
 #ifdef __cplusplus
 }
 #endif

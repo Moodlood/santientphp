@@ -124,6 +124,8 @@ void printHelp() {
               << "  --title=<title>         Custom title for documentation\n"
               << "  --mode=<mode>           Set compatibility mode (strict, transitional, dynamic)\n"
               << "  --compat-php            Enable PHP compatibility mode\n"
+              << "  --gui                   Compile as native GUI application (Windows GUI subsystem)\n"
+              << "  --subsystem=<subsys>    Set PE subsystem (windows, console)\n"
               << "  -v, --version           Display version information\n"
               << "  -h, --help              Display this help message\n";
 }
@@ -207,6 +209,110 @@ std::filesystem::path findRuntimeLibrary() {
         }
     }
     return "build/lib/libsph_runtime.a";
+}
+
+std::filesystem::path findGuiRuntimeLibrary() {
+    std::vector<std::filesystem::path> candidates;
+
+    if (const char* sphHome = std::getenv("SPH_HOME")) {
+        candidates.push_back(std::filesystem::path(sphHome) / "lib" / "libsph_gui.a");
+        candidates.push_back(std::filesystem::path(sphHome) / "libsph_gui.a");
+    }
+    if (const char* sphHome2 = std::getenv("SANTIENTPHP_HOME")) {
+        candidates.push_back(std::filesystem::path(sphHome2) / "lib" / "libsph_gui.a");
+        candidates.push_back(std::filesystem::path(sphHome2) / "libsph_gui.a");
+    }
+
+    std::filesystem::path exeDir = getExecutableDir();
+    candidates.push_back(exeDir / "libsph_gui.a");
+    candidates.push_back(exeDir / "lib" / "libsph_gui.a");
+    candidates.push_back(exeDir.parent_path() / "lib" / "libsph_gui.a");
+    candidates.push_back(exeDir.parent_path() / "libsph_gui.a");
+    candidates.push_back(exeDir.parent_path().parent_path() / "build" / "lib" / "libsph_gui.a");
+    candidates.push_back(exeDir.parent_path().parent_path() / "lib" / "libsph_gui.a");
+
+    candidates.push_back("C:/Program Files/SantientPHP/lib/libsph_gui.a");
+    candidates.push_back("C:/SantientPHP/lib/libsph_gui.a");
+
+    candidates.push_back("build/lib/libsph_gui.a");
+    candidates.push_back("lib/libsph_gui.a");
+    candidates.push_back("../lib/libsph_gui.a");
+    candidates.push_back("../../lib/libsph_gui.a");
+    candidates.push_back("../build/lib/libsph_gui.a");
+
+    for (const auto& c : candidates) {
+        std::error_code ec;
+        if (!c.empty() && std::filesystem::exists(c, ec)) {
+            return std::filesystem::canonical(c, ec);
+        }
+    }
+    return "build/lib/libsph_gui.a";
+}
+
+std::filesystem::path compileWindowsGuiResource(const std::string& iconPath, const std::string& baseName) {
+#if defined(_WIN32)
+    if (std::system("where.exe windres >nul 2>&1") != 0) {
+        return "";
+    }
+
+    std::filesystem::path tempDir = std::filesystem::temp_directory_path();
+    std::filesystem::path manifestPath = tempDir / (baseName + "_app.manifest");
+    std::filesystem::path rcPath = tempDir / (baseName + "_app.rc");
+    std::filesystem::path objPath = tempDir / (baseName + "_res.o");
+
+    {
+        std::ofstream mf(manifestPath);
+        if (mf.is_open()) {
+            mf << "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
+               << "<assembly xmlns=\"urn:schemas-microsoft-com:asm.v1\" manifestVersion=\"1.0\">\n"
+               << "  <assemblyIdentity version=\"1.0.0.0\" processorArchitecture=\"*\" name=\"SantientPHP.App\" type=\"win32\"/>\n"
+               << "  <description>SantientPHP Native GUI Application</description>\n"
+               << "  <dependency>\n"
+               << "    <dependentAssembly>\n"
+               << "      <assemblyIdentity type=\"win32\" name=\"Microsoft.Windows.Common-Controls\" version=\"6.0.0.0\" processorArchitecture=\"*\" publicKeyToken=\"6595b64144ccf1df\" language=\"*\"/>\n"
+               << "    </dependentAssembly>\n"
+               << "  </dependency>\n"
+               << "  <application xmlns=\"urn:schemas-microsoft-com:asm.v3\">\n"
+               << "    <windowsSettings>\n"
+               << "      <dpiAware xmlns=\"http://schemas.microsoft.com/SMI/2005/WindowsSettings\">true/pm</dpiAware>\n"
+               << "      <dpiAwareness xmlns=\"http://schemas.microsoft.com/SMI/2016/WindowsSettings\">PerMonitorV2, PerMonitor</dpiAwareness>\n"
+               << "    </windowsSettings>\n"
+               << "  </application>\n"
+               << "  <compatibility xmlns=\"urn:schemas-microsoft-com:compatibility.v1\">\n"
+               << "    <application>\n"
+               << "      <supportedOS Id=\"{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}\"/>\n"
+               << "      <supportedOS Id=\"{1f676c76-80e1-4239-95bb-83d0f6d0da78}\"/>\n"
+               << "      <supportedOS Id=\"{4a2f28e3-53b9-4441-ba9c-d69d4a4a6e38}\"/>\n"
+               << "      <supportedOS Id=\"{35138b9a-5d96-4fbd-8e2d-a2440225f93a}\"/>\n"
+               << "    </application>\n"
+               << "  </compatibility>\n"
+               << "</assembly>\n";
+        }
+    }
+
+    {
+        std::ofstream rc(rcPath);
+        if (rc.is_open()) {
+            if (!iconPath.empty() && std::filesystem::exists(iconPath)) {
+                std::string normIcon = std::filesystem::path(iconPath).generic_string();
+                rc << "1 ICON \"" << normIcon << "\"\n";
+            }
+            std::string normManifest = manifestPath.generic_string();
+            rc << "1 24 \"" << normManifest << "\"\n";
+        }
+    }
+
+    std::string cmd = "windres -i \"" + rcPath.string() + "\" -o \"" + objPath.string() + "\"";
+    int res = std::system(cmd.c_str());
+    if (res == 0 && std::filesystem::exists(objPath)) {
+        return objPath;
+    }
+    return "";
+#else
+    (void)iconPath;
+    (void)baseName;
+    return "";
+#endif
 }
 
 std::unique_ptr<sph::IRModule> compileToIR(const std::string& path, sph::SourceManager& sourceManager,
@@ -432,7 +538,8 @@ int cmdInspect(const std::string& path, const std::string& stage, bool forceDyna
 
 int cmdBuild(const std::string& path, std::string outExe, bool forceDynamic = false,
              sph::OptimizationLevel optLevel = sph::OptimizationLevel::O0, bool debugInfo = false,
-             const sph::Target& target = sph::Target::getHostTarget()) {
+             const sph::Target& target = sph::Target::getHostTarget(),
+             bool isGui = false, const std::string& iconPath = "") {
     std::filesystem::path srcPath(path);
     if (outExe.empty()) {
         outExe = srcPath.stem().string() + target.getExecutableExtension();
@@ -446,10 +553,24 @@ int cmdBuild(const std::string& path, std::string outExe, bool forceDynamic = fa
     }
 
     std::filesystem::path runtimeLib = findRuntimeLibrary();
+    std::filesystem::path guiLib = isGui ? findGuiRuntimeLibrary() : std::filesystem::path();
+    std::filesystem::path resObj;
+    if (isGui && target.isWindows()) {
+        resObj = compileWindowsGuiResource(iconPath, srcPath.stem().string());
+    }
+
     sph::Linker linker;
     std::string errorMsg;
     std::string optFlag = (optLevel != sph::OptimizationLevel::O0) ? sph::optimizationLevelToString(optLevel) : "";
-    bool linkOk = linker.linkExecutable(asmPath, outExe, runtimeLib, errorMsg, optFlag, debugInfo, target);
+    bool linkOk = linker.linkExecutable(asmPath, outExe, runtimeLib, errorMsg, optFlag, debugInfo, target, isGui, guiLib, resObj);
+
+    if (!resObj.empty()) {
+        std::error_code ec;
+        std::filesystem::remove(resObj, ec);
+        std::filesystem::path tempDir = std::filesystem::temp_directory_path();
+        std::filesystem::remove(tempDir / (srcPath.stem().string() + "_app.manifest"), ec);
+        std::filesystem::remove(tempDir / (srcPath.stem().string() + "_app.rc"), ec);
+    }
 
     if (!linkOk) {
         if (target.isCrossCompileFromHost()) {
@@ -465,13 +586,15 @@ int cmdBuild(const std::string& path, std::string outExe, bool forceDynamic = fa
     // Clean up temporary .s file on successful host link
     std::filesystem::remove(asmPath);
 
-    std::cout << "Successfully compiled: " << outExe << " (target: " << target.getShortName() << ")\n";
+    std::cout << "Successfully compiled: " << outExe << " (target: " << target.getShortName()
+              << (isGui ? ", subsystem: windows" : "") << ")\n";
     return 0;
 }
 
 int cmdRun(const std::string& path, bool forceDynamic = false,
            sph::OptimizationLevel optLevel = sph::OptimizationLevel::O0, bool debugInfo = false,
-           const sph::Target& target = sph::Target::getHostTarget()) {
+           const sph::Target& target = sph::Target::getHostTarget(),
+           bool isGui = false, const std::string& iconPath = "") {
     if (target.isCrossCompileFromHost()) {
         std::cerr << "error: 'run' command cannot execute binaries cross-compiled for target '"
                   << target.getCanonicalTriple() << "' on host system '"
@@ -484,7 +607,7 @@ int cmdRun(const std::string& path, bool forceDynamic = false,
     std::string ext = target.isWindows() ? "_run.exe" : "_run";
     std::string tempExe = (std::filesystem::temp_directory_path() / (srcPath.stem().string() + ext)).string();
 
-    int buildRes = cmdBuild(path, tempExe, forceDynamic, optLevel, debugInfo, target);
+    int buildRes = cmdBuild(path, tempExe, forceDynamic, optLevel, debugInfo, target, isGui, iconPath);
     if (buildRes != 0) {
         return buildRes;
     }
@@ -795,6 +918,9 @@ int main(int argc, char* argv[]) {
     bool toStdout = false;
     std::string docFormat = "html";
     std::string docTitle;
+    bool isGui = false;
+    bool subsystemExplicit = false;
+    std::string iconPath;
 
     for (int i = 2; i < argc; ++i) {
         std::string_view a = argv[i];
@@ -806,6 +932,12 @@ int main(int argc, char* argv[]) {
         } else if (a.rfind("--target=", 0) == 0) {
             targetStr = std::string(a.substr(9));
             targetExplicit = true;
+        } else if (a == "--gui" || a == "--subsystem=windows" || a == "--subsystem=gui") {
+            isGui = true;
+            subsystemExplicit = true;
+        } else if (a == "--subsystem=console") {
+            isGui = false;
+            subsystemExplicit = true;
         } else if (a.rfind("--format=", 0) == 0) {
             docFormat = std::string(a.substr(9));
         } else if (a.rfind("--title=", 0) == 0) {
@@ -880,6 +1012,18 @@ int main(int argc, char* argv[]) {
         auto manifest = sph::Manifest::findInPath(".");
         if (manifest && (manifest->buildMode == "debug" || manifest->optimization == "debug")) {
             debugInfo = true;
+        }
+    }
+
+    {
+        auto manifest = sph::Manifest::findInPath(".");
+        if (manifest) {
+            if (!subsystemExplicit && manifest->isGuiSubsystem()) {
+                isGui = true;
+            }
+            if (iconPath.empty() && !manifest->icon.empty()) {
+                iconPath = manifest->icon;
+            }
         }
     }
 
@@ -965,7 +1109,7 @@ int main(int argc, char* argv[]) {
             std::cerr << "error: missing source file argument for 'build'\n";
             return 1;
         }
-        return cmdBuild(srcFile, outPath, forceDynamic, optLevel, debugInfo, target);
+        return cmdBuild(srcFile, outPath, forceDynamic, optLevel, debugInfo, target, isGui, iconPath);
     }
 
     if (arg1 == "run") {
@@ -974,7 +1118,7 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         sph::Target runTarget = targetExplicit ? target : sph::Target::getHostTarget();
-        return cmdRun(srcFile, forceDynamic, optLevel, debugInfo, runTarget);
+        return cmdRun(srcFile, forceDynamic, optLevel, debugInfo, runTarget, isGui, iconPath);
     }
 
     if (arg1 == "test") {

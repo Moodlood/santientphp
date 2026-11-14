@@ -83,6 +83,8 @@ std::optional<Manifest> Manifest::fromString(const std::string& tomlContent) {
         } else if (currentSection == "build") {
             if (key == "mode") manifest.buildMode = val;
             else if (key == "optimization") manifest.optimization = val;
+            else if (key == "subsystem") manifest.subsystem = val;
+            else if (key == "icon") manifest.icon = val;
         } else if (currentSection == "memory") {
             if (key == "default") manifest.memory = val;
         } else if (currentSection == "compatibility") {

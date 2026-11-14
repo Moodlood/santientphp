@@ -39,7 +39,10 @@ bool Linker::linkExecutable(const std::filesystem::path& asmPath,
                            std::string& errorMsg,
                            const std::string& optLevel,
                            bool debugInfo,
-                           const Target& target) const {
+                           const Target& target,
+                           bool isGui,
+                           const std::filesystem::path& guiLibPath,
+                           const std::filesystem::path& resourceObjPath) const {
     std::string tool;
     if (target.isHost()) {
         static std::string cachedHostTool;
@@ -91,10 +94,24 @@ bool Linker::linkExecutable(const std::filesystem::path& asmPath,
     if (std::filesystem::exists(runtimeLibPath)) {
         cmd << "\"" << runtimeLibPath.string() << "\" ";
     }
+    if (isGui && !guiLibPath.empty() && std::filesystem::exists(guiLibPath)) {
+        cmd << "\"" << guiLibPath.string() << "\" ";
+    }
+    if (!resourceObjPath.empty() && std::filesystem::exists(resourceObjPath)) {
+        cmd << "\"" << resourceObjPath.string() << "\" ";
+    }
 #if defined(_WIN32)
-    cmd << "-static-libgcc -lws2_32 ";
+    if (isGui) {
+        cmd << "-mwindows -static-libgcc -lws2_32 -lcomctl32 -lgdi32 -luser32 -lopengl32 -lole32 -luuid ";
+    } else {
+        cmd << "-static-libgcc -lws2_32 ";
+    }
 #else
-    cmd << "-no-pie -lpthread -ldl -lm ";
+    if (isGui) {
+        cmd << "-no-pie -lpthread -ldl -lm -lGL ";
+    } else {
+        cmd << "-no-pie -lpthread -ldl -lm ";
+    }
 #endif
 
     cmd << "-o \"" << outputPath.string() << "\"";

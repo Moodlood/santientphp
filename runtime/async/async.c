@@ -329,6 +329,12 @@ void* sph_promise_get_value(void* promise_ptr) {
     return p->value;
 }
 
+static sph_event_loop_pump_hook_fn g_event_loop_pump_hook = NULL;
+
+void sph_event_loop_set_pump_hook(sph_event_loop_pump_hook_fn hook) {
+    g_event_loop_pump_hook = hook;
+}
+
 #if defined(_WIN32)
 
 void sph_event_loop_init(void) {
@@ -421,8 +427,15 @@ void* sph_promise_await(void* promise_ptr) {
         return p->value;
     } else {
         while (p->state == SPH_PROMISE_PENDING) {
+            if (g_event_loop_pump_hook) {
+                g_event_loop_pump_hook();
+            }
             void* next_fiber = sph_event_loop_pop_fiber();
             if (!next_fiber) {
+                if (g_event_loop_pump_hook) {
+                    Sleep(5);
+                    continue;
+                }
                 break;
             }
             g_event_loop.running_fiber = next_fiber;
@@ -440,8 +453,17 @@ void* sph_promise_await(void* promise_ptr) {
 void sph_event_loop_run(void) {
     sph_event_loop_init();
     while (1) {
+        if (g_event_loop_pump_hook) {
+            if (!g_event_loop_pump_hook()) {
+                break;
+            }
+        }
         void* next_fiber = sph_event_loop_pop_fiber();
         if (!next_fiber) {
+            if (g_event_loop_pump_hook) {
+                Sleep(10);
+                continue;
+            }
             break;
         }
         g_event_loop.running_fiber = next_fiber;
@@ -547,6 +569,11 @@ void* sph_promise_await(void* promise_ptr) {
 void sph_event_loop_run(void) {
     sph_event_loop_init();
     while (1) {
+        if (g_event_loop_pump_hook) {
+            if (!g_event_loop_pump_hook()) {
+                break;
+            }
+        }
         void* next = sph_event_loop_pop_fiber();
         if (!next) break;
         sph_posix_coro* coro = (sph_posix_coro*)next;

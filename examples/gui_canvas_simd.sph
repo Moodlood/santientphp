@@ -1,0 +1,41 @@
+<?php
+
+// ============================================================================
+// SantientPHP SIMD Framebuffer Canvas Example (Tier 2)
+// Compile with: sphc build --gui examples/gui_canvas_simd.sph
+// ============================================================================
+
+import "std/gui.sph";
+
+fn main(): i32 {
+    let win: Window = window_create("SIMD Framebuffer Canvas 2D", 640, 480);
+    let canvas: Canvas2D = canvas_create(win, 640, 480);
+
+    // Clear background with dark slate
+    canvas_clear(canvas, 0xFF1E1E2E);
+
+    // Draw grid of colored rectangles accelerated by 128-bit SIMD
+    mut y: i32 = 40;
+    while (y < 400) {
+        mut x: i32 = 40;
+        while (x < 600) {
+            canvas_fill_rect(canvas, x, y, 40, 40, 0xFF4FC3F7);
+            canvas_draw_rect(canvas, x, y, 40, 40, 0xFFFFFFFF);
+            x = x + 60;
+        }
+        y = y + 60;
+    }
+
+    canvas_present(canvas);
+    window_show(win);
+
+    while (window_is_open(win)) {
+        if (!gui_pump()) {
+            break;
+        }
+    }
+
+    canvas_destroy(canvas);
+    return 0;
+}
+

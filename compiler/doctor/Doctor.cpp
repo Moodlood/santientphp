@@ -227,6 +227,23 @@ std::vector<ToolchainCheck> Doctor::runChecks() const {
     checks.push_back(ToolchainCheck{
         "Libraries", "Windows Native Subsystems", sysLibDetails, sysLibsOk, false
     });
+
+    // 6b. Windows GUI & Hardware Acceleration Subsystems
+    bool hasUser32 = checkSystemLibrary("user32.dll");
+    bool hasGdi32 = checkSystemLibrary("gdi32.dll");
+    bool hasComctl32 = checkSystemLibrary("comctl32.dll");
+    bool hasOpengl32 = checkSystemLibrary("opengl32.dll");
+
+    std::string guiLibDetails;
+    if (hasUser32) guiLibDetails += "user32.dll (windowing)";
+    if (hasGdi32) guiLibDetails += ", gdi32.dll (GDI/DIB blit)";
+    if (hasComctl32) guiLibDetails += ", comctl32.dll (modern controls v6)";
+    if (hasOpengl32) guiLibDetails += ", opengl32.dll (hardware 2D/3D)";
+
+    bool guiLibsOk = hasUser32 && hasGdi32 && hasComctl32;
+    checks.push_back(ToolchainCheck{
+        "Libraries", "Windows GUI Subsystems", guiLibDetails, guiLibsOk, false
+    });
 #endif
 
     // 7. SantientPHP Runtime Sources
@@ -282,6 +299,29 @@ std::vector<ToolchainCheck> Doctor::runChecks() const {
     } else {
         checks.push_back(ToolchainCheck{
             "Runtime", "SantientPHP Core Runtime", "Missing libsph_runtime.a or runtime sources", false, false
+        });
+    }
+
+    // 7a. Native GUI Runtime Library (libsph_gui.a)
+    bool hasGuiLib = false;
+    bool hasGuiSrc = false;
+    for (const auto& root : searchRoots) {
+        if (!hasGuiLib && (std::filesystem::exists(root / "lib" / "libsph_gui.a", ec) ||
+                           std::filesystem::exists(root / "build" / "lib" / "libsph_gui.a", ec) ||
+                           std::filesystem::exists(root / "libsph_gui.a", ec))) hasGuiLib = true;
+        if (!hasGuiSrc && std::filesystem::exists(root / "runtime" / "gui" / "gui.h", ec)) hasGuiSrc = true;
+    }
+    if (!hasGuiLib) hasGuiLib = std::filesystem::exists("build/lib/libsph_gui.a", ec) || std::filesystem::exists("lib/libsph_gui.a", ec);
+    if (!hasGuiSrc) hasGuiSrc = std::filesystem::exists("runtime/gui/gui.h", ec) || std::filesystem::exists("../runtime/gui/gui.h", ec);
+
+    if (hasGuiLib || hasGuiSrc) {
+        std::string guiInfo = hasGuiLib ? "Precompiled native GUI library present (libsph_gui.a)" : "Native GUI runtime sources present (runtime/gui)";
+        checks.push_back(ToolchainCheck{
+            "Runtime", "SantientPHP GUI Runtime", guiInfo, true, true
+        });
+    } else {
+        checks.push_back(ToolchainCheck{
+            "Runtime", "SantientPHP GUI Runtime", "libsph_gui.a not built yet", false, true
         });
     }
 

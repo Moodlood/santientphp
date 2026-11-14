@@ -338,6 +338,24 @@ JsonValue LspServer::handleHover(const JsonValue& /*id*/, const JsonValue& param
         markdown = "```santientphp\necho <expr>, ...;\n```\nPHP-compatible output statement.";
     } else if (word == "var_dump") {
         markdown = "```santientphp\nfn var_dump(val: any): void\n```\nPHP-compatible detailed value inspection and debugging dump.";
+    } else if (word == "Window") {
+        markdown = "```santientphp\nstruct Window\n```\nNative GUI window handle with title, dimensions, and lifecycle control.";
+    } else if (word == "Button") {
+        markdown = "```santientphp\nstruct Button\n```\nNative Win32 push button control.";
+    } else if (word == "TextBox") {
+        markdown = "```santientphp\nstruct TextBox\n```\nSingle or multi-line native text input control.";
+    } else if (word == "ProgressBar") {
+        markdown = "```santientphp\nstruct ProgressBar\n```\nNative Win32 visual progress indicator.";
+    } else if (word == "Canvas2D") {
+        markdown = "```santientphp\nstruct Canvas2D\n```\nHardware-accelerated 32-bit RGBA pixel surface powered by 128-bit SIMD vectors and OpenGL.";
+    } else if (word == "GuiWindow") {
+        markdown = "```santientphp\nclass GuiWindow\n```\nDynamic PHP-mode OOP window wrapper with event bindings.";
+    } else if (word == "GuiButton") {
+        markdown = "```santientphp\nclass GuiButton\n```\nDynamic PHP-mode button control.";
+    } else if (word == "GuiInput") {
+        markdown = "```santientphp\nclass GuiInput\n```\nDynamic PHP-mode text input field.";
+    } else if (word == "GuiEvent") {
+        markdown = "```santientphp\n#[repr(C)] struct GuiEvent\n```\nLow-level C-compatible GUI event structure for Win32 message procedure hooks.";
     } else {
         // 2. Check AST for declared symbols
         SourceManager sm;
@@ -465,7 +483,9 @@ JsonValue LspServer::handleCompletion(const JsonValue& /*id*/, const JsonValue& 
         "i32", "i64", "u32", "u64", "f32", "f64", "bool", "string", "void", "dynamic",
         "f32x4", "i32x4", "f64x2", "i64x2",
         "AtomicI32", "AtomicI64", "AtomicBool",
-        "Vec", "Rc", "Box", "Arena", "Promise"
+        "Vec", "Rc", "Box", "Arena", "Promise",
+        "Window", "Button", "TextBox", "ProgressBar", "Canvas2D",
+        "GuiWindow", "GuiButton", "GuiInput", "GuiTable", "GuiEvent"
     };
 
     for (const auto& ty : types) {
@@ -483,7 +503,11 @@ JsonValue LspServer::handleCompletion(const JsonValue& /*id*/, const JsonValue& 
         {"array_pop", "fn array_pop(&arr: dynamic): dynamic"},
         {"explode", "fn explode(delim: string, str: string): dynamic"},
         {"implode", "fn implode(glue: string, pieces: dynamic): string"},
-        {"strlen", "fn strlen(s: string): i32"}
+        {"strlen", "fn strlen(s: string): i32"},
+        {"sph_gui_window_create", "fn sph_gui_window_create(title: string, w: i32, h: i32): *mut void"},
+        {"sph_canvas_create", "fn sph_canvas_create(hwnd: *mut void, w: i32, h: i32): *mut void"},
+        {"sph_gui_pump_events", "fn sph_gui_pump_events(): i32"},
+        {"sph_gui_run_event_loop", "fn sph_gui_run_event_loop(): void"}
     };
 
     for (const auto& [b, det] : builtins) {
