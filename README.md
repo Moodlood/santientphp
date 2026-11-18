@@ -6,6 +6,7 @@
 
 <p align="center">
   <a href="https://github.com/Moodlood/santientphp/actions/workflows/ci.yml"><img src="https://github.com/Moodlood/santientphp/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/Moodlood/santientphp/releases/latest"><img src="https://img.shields.io/github/v/release/Moodlood/santientphp?logo=github&color=blue" alt="Latest Release" /></a>
   <a href="tests/"><img src="https://img.shields.io/badge/tests-264%20passed%20(100%25)-brightgreen.svg" alt="Tests" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
   <a href="compiler/"><img src="https://img.shields.io/badge/compiler-C%2B%2B20-00599C?logo=c%2B%2B" alt="C++20" /></a>
@@ -51,7 +52,19 @@
 
 ## Quick Start
 
-### 1. Build the Compiler
+### 1. Download Prebuilt Binaries (Recommended)
+
+Precompiled standalone binaries and the official VS Code extension are available directly from **[GitHub Releases](https://github.com/Moodlood/santientphp/releases/latest)**:
+
+- **Windows x64**: `santientphp-v0.1.0-windows-x64.zip`
+- **Linux x64**: `santientphp-v0.1.0-linux-x64.tar.gz`
+- **VS Code Extension**: `santientphp-0.1.0.vsix`
+
+Extract the Windows archive and run `install.bat` (or `install.ps1`) to automatically configure `sphc.exe` in your system `PATH` and register file associations.
+
+---
+
+### 2. Or Build from Source
 
 **Prerequisites**:
 - C++20 compiler (GCC 14+ / Clang 17+ on MinGW-w64 or Linux)
@@ -67,7 +80,7 @@ ninja -C build
 .\build\bin\sph_tests.exe
 ```
 
-### 2. Install to Windows (Drive C & Program Files)
+### 3. Install to Windows (Drive C & Program Files)
 
 Install SantientPHP as a system-wide compiler just like standard PHP:
 
@@ -86,7 +99,7 @@ This installs:
 
 To uninstall at any time, run `uninstall.bat` or `uninstall.ps1` (or uninstall from Windows Settings / Control Panel).
 
-### 3. Verify Your Toolchain
+### 4. Verify Your Toolchain
 
 ```powershell
 .\build\bin\sphc.exe doctor
@@ -105,7 +118,7 @@ SantientPHP Doctor [v0.1.0]
   [OK] SantientPHP Standard Library (stdlib/): Found at stdlib/
 ```
 
-### 4. Run Your First Program
+### 5. Run Your First Program
 
 Create `hello.sph`:
 
@@ -249,9 +262,17 @@ The official Visual Studio Code extension is located in [editors/vscode](editors
 - Automatically connects to `sphc lsp` for live diagnostics, autocompletion, hover docs, and symbol outlines.
 - One-click commands for `sphc build`, `sphc run`, `sphc fmt`, and `sphc doctor`.
 
-Install locally:
+Install the packaged `.vsix` (from [GitHub Releases](https://github.com/Moodlood/santientphp/releases/latest)):
 ```powershell
-code --install-extension editors\vscode\santientphp-0.1.0.vsix
+code --install-extension santientphp-0.1.0.vsix
+```
+
+Or build and package from source:
+```powershell
+cd editors/vscode
+npm install
+npx @vscode/vsce package
+code --install-extension santientphp-0.1.0.vsix
 ```
 
 ---
@@ -279,6 +300,7 @@ santientphp/
 │   └── types/             # Static and dynamic type system
 ├── runtime/               # Modular C runtime libraries & Platform Abstraction Layer
 │   ├── core/              # Memory allocators, arenas, Rc, strings, vectors, SIMD
+│   ├── gui/               # Win32 native controls, SIMD RGBA canvas, event loop fusion
 │   ├── async/             # Atomics, threads, fibers, promises, and event loop
 │   ├── compat/            # Dynamic sph_value, PHP arrays, PDO SQLite, cURL
 │   └── pal.h              # Unified cross-platform OS abstraction (Win32 & POSIX)
@@ -293,8 +315,10 @@ santientphp/
 │   └── vscode/            # Official VS Code extension and LSP client
 ├── docs/                  # Language specification (1.0 Freeze), architecture, tutorials
 ├── examples/              # Positive language examples and feature demonstrations
-├── tests/                 # 254 automated unit and integration tests (100% pass)
-├── tools/sphc/            # Main compiler CLI driver
+├── tests/                 # 264 automated unit and integration tests (100% pass)
+├── tools/                 # Compiler CLI and release packaging
+│   ├── sphc/              # Main compiler CLI driver
+│   └── package_release.ps1 # Portable distribution packager
 ├── CMakeLists.txt         # Root build configuration
 ├── CONTRIBUTING.md        # Contribution guidelines and coding conventions
 ├── LICENSE                # MIT License
