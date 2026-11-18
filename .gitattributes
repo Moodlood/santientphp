@@ -1,0 +1,27 @@
+# Auto-detect text files and normalize line endings
+* text=auto eol=lf
+
+# Windows-specific scripts
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# SantientPHP Language Mapping for GitHub Linguist & Git Diff
+*.sph linguist-language=PHP diff=php
+
+# Config and manifest syntax mapping for GitHub
+sph.toml linguist-language=TOML
+*.ini linguist-language=INI
+*.ini-* linguist-language=INI
+
+# Explicit binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.svg text
+*.vsix binary
+*.exe binary
+*.dll binary
+*.lib binary
+*.obj binary
+
