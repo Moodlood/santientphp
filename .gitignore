@@ -1,5 +1,6 @@
 # Build directories and CMake / Ninja outputs
 build/
+dist/
 cmake-build-*/
 out/
 bin/
