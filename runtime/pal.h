@@ -17,6 +17,7 @@ typedef HMODULE sph_lib_handle;
 #include <pthread.h>
 #include <unistd.h>
 #include <time.h>
+#include <sys/time.h>
 #include <dlfcn.h>
 
 typedef void* sph_lib_handle;

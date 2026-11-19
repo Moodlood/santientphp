@@ -328,6 +328,9 @@ void* sph_promise_create(void) {
     return (void*)p;
 }
 
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((unused))
+#endif
 static void sph_promise_add_waiter(sph_promise* p, void* fiber) {
     if (!p || !fiber) return;
     for (int32_t i = 0; i < p->waiting_count; ++i) {
@@ -607,17 +610,27 @@ void* sph_promise_await(void* promise_ptr) {
     }
 
     sph_event_loop_init();
-    while (p->state == SPH_PROMISE_PENDING) {
-        void* next = sph_event_loop_pop_fiber();
-        if (!next) break;
-        sph_posix_coro* coro = (sph_posix_coro*)next;
-        g_current_coro = coro;
-        swapcontext(&g_posix_main_ctx, &coro->ctx);
-        if (coro->is_finished) {
-            free(coro);
+    if (g_current_coro) {
+        sph_posix_coro* cur = g_current_coro;
+        while (p->state == SPH_PROMISE_PENDING) {
+            sph_promise_add_waiter(p, cur);
+            g_current_coro = NULL;
+            swapcontext(&cur->ctx, &g_posix_main_ctx);
         }
+        return p->value;
+    } else {
+        while (p->state == SPH_PROMISE_PENDING) {
+            void* next = sph_event_loop_pop_fiber();
+            if (!next) break;
+            sph_posix_coro* coro = (sph_posix_coro*)next;
+            g_current_coro = coro;
+            swapcontext(&g_posix_main_ctx, &coro->ctx);
+            if (coro->is_finished) {
+                free(coro);
+            }
+        }
+        return p->value;
     }
-    return p->value;
 }
 
 void sph_event_loop_run(void) {
