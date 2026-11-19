@@ -1,6 +1,10 @@
 #include "X86_64CodeGen.hpp"
 #include <cstring>
 #include <iostream>
+#include <sstream>
+#include <vector>
+
+#define m_out (*m_pOut)
 
 namespace sph {
 
@@ -75,7 +79,13 @@ void X86_64CodeGen::loadValueToReg(const IRValue& val, const std::string& reg) {
         return;
     }
 
-    if (val.isInstruction() && static_cast<const IRInstruction&>(val).getOpcode() == IROpcode::Alloca) {
+    bool isAllocaOrBigStructCall = val.isInstruction() &&
+        (static_cast<const IRInstruction&>(val).getOpcode() == IROpcode::Alloca ||
+         (static_cast<const IRInstruction&>(val).getOpcode() == IROpcode::Call &&
+          val.getType()->isStruct() &&
+          std::static_pointer_cast<StructType>(val.getType())->getSize() > 8 &&
+          static_cast<const CallInst&>(val).getCallee().rfind("sph_", 0) != 0));
+    if (isAllocaOrBigStructCall) {
         int32_t offset = getSlotOffset(val);
         m_out << "  lea " << reg << ", [rbp - " << offset << "]\n";
         return;
@@ -185,6 +195,19 @@ void X86_64CodeGen::generateFunction(const IRFunction& fn) {
     m_slots.clear();
     m_currentOffset = 0;
 
+    m_currentFnReturnsSret = false;
+    m_currentFnSretSlot = 0;
+    m_currentFnSretSize = 0;
+    if (fn.getReturnType() && fn.getReturnType()->isStruct()) {
+        auto structType = std::static_pointer_cast<StructType>(fn.getReturnType());
+        if (structType->getSize() > 8) {
+            m_currentFnReturnsSret = true;
+            m_currentFnSretSize = static_cast<int32_t>(structType->getSize());
+            m_currentOffset += 8;
+            m_currentFnSretSlot = m_currentOffset;
+        }
+    }
+
     // First pass: allocate slots for all parameters, allocas, and instructions
     const auto& params = fn.getParameters();
     for (const auto& param : params) {
@@ -196,8 +219,12 @@ void X86_64CodeGen::generateFunction(const IRFunction& fn) {
         for (const auto& inst : bb->getInstructions()) {
             if (inst->getOpcode() == IROpcode::Call) {
                 const auto& callInst = static_cast<const CallInst&>(*inst);
-                if (callInst.getArgs().size() > maxCallArgs) {
-                    maxCallArgs = callInst.getArgs().size();
+                bool isSret = callInst.getType()->isStruct() &&
+                    std::static_pointer_cast<StructType>(callInst.getType())->getSize() > 8 &&
+                    callInst.getCallee().rfind("sph_", 0) != 0;
+                size_t callArgCount = callInst.getArgs().size() + (isSret ? 1 : 0);
+                if (callArgCount > maxCallArgs) {
+                    maxCallArgs = callArgCount;
                 }
             }
             if (inst->getOpcode() == IROpcode::Alloca) {
@@ -218,12 +245,25 @@ void X86_64CodeGen::generateFunction(const IRFunction& fn) {
                 }
                 m_currentOffset += size;
                 m_slots[inst.get()] = m_currentOffset;
+            } else if (inst->getOpcode() == IROpcode::Call) {
+                const auto& callInst = static_cast<const CallInst&>(*inst);
+                bool isSret = callInst.getType()->isStruct() &&
+                    std::static_pointer_cast<StructType>(callInst.getType())->getSize() > 8 &&
+                    callInst.getCallee().rfind("sph_", 0) != 0;
+                if (isSret) {
+                    auto structType = std::static_pointer_cast<StructType>(callInst.getType());
+                    int32_t size = static_cast<int32_t>(structType->getSize());
+                    size = (size + 7) & ~7;
+                    m_currentOffset += size;
+                    m_slots[inst.get()] = m_currentOffset;
+                } else {
+                    getSlotOffset(*inst);
+                }
             } else if (inst->getOpcode() == IROpcode::Load ||
                        inst->getOpcode() == IROpcode::GetFieldPtr ||
                        inst->getOpcode() == IROpcode::GetElementPtr ||
                        inst->getOpcode() == IROpcode::AddressOf ||
                        inst->getOpcode() == IROpcode::SetJmp ||
-                       inst->getOpcode() == IROpcode::Call ||
                        inst->getOpcode() == IROpcode::RcAlloc ||
                        (inst->getOpcode() >= IROpcode::Add && inst->getOpcode() <= IROpcode::Cast)) {
                 getSlotOffset(*inst);
@@ -266,8 +306,11 @@ void X86_64CodeGen::generateFunction(const IRFunction& fn) {
     m_out << "  sub rsp, " << m_frameSize << "\n";
 
     // Copy incoming parameters from calling convention registers into stack slots
+    if (m_currentFnReturnsSret) {
+        storeRegToSlot(getParamReg(0), m_currentFnSretSlot);
+    }
     if (isSysV()) {
-        size_t intRegIdx = 0;
+        size_t intRegIdx = m_currentFnReturnsSret ? 1 : 0;
         size_t floatRegIdx = 0;
         size_t stackParamIdx = 0;
         for (size_t i = 0; i < params.size(); ++i) {
@@ -288,21 +331,22 @@ void X86_64CodeGen::generateFunction(const IRFunction& fn) {
             }
         }
     } else {
-        for (size_t i = 0; i < params.size() && i < maxRegs; ++i) {
+        size_t regOffset = m_currentFnReturnsSret ? 1 : 0;
+        for (size_t i = 0; i < params.size() && (i + regOffset) < maxRegs; ++i) {
             int32_t offset = getSlotOffset(*params[i]);
             if (params[i]->getType()->isFloatingPoint()) {
                 if (params[i]->getType()->isF32()) {
-                    m_out << "  movss dword ptr [rbp - " << offset << "], xmm" << i << "\n";
+                    m_out << "  movss dword ptr [rbp - " << offset << "], xmm" << (i + regOffset) << "\n";
                 } else {
-                    m_out << "  movsd qword ptr [rbp - " << offset << "], xmm" << i << "\n";
+                    m_out << "  movsd qword ptr [rbp - " << offset << "], xmm" << (i + regOffset) << "\n";
                 }
             } else {
-                storeRegToSlot(getParamReg(i), offset);
+                storeRegToSlot(getParamReg(i + regOffset), offset);
             }
         }
-        for (size_t i = maxRegs; i < params.size(); ++i) {
+        for (size_t i = (maxRegs > regOffset ? maxRegs - regOffset : 0); i < params.size(); ++i) {
             int32_t offset = getSlotOffset(*params[i]);
-            int32_t stackOffset = 48 + static_cast<int32_t>((i - maxRegs) * 8);
+            int32_t stackOffset = 48 + static_cast<int32_t>((i + regOffset - maxRegs) * 8);
             m_out << "  mov rax, [rbp + " << stackOffset << "]\n";
             storeRegToSlot("rax", offset);
         }
@@ -317,10 +361,142 @@ void X86_64CodeGen::generateFunction(const IRFunction& fn) {
     }
 }
 
+static std::vector<std::string> applyPeephole(const std::vector<std::string>& lines) {
+    std::vector<std::string> out;
+    for (const auto& rawLine : lines) {
+        std::string line = rawLine;
+        while (!line.empty() && (line.back() == '\r' || line.back() == '\n' || line.back() == ' ')) {
+            line.pop_back();
+        }
+
+        // Drop redundant 64-bit self-moves: e.g. "  mov rax, rax"
+        if (line == "  mov rax, rax" || line == "  mov rcx, rcx" || line == "  mov rdx, rdx" ||
+            line == "  mov rsi, rsi" || line == "  mov rdi, rdi" || line == "  mov r8, r8" ||
+            line == "  mov r9, r9" || line == "  mov r10, r10" || line == "  mov r11, r11") {
+            continue;
+        }
+
+        if (!out.empty()) {
+            const std::string& prev = out.back();
+            // Pattern: prev is "  mov [rbp - X], reg"
+            //          line is "  mov reg, [rbp - X]"
+            if (prev.rfind("  mov [rbp - ", 0) == 0 && line.rfind("  mov ", 0) == 0) {
+                size_t commaPrev = prev.find("], ");
+                size_t commaLine = line.find(", [rbp - ");
+                if (commaPrev != std::string::npos && commaLine != std::string::npos) {
+                    std::string slotPrev = prev.substr(6, commaPrev - 6 + 1); // "[rbp - X]"
+                    std::string regPrev = prev.substr(commaPrev + 3);          // "rax"
+                    std::string regLine = line.substr(6, commaLine - 6);      // "rax"
+                    std::string slotLine = line.substr(commaLine + 2);        // "[rbp - X]"
+
+                    if (slotPrev == slotLine && regPrev == regLine &&
+                        (regPrev == "rax" || regPrev == "rcx" || regPrev == "rdx" ||
+                         regPrev == "r8" || regPrev == "r9" || regPrev == "r10" || regPrev == "r11")) {
+                        // Completely redundant load immediately following store!
+                        continue;
+                    }
+                }
+            }
+        }
+        out.push_back(line);
+    }
+    return out;
+}
+
 void X86_64CodeGen::generateBasicBlock(const IRBasicBlock& bb, const IRFunction& fn) {
-    m_out << getLabel(bb, fn) << ":\n";
-    for (const auto& inst : bb.getInstructions()) {
-        generateInstruction(*inst, fn);
+    *m_pOut << getLabel(bb, fn) << ":\n";
+
+    std::ostringstream bbStream;
+    std::ostream* savedOut = m_pOut;
+    m_pOut = &bbStream;
+
+    const auto& insts = bb.getInstructions();
+    for (size_t i = 0; i < insts.size(); ++i) {
+        // Compare-Branch Fusion
+        if (i + 1 < insts.size() && insts[i+1]->getOpcode() == IROpcode::CondBr) {
+            const auto& condBr = static_cast<const CondBranchInst&>(*insts[i+1]);
+            if (condBr.getCondition().get() == insts[i].get()) {
+                auto op = insts[i]->getOpcode();
+                if (op == IROpcode::Equal || op == IROpcode::NotEqual ||
+                    op == IROpcode::Less || op == IROpcode::LessEqual ||
+                    op == IROpcode::Greater || op == IROpcode::GreaterEqual) {
+
+                    const auto& binInst = static_cast<const BinaryInst&>(*insts[i]);
+                    loadValueToReg(*binInst.getLhs(), "rax");
+                    loadValueToReg(*binInst.getRhs(), "rcx");
+
+                    if (binInst.getLhs()->getType()->isFloatingPoint()) {
+                        if (binInst.getLhs()->getType()->isF32()) {
+                            *m_pOut << "  movd xmm0, eax\n";
+                            *m_pOut << "  movd xmm1, ecx\n";
+                            if (op == IROpcode::Less || op == IROpcode::LessEqual) {
+                                *m_pOut << "  ucomiss xmm1, xmm0\n";
+                            } else {
+                                *m_pOut << "  ucomiss xmm0, xmm1\n";
+                            }
+                        } else {
+                            *m_pOut << "  movq xmm0, rax\n";
+                            *m_pOut << "  movq xmm1, rcx\n";
+                            if (op == IROpcode::Less || op == IROpcode::LessEqual) {
+                                *m_pOut << "  ucomisd xmm1, xmm0\n";
+                            } else {
+                                *m_pOut << "  ucomisd xmm0, xmm1\n";
+                            }
+                        }
+                        if (op == IROpcode::Equal) {
+                            *m_pOut << "  jp " << getLabel(*condBr.getFalseTarget(), fn) << "\n";
+                            *m_pOut << "  jne " << getLabel(*condBr.getFalseTarget(), fn) << "\n";
+                            *m_pOut << "  jmp " << getLabel(*condBr.getTrueTarget(), fn) << "\n";
+                        } else if (op == IROpcode::NotEqual) {
+                            *m_pOut << "  jp " << getLabel(*condBr.getTrueTarget(), fn) << "\n";
+                            *m_pOut << "  jne " << getLabel(*condBr.getTrueTarget(), fn) << "\n";
+                            *m_pOut << "  jmp " << getLabel(*condBr.getFalseTarget(), fn) << "\n";
+                        } else if (op == IROpcode::Less || op == IROpcode::Greater) {
+                            *m_pOut << "  ja " << getLabel(*condBr.getTrueTarget(), fn) << "\n";
+                            *m_pOut << "  jmp " << getLabel(*condBr.getFalseTarget(), fn) << "\n";
+                        } else if (op == IROpcode::LessEqual || op == IROpcode::GreaterEqual) {
+                            *m_pOut << "  jae " << getLabel(*condBr.getTrueTarget(), fn) << "\n";
+                            *m_pOut << "  jmp " << getLabel(*condBr.getFalseTarget(), fn) << "\n";
+                        }
+                    } else {
+                        *m_pOut << "  cmp rax, rcx\n";
+
+                        std::string jmpInst;
+                        switch (op) {
+                            case IROpcode::Equal:        jmpInst = "je"; break;
+                            case IROpcode::NotEqual:     jmpInst = "jne"; break;
+                            case IROpcode::Less:         jmpInst = "jl"; break;
+                            case IROpcode::LessEqual:    jmpInst = "jle"; break;
+                            case IROpcode::Greater:      jmpInst = "jg"; break;
+                            case IROpcode::GreaterEqual: jmpInst = "jge"; break;
+                            default:                     jmpInst = "jne"; break;
+                        }
+                        *m_pOut << "  " << jmpInst << " " << getLabel(*condBr.getTrueTarget(), fn) << "\n";
+                        *m_pOut << "  jmp " << getLabel(*condBr.getFalseTarget(), fn) << "\n";
+                    }
+                    ++i;
+                    continue;
+                }
+            }
+        }
+        generateInstruction(*insts[i], fn);
+    }
+
+    m_pOut = savedOut;
+
+    // Apply peephole pass
+    std::istringstream iss(bbStream.str());
+    std::string line;
+    std::vector<std::string> lines;
+    while (std::getline(iss, line)) {
+        lines.push_back(line);
+    }
+
+    auto optLines = applyPeephole(lines);
+    optLines = applyPeephole(optLines);
+
+    for (const auto& l : optLines) {
+        *m_pOut << l << "\n";
     }
 }
 
@@ -343,6 +519,23 @@ void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunct
             loadValueToReg(*storeInst.getValue(), "rax");
             bool isAlloca = storeInst.getPointer()->isInstruction() &&
                 static_cast<const IRInstruction*>(storeInst.getPointer().get())->getOpcode() == IROpcode::Alloca;
+            if (storeInst.getValue()->getType()->isStruct()) {
+                auto structType = std::static_pointer_cast<StructType>(storeInst.getValue()->getType());
+                int32_t structSize = static_cast<int32_t>(structType->getSize());
+                if (structSize > 8) {
+                    if (isAlloca) {
+                        int32_t ptrOffset = getSlotOffset(*storeInst.getPointer());
+                        m_out << "  lea rdx, [rbp - " << ptrOffset << "]\n";
+                    } else {
+                        loadValueToReg(*storeInst.getPointer(), "rdx");
+                    }
+                    for (int32_t off = 0; off < structSize; off += 8) {
+                        m_out << "  mov r10, [rax + " << off << "]\n";
+                        m_out << "  mov [rdx + " << off << "], r10\n";
+                    }
+                    break;
+                }
+            }
             if (isAlloca) {
                 int32_t ptrOffset = getSlotOffset(*storeInst.getPointer());
                 storeRegToSlot("rax", ptrOffset);
@@ -358,7 +551,9 @@ void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunct
                      static_cast<const IRInstruction*>(storeInst.getValue().get())->getOpcode() == IROpcode::GetFieldPtr ||
                      static_cast<const IRInstruction*>(storeInst.getValue().get())->getOpcode() == IROpcode::GetElementPtr));
 
-                if (!isPtrVal && (storeInst.getValue()->getType()->isI32() || storeInst.getValue()->getType()->isBoolean() || storeInst.getValue()->getType()->isEnum() || storeInst.getValue()->getType()->isF32())) {
+                if (!isPtrVal && storeInst.getValue()->getType()->isBoolean()) {
+                    m_out << "  mov byte ptr [rdx], al\n";
+                } else if (!isPtrVal && (storeInst.getValue()->getType()->isI32() || storeInst.getValue()->getType()->isEnum() || storeInst.getValue()->getType()->isF32())) {
                     m_out << "  mov [rdx], eax\n";
                 } else {
                     m_out << "  mov [rdx], rax\n";
@@ -375,7 +570,9 @@ void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunct
                 m_out << "  mov rax, [rbp - " << ptrOffset << "]\n";
             } else {
                 loadValueToReg(*loadInst.getPointer(), "rdx");
-                if (loadInst.getType()->isI32() || loadInst.getType()->isBoolean() || loadInst.getType()->isEnum()) {
+                if (loadInst.getType()->isBoolean()) {
+                    m_out << "  movzx rax, byte ptr [rdx]\n";
+                } else if (loadInst.getType()->isI32() || loadInst.getType()->isEnum()) {
                     m_out << "  movsxd rax, dword ptr [rdx]\n";
                 } else if (loadInst.getType()->isF32()) {
                     m_out << "  mov eax, dword ptr [rdx]\n";
@@ -391,7 +588,12 @@ void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunct
             const auto& gfp = static_cast<const GetFieldPtrInst&>(inst);
             bool isAlloca = gfp.getBasePtr()->isInstruction() &&
                 static_cast<const IRInstruction*>(gfp.getBasePtr().get())->getOpcode() == IROpcode::Alloca;
-            if (isAlloca) {
+            bool isCall = gfp.getBasePtr()->isInstruction() &&
+                static_cast<const IRInstruction*>(gfp.getBasePtr().get())->getOpcode() == IROpcode::Call &&
+                gfp.getBasePtr()->getType()->isStruct() &&
+                std::static_pointer_cast<StructType>(gfp.getBasePtr()->getType())->getSize() > 8 &&
+                static_cast<const CallInst*>(gfp.getBasePtr().get())->getCallee().rfind("sph_", 0) != 0;
+            if (isAlloca || isCall) {
                 int32_t baseOffset = getSlotOffset(*gfp.getBasePtr());
                 int32_t fieldStackOffset = baseOffset - static_cast<int32_t>(gfp.getByteOffset());
                 m_out << "  lea rax, [rbp - " << fieldStackOffset << "]\n";
@@ -504,18 +706,61 @@ void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunct
             loadValueToReg(*binInst.getLhs(), "rax");
             loadValueToReg(*binInst.getRhs(), "rcx");
 
-            m_out << "  cmp rax, rcx\n";
-            std::string setInst;
-            switch (binInst.getOpcode()) {
-                case IROpcode::Equal:        setInst = "sete"; break;
-                case IROpcode::NotEqual:     setInst = "setne"; break;
-                case IROpcode::Less:         setInst = "setl"; break;
-                case IROpcode::LessEqual:    setInst = "setle"; break;
-                case IROpcode::Greater:      setInst = "setg"; break;
-                case IROpcode::GreaterEqual: setInst = "setge"; break;
-                default:                     setInst = "sete"; break;
+            if (binInst.getLhs()->getType()->isFloatingPoint()) {
+                if (binInst.getLhs()->getType()->isF32()) {
+                    m_out << "  movd xmm0, eax\n";
+                    m_out << "  movd xmm1, ecx\n";
+                    if (binInst.getOpcode() == IROpcode::Less || binInst.getOpcode() == IROpcode::LessEqual) {
+                        m_out << "  ucomiss xmm1, xmm0\n";
+                    } else {
+                        m_out << "  ucomiss xmm0, xmm1\n";
+                    }
+                } else {
+                    m_out << "  movq xmm0, rax\n";
+                    m_out << "  movq xmm1, rcx\n";
+                    if (binInst.getOpcode() == IROpcode::Less || binInst.getOpcode() == IROpcode::LessEqual) {
+                        m_out << "  ucomisd xmm1, xmm0\n";
+                    } else {
+                        m_out << "  ucomisd xmm0, xmm1\n";
+                    }
+                }
+                switch (binInst.getOpcode()) {
+                    case IROpcode::Equal:
+                        m_out << "  sete al\n";
+                        m_out << "  setnp dl\n";
+                        m_out << "  and al, dl\n";
+                        break;
+                    case IROpcode::NotEqual:
+                        m_out << "  setne al\n";
+                        m_out << "  setp dl\n";
+                        m_out << "  or al, dl\n";
+                        break;
+                    case IROpcode::Less:
+                    case IROpcode::Greater:
+                        m_out << "  seta al\n";
+                        break;
+                    case IROpcode::LessEqual:
+                    case IROpcode::GreaterEqual:
+                        m_out << "  setae al\n";
+                        break;
+                    default:
+                        m_out << "  sete al\n";
+                        break;
+                }
+            } else {
+                m_out << "  cmp rax, rcx\n";
+                std::string setInst;
+                switch (binInst.getOpcode()) {
+                    case IROpcode::Equal:        setInst = "sete"; break;
+                    case IROpcode::NotEqual:     setInst = "setne"; break;
+                    case IROpcode::Less:         setInst = "setl"; break;
+                    case IROpcode::LessEqual:    setInst = "setle"; break;
+                    case IROpcode::Greater:      setInst = "setg"; break;
+                    case IROpcode::GreaterEqual: setInst = "setge"; break;
+                    default:                     setInst = "sete"; break;
+                }
+                m_out << "  " << setInst << " al\n";
             }
-            m_out << "  " << setInst << " al\n";
             m_out << "  movzx rax, al\n";
 
             int32_t dstOffset = getSlotOffset(binInst);
@@ -625,7 +870,15 @@ void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunct
             const auto& retInst = static_cast<const RetInst&>(inst);
             if (retInst.hasValue()) {
                 loadValueToReg(*retInst.getValue(), "rax");
-                if (retInst.getValue()->getType()->isFloatingPoint()) {
+                if (m_currentFnReturnsSret) {
+                    m_out << "  mov rdi, [rbp - " << m_currentFnSretSlot << "]\n";
+                    m_out << "  mov rsi, rax\n";
+                    for (int32_t off = 0; off < m_currentFnSretSize; off += 8) {
+                        m_out << "  mov r10, [rsi + " << off << "]\n";
+                        m_out << "  mov [rdi + " << off << "], r10\n";
+                    }
+                    m_out << "  mov rax, rdi\n";
+                } else if (retInst.getValue()->getType()->isFloatingPoint()) {
                     if (retInst.getValue()->getType()->isF32()) {
                         m_out << "  movd xmm0, eax\n";
                     } else {
@@ -653,12 +906,16 @@ void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunct
         }
         case IROpcode::Call: {
             const auto& callInst = static_cast<const CallInst&>(inst);
+            bool isSret = callInst.getType()->isStruct() &&
+                std::static_pointer_cast<StructType>(callInst.getType())->getSize() > 8 &&
+                callInst.getCallee().rfind("sph_", 0) != 0;
+            int32_t dstOffset = getSlotOffset(callInst);
 
             const auto& args = callInst.getArgs();
             size_t maxRegs = getMaxRegisterParams();
 
             if (isSysV()) {
-                size_t intIdx = 0;
+                size_t intIdx = isSret ? 1 : 0;
                 size_t floatIdx = 0;
                 size_t stackIdx = 0;
                 for (size_t i = 0; i < args.size(); ++i) {
@@ -674,8 +931,11 @@ void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunct
                     }
                 }
 
-                intIdx = 0;
+                intIdx = isSret ? 1 : 0;
                 floatIdx = 0;
+                if (isSret) {
+                    m_out << "  lea " << getParamReg(0) << ", [rbp - " << dstOffset << "]\n";
+                }
                 for (size_t i = 0; i < args.size(); ++i) {
                     bool isFloat = args[i]->getType()->isFloatingPoint();
                     if (isFloat && floatIdx < 8) {
@@ -692,23 +952,30 @@ void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunct
                 }
                 m_out << "  mov al, " << floatIdx << "\n";
             } else {
+                size_t regOffset = isSret ? 1 : 0;
+                size_t totalArgs = args.size() + regOffset;
                 // Store outgoing stack arguments beyond register capacity
-                for (size_t i = maxRegs; i < args.size(); ++i) {
-                    loadValueToReg(*args[i], "rax");
+                for (size_t i = maxRegs; i < totalArgs; ++i) {
+                    size_t userArgIdx = i - regOffset;
+                    loadValueToReg(*args[userArgIdx], "rax");
                     int32_t stackOffset = 32 + static_cast<int32_t>((i - maxRegs) * 8);
                     m_out << "  mov [rsp + " << stackOffset << "], rax\n";
                 }
 
+                if (isSret) {
+                    m_out << "  lea " << getParamReg(0) << ", [rbp - " << dstOffset << "]\n";
+                }
+
                 // Load arguments into register parameters according to calling convention
-                for (size_t i = 0; i < args.size() && i < maxRegs; ++i) {
-                    const char* regName = getParamReg(i);
+                for (size_t i = 0; i < args.size() && (i + regOffset) < maxRegs; ++i) {
+                    const char* regName = getParamReg(i + regOffset);
                     loadValueToReg(*args[i], regName);
                     if (args[i]->getType()->isFloatingPoint()) {
                         if (args[i]->getType()->isF32()) {
                             std::string r32 = getReg32(regName);
-                            m_out << "  movd xmm" << i << ", " << r32 << "\n";
+                            m_out << "  movd xmm" << (i + regOffset) << ", " << r32 << "\n";
                         } else {
-                            m_out << "  movq xmm" << i << ", " << regName << "\n";
+                            m_out << "  movq xmm" << (i + regOffset) << ", " << regName << "\n";
                         }
                     }
                 }

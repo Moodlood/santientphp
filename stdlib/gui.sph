@@ -325,3 +325,157 @@ class GuiTable {
         return sph_gui_listview_get_selected($this->hwnd);
     }
 }
+
+// ============================================================================
+// Flexbox & Flow Layout Engine
+// ============================================================================
+
+struct LayoutRect {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+}
+
+fn layout_rect(x: i32, y: i32, w: i32, h: i32): LayoutRect {
+    return LayoutRect { x: x, y: y, width: w, height: h };
+}
+
+struct FlexContainer {
+    direction: i32,
+    gap: i32,
+    padding: i32,
+    width: i32,
+    height: i32,
+}
+
+fn flex_container_create(direction: i32, gap: i32, padding: i32, width: i32, height: i32): FlexContainer {
+    return FlexContainer {
+        direction: direction,
+        gap: gap,
+        padding: padding,
+        width: width,
+        height: height,
+    };
+}
+
+fn flex_compute_item_rect(container: FlexContainer, index: i32, item_w: i32, item_h: i32): LayoutRect {
+    if (container.direction == 0) {
+        let x_offset: i32 = container.padding + index * (item_w + container.gap);
+        let y_offset: i32 = container.padding;
+        return LayoutRect {
+            x: x_offset,
+            y: y_offset,
+            width: item_w,
+            height: item_h,
+        };
+    } else {
+        let x_offset: i32 = container.padding;
+        let y_offset: i32 = container.padding + index * (item_h + container.gap);
+        return LayoutRect {
+            x: x_offset,
+            y: y_offset,
+            width: item_w,
+            height: item_h,
+        };
+    }
+}
+
+// ============================================================================
+// Reactive State Management
+// ============================================================================
+
+struct StateInt {
+    value: i32,
+    dirty: bool,
+}
+
+fn state_int(initial: i32): StateInt {
+    return StateInt { value: initial, dirty: false };
+}
+
+fn state_int_get(s: StateInt): i32 {
+    return s.value;
+}
+
+fn state_int_set(s: StateInt, new_val: i32): StateInt {
+    return StateInt { value: new_val, dirty: true };
+}
+
+struct StateString {
+    value: string,
+    dirty: bool,
+}
+
+fn state_string(initial: string): StateString {
+    return StateString { value: initial, dirty: false };
+}
+
+fn state_string_get(s: StateString): string {
+    return s.value;
+}
+
+fn state_string_set(s: StateString, new_val: string): StateString {
+    return StateString { value: new_val, dirty: true };
+}
+
+// ============================================================================
+// Widget Abstraction Layer
+// ============================================================================
+
+struct Widget {
+    hwnd: *void,
+    kind: i32,
+    rect: LayoutRect,
+    id: i32,
+}
+
+fn widget_create_in_container(win: Window, container: FlexContainer, index: i32, kind: i32, text: string, w: i32, h: i32, id: i32): Widget {
+    let r: LayoutRect = flex_compute_item_rect(container, index, w, h);
+    mut handle: *void = sph_gui_button_create(win.hwnd, text, r.x, r.y, r.width, r.height, id);
+    if (kind == 2) {
+        handle = sph_gui_label_create(win.hwnd, text, r.x, r.y, r.width, r.height, id);
+    } else if (kind == 3) {
+        handle = sph_gui_textbox_create(win.hwnd, text, r.x, r.y, r.width, r.height, id, 0);
+    } else if (kind == 4) {
+        handle = sph_gui_progressbar_create(win.hwnd, r.x, r.y, r.width, r.height, id);
+    }
+    return Widget {
+        hwnd: handle,
+        kind: kind,
+        rect: r,
+        id: id,
+    };
+}
+
+class GuiFlexContainer {
+    public $direction;
+    public $gap;
+    public $padding;
+    public $width;
+    public $height;
+    public $itemCount;
+
+    function __construct($direction, $gap, $padding, $width, $height) {
+        $this->direction = $direction;
+        $this->gap = $gap;
+        $this->padding = $padding;
+        $this->width = $width;
+        $this->height = $height;
+        $this->itemCount = 0;
+    }
+
+    public function getNextItemRect($itemWidth, $itemHeight) {
+        $idx = $this->itemCount;
+        $this->itemCount = $this->itemCount + 1;
+        if ($this->direction == 0) {
+            $x = $this->padding + $idx * ($itemWidth + $this->gap);
+            $y = $this->padding;
+            return ["x" => $x, "y" => $y, "w" => $itemWidth, "h" => $itemHeight];
+        } else {
+            $x = $this->padding;
+            $y = $this->padding + $idx * ($itemHeight + $this->gap);
+            return ["x" => $x, "y" => $y, "w" => $itemWidth, "h" => $itemHeight];
+        }
+    }
+}

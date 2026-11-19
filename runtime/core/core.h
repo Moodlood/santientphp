@@ -65,6 +65,7 @@ void sph_arena_destroy(void* arena_ptr);
 
 int64_t sph_string_len(const char* s);
 char* sph_string_concat(const char* a, const char* b);
+char* sph_string_append(char* s, const char* suffix);
 int32_t sph_string_eq(const char* a, const char* b);
 char* sph_string_slice(const char* s, int64_t start, int64_t len);
 
@@ -103,6 +104,15 @@ int32_t sph_file_delete(const char* path);
 void sph_process_exit(int32_t code);
 char* sph_env_get(const char* name);
 int32_t sph_env_set(const char* name, const char* value);
+int64_t sph_time_millis(void);
+int64_t sph_time_micros(void);
+int32_t sph_process_pid(void);
+uint32_t sph_random_u32(void);
+char* sph_crypto_sha256(const char* input);
+int32_t sph_net_listen(int32_t port);
+void sph_net_close(int32_t fd);
+char* sph_http_get(const char* url);
+char* sph_http_post(const char* url, const char* body);
 
 // ============================================================================
 // Panic & Error Handling Primitives (Result<T, E>)

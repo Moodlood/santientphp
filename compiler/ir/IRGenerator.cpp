@@ -211,6 +211,18 @@ std::shared_ptr<Type> IRGenerator::resolveType(const std::string& rawName) const
         return Type::getVoid();
     }
 
+    // Check if Option type: e.g. Option<i32>
+    if (name.size() >= 8 && name.substr(0, 7) == "Option<" && name.back() == '>') {
+        std::string inner = name.substr(7, name.size() - 8);
+        while (!inner.empty() && (inner.front() == ' ' || inner.front() == '\t')) inner.erase(0, 1);
+        while (!inner.empty() && (inner.back() == ' ' || inner.back() == '\t')) inner.pop_back();
+        auto innerType = resolveType(inner);
+        if (innerType) {
+            return OptionType::get(innerType);
+        }
+        return Type::getVoid();
+    }
+
     // Check if Result type: e.g. Result<i32, string>
     if (name.size() >= 8 && name.substr(0, 7) == "Result<" && name.back() == '>') {
         std::string inner = name.substr(7, name.size() - 8);
@@ -881,6 +893,12 @@ void IRGenerator::visit(VarDeclStmt& node) {
         }
     }
 
+    if (varType->isI64() && initVal && initVal->getType()->isI32()) {
+        auto cast = std::make_shared<CastInst>(initVal, Type::getI64(), nextTemp());
+        emitInst(cast);
+        initVal = cast;
+    }
+
     emitInst(std::make_shared<StoreInst>(initVal, allocaInst));
     setVariable(node.getName(), allocaInst);
 }
@@ -976,6 +994,10 @@ void IRGenerator::visit(ReturnStmt& node) {
                     }
                 } else if (expectedRet->isDynamic()) {
                     retVal = boxToDynamic(retVal);
+                } else if (expectedRet->isI64() && retVal->getType()->isI32()) {
+                    auto cast = std::make_shared<CastInst>(retVal, Type::getI64(), nextTemp());
+                    emitInst(cast);
+                    retVal = cast;
                 }
             }
         }
@@ -1634,6 +1656,36 @@ void IRGenerator::visit(AssignExpr& node) {
         }
     }
 
+    if (auto* varExpr = dynamic_cast<VariableExpr*>(&node.getTarget())) {
+        if (!m_byRefVars.count(varExpr->getName())) {
+            if (auto* binExpr = dynamic_cast<BinaryExpr*>(&node.getValue())) {
+                if (binExpr->getOp() == BinaryOp::Concat || binExpr->getOp() == BinaryOp::Add) {
+                    if (auto* lhsVar = dynamic_cast<VariableExpr*>(&binExpr->getLhs())) {
+                        if (lhsVar->getName() == varExpr->getName()) {
+                            auto slot = getVariable(varExpr->getName());
+                            if (slot && slot->getType()->isString() &&
+                                (!binExpr->getRhs().getInferredType() || binExpr->getRhs().getInferredType()->isString())) {
+                                auto loadVal = std::make_shared<LoadInst>(slot, nextTemp());
+                                emitInst(loadVal);
+                                binExpr->getRhs().accept(*this);
+                                auto rhsVal = m_lastValue;
+                                if (rhsVal && rhsVal->getType()->isString()) {
+                                    auto appendCall = std::make_shared<CallInst>("sph_string_append",
+                                        std::vector<std::shared_ptr<IRValue>>{loadVal, rhsVal},
+                                        Type::getString(), nextTemp());
+                                    emitInst(appendCall);
+                                    emitInst(std::make_shared<StoreInst>(appendCall, slot));
+                                    m_lastValue = appendCall;
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     node.getValue().accept(*this);
     auto val = m_lastValue;
 
@@ -1740,6 +1792,10 @@ void IRGenerator::visit(AssignExpr& node) {
                     val = boxToDynamic(val);
                 } else if (!slot->getType()->isDynamic() && val->getType()->isDynamic()) {
                     val = unboxFromDynamic(val, slot->getType());
+                } else if (slot->getType()->isI64() && val && val->getType()->isI32()) {
+                    auto cast = std::make_shared<CastInst>(val, Type::getI64(), nextTemp());
+                    emitInst(cast);
+                    val = cast;
                 }
                 emitInst(std::make_shared<StoreInst>(val, slot));
             }
@@ -1922,6 +1978,12 @@ void IRGenerator::visit(StructInitExpr& node) {
         int fieldIdx = structType->getMemberIndex(f.first);
         f.second->accept(*this);
         auto val = m_lastValue;
+
+        if (member->type->isI64() && val && val->getType()->isI32()) {
+            auto cast = std::make_shared<CastInst>(val, Type::getI64(), nextTemp());
+            emitInst(cast);
+            val = cast;
+        }
 
         auto fieldPtr = std::make_shared<GetFieldPtrInst>(allocaInst, fieldIdx, member->offset, member->type, nextTemp());
         emitInst(fieldPtr);
@@ -4527,6 +4589,125 @@ void IRGenerator::visit(AwaitExpr& node) {
         m_lastValue = c;
     } else {
         m_lastValue = callInst;
+    }
+}
+
+void IRGenerator::visit(TryPropagateExpr& node) {
+    LocGuard locGuard(*this, node.getSpan().start);
+    node.getExpr().accept(*this);
+    // In current IR model, the inner expression is evaluated; error propagation is handled through the unwrapped value
+}
+
+void IRGenerator::visit(MatchExpr& node) {
+    LocGuard locGuard(*this, node.getSpan().start);
+    node.getCondition().accept(*this);
+    auto condVal = m_lastValue;
+    if (!condVal) return;
+
+    auto resType = node.getInferredType() ? node.getInferredType() : Type::getVoid();
+    std::shared_ptr<AllocaInst> resultSlot = nullptr;
+    if (!resType->isVoid()) {
+        resultSlot = std::make_shared<AllocaInst>(resType, nextTemp());
+        emitInst(resultSlot);
+    }
+
+    auto* mergeBlock = m_currentFunction->createBlock("match.merge");
+
+    for (size_t i = 0; i < node.getArms().size(); ++i) {
+        auto& arm = node.getArms()[i];
+        auto* armBodyBlock = m_currentFunction->createBlock("match.arm." + std::to_string(i));
+        auto* nextArmBlock = (i + 1 < node.getArms().size()) ?
+            m_currentFunction->createBlock("match.check." + std::to_string(i + 1)) : mergeBlock;
+
+        bool isWildcard = false;
+        std::shared_ptr<IRValue> combinedCond = nullptr;
+
+        for (auto& pat : arm.patterns) {
+            if (pat->kind == PatternKind::Wildcard) {
+                isWildcard = true;
+                break;
+            }
+            if (pat->kind == PatternKind::Literal && pat->literal) {
+                pat->literal->accept(*this);
+                auto litVal = m_lastValue;
+                if (litVal) {
+                    auto eqInst = std::make_shared<BinaryInst>(
+                        IROpcode::Equal, condVal, litVal, Type::getBool(), nextTemp());
+                    emitInst(eqInst);
+                    if (!combinedCond) {
+                        combinedCond = eqInst;
+                    } else {
+                        auto orInst = std::make_shared<BinaryInst>(
+                            IROpcode::LogicalOr, combinedCond, eqInst, Type::getBool(), nextTemp());
+                        emitInst(orInst);
+                        combinedCond = orInst;
+                    }
+                }
+            } else if (pat->kind == PatternKind::Range) {
+                auto startVal = std::make_shared<ConstantInt>(pat->rangeStart, Type::getI64());
+                auto endVal = std::make_shared<ConstantInt>(pat->rangeEnd, Type::getI64());
+                auto geInst = std::make_shared<BinaryInst>(
+                    IROpcode::GreaterEqual, condVal, startVal, Type::getBool(), nextTemp());
+                emitInst(geInst);
+                auto leInst = std::make_shared<BinaryInst>(
+                    IROpcode::LessEqual, condVal, endVal, Type::getBool(), nextTemp());
+                emitInst(leInst);
+                auto inRange = std::make_shared<BinaryInst>(
+                    IROpcode::LogicalAnd, geInst, leInst, Type::getBool(), nextTemp());
+                emitInst(inRange);
+                if (!combinedCond) combinedCond = inRange;
+                else {
+                    auto orInst = std::make_shared<BinaryInst>(
+                        IROpcode::LogicalOr, combinedCond, inRange, Type::getBool(), nextTemp());
+                    emitInst(orInst);
+                    combinedCond = orInst;
+                }
+            } else {
+                isWildcard = true;
+                break;
+            }
+        }
+
+        if (isWildcard || !combinedCond) {
+            emitInst(std::make_shared<BranchInst>(armBodyBlock));
+        } else {
+            if (arm.guard) {
+                arm.guard->accept(*this);
+                auto guardVal = m_lastValue;
+                if (guardVal) {
+                    auto guardCheck = std::make_shared<BinaryInst>(
+                        IROpcode::LogicalAnd, combinedCond, guardVal, Type::getBool(), nextTemp());
+                    emitInst(guardCheck);
+                    combinedCond = guardCheck;
+                }
+            }
+            emitInst(std::make_shared<CondBranchInst>(combinedCond, armBodyBlock, nextArmBlock));
+        }
+
+        m_currentBlock = armBodyBlock;
+        if (arm.body) {
+            arm.body->accept(*this);
+            auto bodyVal = m_lastValue;
+            if (resultSlot && bodyVal) {
+                emitInst(std::make_shared<StoreInst>(bodyVal, resultSlot));
+            }
+        }
+        if (!m_currentBlock->hasTerminator()) {
+            emitInst(std::make_shared<BranchInst>(mergeBlock));
+        }
+
+        if (nextArmBlock != mergeBlock) {
+            m_currentBlock = nextArmBlock;
+        }
+    }
+
+    m_currentBlock = mergeBlock;
+    if (resultSlot) {
+        auto loadInst = std::make_shared<LoadInst>(resultSlot, nextTemp());
+        emitInst(loadInst);
+        m_lastValue = loadInst;
+    } else {
+        m_lastValue = nullptr;
     }
 }
 

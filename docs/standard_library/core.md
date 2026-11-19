@@ -18,6 +18,8 @@ This reference documents the core types, built-in functions, concurrency primiti
 | `string` | Pointer + Len | Immutable byte sequence |
 | `void` | 0-bit | Unit return type |
 | `dynamic` | 128-bit | Dynamic variant supporting PHP loose coercion and associative arrays |
+| `Option<T>` | Discriminant + T | Sum type representing an optional value (`Some(T)` or `None`) |
+| `Result<T, E>` | Discriminant + T/E | Sum type representing success (`Ok(T)`) or failure (`Err(E)`) |
 
 ---
 
@@ -85,9 +87,11 @@ Hardware-accelerated vector types utilizing x86_64 SSE/AVX instructions:
 
 ## 5. Memory Management Primitives
 
-- `Box<T>`: Unique heap allocation with deterministic deallocation on exit
-- `Rc<T>`: Reference-counted pointer for shared immutable ownership
-- `Arena`: Fast linear region allocator for bulk allocations
+- `Box<T>`: Unique heap allocation with deterministic deallocation on exit (`sph_alloc` / `sph_free`)
+- `Rc<T>`: Reference-counted pointer for shared immutable ownership (`sph_rc_retain`, `sph_rc_release`)
+- `Arena`: Fast linear region allocator for bulk allocations with zero per-object free overhead (`sph_arena_alloc`, `sph_arena_reset`)
+- **Fast Slab Allocator**: Thread-local freelist pool for allocations $\le 64$ bytes, bypassing OS mutex locks
+- **High-Performance Strings**: Amortized $O(1)$ geometric buffer expansion (`sph_string_append`), eliminating quadratic reallocations in loops
 
 ---
 

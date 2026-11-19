@@ -13,7 +13,7 @@ namespace sph {
 
 class X86_64CodeGen {
 public:
-    explicit X86_64CodeGen(std::ostream& out) : m_out(out) {}
+    explicit X86_64CodeGen(std::ostream& out) : m_out(out), m_pOut(&out) {}
 
     void setTarget(const Target& target) noexcept { m_target = target; }
     [[nodiscard]] const Target& getTarget() const noexcept { return m_target; }
@@ -45,11 +45,15 @@ private:
     std::string getLabel(const IRBasicBlock& bb, const IRFunction& fn) const;
 
     std::ostream& m_out;
+    std::ostream* m_pOut;
     Target m_target;
     std::unordered_map<const IRValue*, int32_t> m_slots;
     std::unordered_map<std::string, std::string> m_stringLabels;
     int32_t m_currentOffset = 0;
     int32_t m_frameSize = 0;
+    bool m_currentFnReturnsSret = false;
+    int32_t m_currentFnSretSlot = 0;
+    int32_t m_currentFnSretSize = 0;
     bool m_debugInfo = false;
     SourceLocation m_lastEmittedLoc;
 };

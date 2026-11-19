@@ -1,0 +1,26 @@
+<?php
+
+// SantientPHP Standard Library: Process & Environment
+
+extern "C" fn sph_process_pid(): i32;
+extern "C" fn sph_process_exit(code: i32): void;
+extern "C" fn sph_env_get(name: string): string;
+extern "C" fn sph_env_set(name: string, value: string): i32;
+
+fn process_id(): i32 {
+    return sph_process_pid();
+}
+
+fn process_exit(code: i32): void {
+    sph_process_exit(code);
+}
+
+fn env_get(name: string): string {
+    return sph_env_get(name);
+}
+
+fn env_set(name: string, value: string): bool {
+    let res: i32 = sph_env_set(name, value);
+    return res != 0;
+}
+

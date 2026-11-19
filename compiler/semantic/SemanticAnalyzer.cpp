@@ -1,5 +1,6 @@
 #include "SemanticAnalyzer.hpp"
 #include "ASTCloner.hpp"
+#include "BorrowChecker.hpp"
 #include <unordered_map>
 #include <unordered_set>
 
@@ -43,8 +44,8 @@ std::string SemanticAnalyzer::getMangledFunctionName(const std::string& baseName
 SemanticAnalyzer::SemanticAnalyzer(DiagnosticEmitter& diagnostics)
     : m_diagnostics(diagnostics) {}
 
-void SemanticAnalyzer::error(SourceSpan span, std::string message) {
-    m_diagnostics.emit(Diagnostic::makeError(span, std::move(message)));
+void SemanticAnalyzer::error(SourceSpan span, std::string message, std::string code, std::string hint) {
+    m_diagnostics.emit(Diagnostic::makeError(span, std::move(message), std::move(code), std::move(hint)));
 }
 
 bool SemanticAnalyzer::checkReturns(const StmtAST& stmt) const {
@@ -181,6 +182,18 @@ std::shared_ptr<Type> SemanticAnalyzer::resolveType(const std::string& name) {
         return nullptr;
     }
 
+    // Check if Option type: e.g. Option<i32>
+    if (name.size() >= 8 && name.substr(0, 7) == "Option<" && name.back() == '>') {
+        std::string inner = name.substr(7, name.size() - 8);
+        while (!inner.empty() && (inner.front() == ' ' || inner.front() == '\t')) inner.erase(0, 1);
+        while (!inner.empty() && (inner.back() == ' ' || inner.back() == '\t')) inner.pop_back();
+        auto innerType = resolveType(inner);
+        if (innerType) {
+            return OptionType::get(innerType);
+        }
+        return nullptr;
+    }
+
     // Check if Result type: e.g. Result<i32, string>
     if (name.size() >= 8 && name.substr(0, 7) == "Result<" && name.back() == '>') {
         std::string inner = name.substr(7, name.size() - 8);
@@ -254,6 +267,20 @@ std::shared_ptr<Type> SemanticAnalyzer::resolveType(const std::string& name) {
 bool SemanticAnalyzer::isAssignable(const Type& from, const Type& to) const {
     if (from.isEqual(to)) return true;
     if (to.isDynamic() || from.isDynamic()) return true;
+    if (from.isI32() && to.isI64()) return true;
+    if (from.isOption() && to.isOption()) {
+        const auto& fromOpt = static_cast<const OptionType&>(from);
+        const auto& toOpt = static_cast<const OptionType&>(to);
+        if (fromOpt.getValueType()->isVoid()) return true;
+        return isAssignable(*fromOpt.getValueType(), *toOpt.getValueType());
+    }
+    if (from.isResult() && to.isResult()) {
+        const auto& fromRes = static_cast<const ResultType&>(from);
+        const auto& toRes = static_cast<const ResultType&>(to);
+        bool okMatch = fromRes.getOkType()->isVoid() || isAssignable(*fromRes.getOkType(), *toRes.getOkType());
+        bool errMatch = fromRes.getErrType()->isVoid() || isAssignable(*fromRes.getErrType(), *toRes.getErrType());
+        return okMatch && errMatch;
+    }
     if (to.isInterface() && from.isClass()) {
         const auto& classType = static_cast<const ClassType&>(from);
         const auto& ifaceType = static_cast<const InterfaceType&>(to);
@@ -504,14 +531,23 @@ bool SemanticAnalyzer::analyze(ProgramAST& program) {
         m_globalScope.define(Symbol::makeClass("i64x2", Type::getI64x2(), SourceSpan()));
     }
 
-    // Pass 0: Register all struct types
+    // Pass 0a: Forward-declare all non-generic struct types so recursive types (e.g. Option<Rc<T>>, Option<Box<T>>) can resolve
+    for (auto& st : program.getStructs()) {
+        if (!st->isGeneric() && !m_globalScope.lookupCurrent(st->getName())) {
+            auto placeholder = StructType::get(st->getName(), {});
+            m_globalScope.define(Symbol::makeStruct(st->getName(), placeholder, st->getSpan()));
+        }
+    }
+
+    // Pass 0b: Register all struct members
+    std::unordered_set<std::string> declaredStructs;
     for (auto& st : program.getStructs()) {
         if (st->isGeneric()) {
             m_genericStructs[st->getName()] = st.get();
             continue;
         }
 
-        if (m_globalScope.lookupCurrent(st->getName())) {
+        if (!declaredStructs.insert(st->getName()).second) {
             error(st->getSpan(), "duplicate definition of struct '" + st->getName() + "'");
             continue;
         }
@@ -536,8 +572,11 @@ bool SemanticAnalyzer::analyze(ProgramAST& program) {
         }
 
         auto structType = StructType::get(st->getName(), std::move(members), st->isPacked(), st->getAttribute().explicitAlignment);
-        Symbol sym = Symbol::makeStruct(st->getName(), structType, st->getSpan());
-        m_globalScope.define(std::move(sym));
+        if (auto* existingSym = m_globalScope.lookup(st->getName())) {
+            existingSym->type = structType;
+        } else {
+            m_globalScope.define(Symbol::makeStruct(st->getName(), structType, st->getSpan()));
+        }
     }
 
     // Pass 0b: Register all enum types
@@ -685,8 +724,17 @@ bool SemanticAnalyzer::analyze(ProgramAST& program) {
         auto fnType = FunctionType::get(retType, std::move(paramTypes));
         Symbol sym = Symbol::makeFunction(fn->getName(), fnType, fn->getSpan());
 
-        if (!m_globalScope.define(std::move(sym))) {
+        const Symbol* existing = m_globalScope.lookup(fn->getName());
+        if (existing) {
+            if (fn->isExtern() && existing->kind == SymbolKind::Function &&
+                existing->span.start.fileId != fn->getSpan().start.fileId) {
+                if (existing->type && existing->type->isEqual(*fnType)) {
+                    continue;
+                }
+            }
             error(fn->getSpan(), "duplicate function definition '" + fn->getName() + "'");
+        } else {
+            m_globalScope.define(std::move(sym));
         }
     }
 
@@ -775,6 +823,11 @@ bool SemanticAnalyzer::analyze(ProgramAST& program) {
         auto& fn = program.getFunctions()[i];
         if (fn->isGeneric() || m_specializedFunctions.count(fn->getName())) continue;
         fn->accept(*this);
+    }
+
+    if (!m_diagnostics.hasErrors() && !m_isDynamicMode) {
+        BorrowChecker borrowChecker(m_diagnostics);
+        borrowChecker.check(program);
     }
 
     return !m_diagnostics.hasErrors();
@@ -1158,6 +1211,13 @@ void SemanticAnalyzer::visit(BoolLiteralExpr& node) {
 }
 
 void SemanticAnalyzer::visit(VariableExpr& node) {
+    if (node.getName() == "None") {
+        std::shared_ptr<Type> inner = (m_expectedType && m_expectedType->isOption()) ?
+            std::static_pointer_cast<OptionType>(m_expectedType)->getValueType() : Type::getVoid();
+        node.setInferredType(OptionType::get(inner));
+        return;
+    }
+
     if (node.getName() == "CURLOPT_URL" || node.getName() == "CURLOPT_RETURNTRANSFER" ||
         node.getName() == "CURLOPT_POST" || node.getName() == "CURLOPT_POSTFIELDS" ||
         node.getName() == "CURLOPT_HTTPHEADER" || node.getName() == "CURLOPT_TIMEOUT" ||
@@ -1687,8 +1747,16 @@ void SemanticAnalyzer::visit(BinaryExpr& node) {
                     error(node.getSpan(), "pointer arithmetic requires 'unsafe' block");
                 }
                 node.setInferredType(rhsType);
-            } else if (lhsType->isNumeric() && rhsType->isNumeric() && lhsType->isEqual(*rhsType)) {
-                node.setInferredType(lhsType);
+            } else if (lhsType->isNumeric() && rhsType->isNumeric()) {
+                if (lhsType->isEqual(*rhsType)) {
+                    node.setInferredType(lhsType);
+                } else if (lhsType->isInteger() && rhsType->isInteger()) {
+                    node.setInferredType((lhsType->getSize() >= rhsType->getSize()) ? lhsType : rhsType);
+                } else {
+                    error(node.getSpan(), "binary operator '+' cannot be applied to types '" +
+                                          lhsType->toString() + "' and '" + rhsType->toString() + "'");
+                    node.setInferredType(Type::getError());
+                }
             } else if (lhsType->isSimd() && rhsType->isSimd() && lhsType->isEqual(*rhsType)) {
                 node.setInferredType(lhsType);
             } else {
@@ -1716,8 +1784,16 @@ void SemanticAnalyzer::visit(BinaryExpr& node) {
                     }
                     node.setInferredType(Type::getI64());
                 }
-            } else if (lhsType->isNumeric() && rhsType->isNumeric() && lhsType->isEqual(*rhsType)) {
-                node.setInferredType(lhsType);
+            } else if (lhsType->isNumeric() && rhsType->isNumeric()) {
+                if (lhsType->isEqual(*rhsType)) {
+                    node.setInferredType(lhsType);
+                } else if (lhsType->isInteger() && rhsType->isInteger()) {
+                    node.setInferredType((lhsType->getSize() >= rhsType->getSize()) ? lhsType : rhsType);
+                } else {
+                    error(node.getSpan(), "binary operator '-' cannot be applied to types '" +
+                                          lhsType->toString() + "' and '" + rhsType->toString() + "'");
+                    node.setInferredType(Type::getError());
+                }
             } else if (lhsType->isSimd() && rhsType->isSimd() && lhsType->isEqual(*rhsType)) {
                 node.setInferredType(lhsType);
             } else {
@@ -1733,26 +1809,35 @@ void SemanticAnalyzer::visit(BinaryExpr& node) {
         case BinaryOp::Mod:
             if (lhsType->isSimd() && rhsType->isSimd() && lhsType->isEqual(*rhsType) && node.getOp() != BinaryOp::Mod) {
                 node.setInferredType(lhsType);
-            } else if (!lhsType->isNumeric() || !rhsType->isNumeric() || !lhsType->isEqual(*rhsType)) {
+            } else if (lhsType->isNumeric() && rhsType->isNumeric()) {
+                if (lhsType->isEqual(*rhsType)) {
+                    node.setInferredType(lhsType);
+                } else if (lhsType->isInteger() && rhsType->isInteger()) {
+                    node.setInferredType((lhsType->getSize() >= rhsType->getSize()) ? lhsType : rhsType);
+                } else {
+                    error(node.getSpan(), "binary operator '" + std::string(binaryOpToString(node.getOp())) +
+                                          "' cannot be applied to types '" + lhsType->toString() +
+                                          "' and '" + rhsType->toString() + "'");
+                    node.setInferredType(Type::getError());
+                }
+            } else {
                 error(node.getSpan(), "binary operator '" + std::string(binaryOpToString(node.getOp())) +
                                       "' cannot be applied to types '" + lhsType->toString() +
                                       "' and '" + rhsType->toString() + "'");
                 node.setInferredType(Type::getError());
-            } else {
-                node.setInferredType(lhsType);
             }
             break;
 
         case BinaryOp::BitwiseAnd:
         case BinaryOp::BitwiseOr:
         case BinaryOp::BitwiseXor:
-            if (!lhsType->isInteger() || !rhsType->isInteger() || !lhsType->isEqual(*rhsType)) {
+            if (!lhsType->isInteger() || !rhsType->isInteger()) {
                 error(node.getSpan(), "bitwise operator '" + std::string(binaryOpToString(node.getOp())) +
                                       "' cannot be applied to types '" + lhsType->toString() +
                                       "' and '" + rhsType->toString() + "'");
                 node.setInferredType(Type::getError());
             } else {
-                node.setInferredType(lhsType);
+                node.setInferredType((lhsType->getSize() >= rhsType->getSize()) ? lhsType : rhsType);
             }
             break;
 
@@ -2051,9 +2136,33 @@ void SemanticAnalyzer::visit(VecNewExpr& node) {
 }
 
 void SemanticAnalyzer::visit(CallExpr& node) {
+    auto savedExpected = m_expectedType;
+    if (node.getCallee() == "Some" || node.getCallee() == "Option::some") {
+        if (savedExpected && savedExpected->isOption()) {
+            m_expectedType = std::static_pointer_cast<OptionType>(savedExpected)->getValueType();
+        } else {
+            m_expectedType = nullptr;
+        }
+    } else if (node.getCallee() == "Ok" || node.getCallee() == "Result::ok") {
+        if (savedExpected && savedExpected->isResult()) {
+            m_expectedType = std::static_pointer_cast<ResultType>(savedExpected)->getOkType();
+        } else {
+            m_expectedType = nullptr;
+        }
+    } else if (node.getCallee() == "Err" || node.getCallee() == "Result::err") {
+        if (savedExpected && savedExpected->isResult()) {
+            m_expectedType = std::static_pointer_cast<ResultType>(savedExpected)->getErrType();
+        } else {
+            m_expectedType = nullptr;
+        }
+    } else {
+        m_expectedType = nullptr;
+    }
+
     for (auto& arg : node.getArgs()) {
         arg->accept(*this);
     }
+    m_expectedType = savedExpected;
 
     // Built-in println handling
     if (node.getCallee() == "println") {
@@ -2327,6 +2436,52 @@ void SemanticAnalyzer::visit(CallExpr& node) {
             }
         }
         node.setInferredType(Type::getBool());
+        return;
+    }
+
+    // Option constructors: Some(val), None(), Option::some(val), Option::none()
+    if (node.getCallee() == "Some" || node.getCallee() == "Option::some") {
+        if (node.getArgs().size() != 1) {
+            error(node.getSpan(), "'" + node.getCallee() + "' expects 1 argument, found " +
+                                  std::to_string(node.getArgs().size()));
+            node.setInferredType(Type::getError());
+            return;
+        }
+        auto valType = node.getArgs()[0]->getInferredType();
+        std::shared_ptr<Type> innerType = valType ? valType : Type::getError();
+        if (!node.getTypeArgs().empty()) {
+            innerType = resolveType(node.getTypeArgs()[0]);
+        } else if (m_expectedType && m_expectedType->isOption()) {
+            auto expOpt = std::static_pointer_cast<OptionType>(m_expectedType);
+            if (valType && !valType->isError() && !isAssignable(*valType, *expOpt->getValueType())) {
+                error(node.getArgs()[0]->getSpan(), "type mismatch in '" + node.getCallee() + "': expected '" +
+                                                    expOpt->getValueType()->toString() + "', found '" + valType->toString() + "'");
+            }
+            innerType = expOpt->getValueType();
+        }
+        if (!innerType) innerType = Type::getError();
+        node.setInferredType(OptionType::get(innerType));
+        return;
+    }
+
+    if (node.getCallee() == "None" || node.getCallee() == "Option::none") {
+        if (!node.getArgs().empty()) {
+            error(node.getSpan(), "'" + node.getCallee() + "' expects 0 arguments, found " +
+                                  std::to_string(node.getArgs().size()));
+            node.setInferredType(Type::getError());
+            return;
+        }
+        std::shared_ptr<Type> innerType = nullptr;
+        if (!node.getTypeArgs().empty()) {
+            innerType = resolveType(node.getTypeArgs()[0]);
+        } else if (m_expectedType && m_expectedType->isOption()) {
+            auto expOpt = std::static_pointer_cast<OptionType>(m_expectedType);
+            innerType = expOpt->getValueType();
+        } else {
+            innerType = Type::getVoid();
+        }
+        if (!innerType) innerType = Type::getVoid();
+        node.setInferredType(OptionType::get(innerType));
         return;
     }
 
@@ -3256,6 +3411,106 @@ void SemanticAnalyzer::visit(AwaitExpr& node) {
 
     error(node.getSpan(), "'await' expects expression of type 'Promise' or 'dynamic', found '" + exprType->toString() + "'");
     node.setInferredType(Type::getError());
+}
+
+void SemanticAnalyzer::visit(TryPropagateExpr& node) {
+    node.getExpr().accept(*this);
+    auto innerType = node.getExpr().getInferredType();
+    if (!innerType || innerType->isError()) {
+        node.setInferredType(Type::getError());
+        return;
+    }
+
+    if (innerType->isResult()) {
+        auto resType = std::static_pointer_cast<ResultType>(innerType);
+        if (m_currentFunctionReturnType && !m_currentFunctionReturnType->isResult()) {
+            error(node.getSpan(), "the '?' operator can only be applied to a Result in a function that returns Result (enclosing function returns '" + m_currentFunctionReturnType->toString() + "')", "E0277");
+        }
+        node.setInferredType(resType->getOkType());
+        return;
+    }
+
+    if (innerType->isOption()) {
+        auto optType = std::static_pointer_cast<OptionType>(innerType);
+        if (m_currentFunctionReturnType && !m_currentFunctionReturnType->isOption()) {
+            error(node.getSpan(), "the '?' operator can only be applied to an Option in a function that returns Option (enclosing function returns '" + m_currentFunctionReturnType->toString() + "')", "E0277");
+        }
+        node.setInferredType(optType->getValueType());
+        return;
+    }
+
+    error(node.getSpan(), "the '?' operator can only be applied to 'Result' or 'Option' types, found '" + innerType->toString() + "'", "E0277");
+    node.setInferredType(Type::getError());
+}
+
+void SemanticAnalyzer::visit(MatchExpr& node) {
+    node.getCondition().accept(*this);
+    auto condType = node.getCondition().getInferredType();
+    if (!condType) condType = Type::getError();
+
+    std::shared_ptr<Type> resultType = nullptr;
+
+    for (auto& arm : node.getArms()) {
+        Scope armScope(m_currentScope);
+        m_currentScope = &armScope;
+
+        for (auto& pat : arm.patterns) {
+            if (pat->kind == PatternKind::Variable) {
+                if (pat->name != "_") {
+                    m_currentScope->define(Symbol::makeVariable(pat->name, condType, false, pat->span));
+                }
+            } else if (pat->kind == PatternKind::Variant && !pat->subPatterns.empty()) {
+                if (condType->isOption() && (pat->name == "Some" || pat->name == "Option::Some")) {
+                    auto optType = std::static_pointer_cast<OptionType>(condType);
+                    for (auto& sub : pat->subPatterns) {
+                        if ((sub->kind == PatternKind::Variable || std::islower(static_cast<unsigned char>(sub->name[0])) || sub->name[0] == '$') && sub->name != "_") {
+                            m_currentScope->define(Symbol::makeVariable(sub->name, optType->getValueType(), false, sub->span));
+                        }
+                    }
+                } else if (condType->isResult() && (pat->name == "Ok" || pat->name == "Result::Ok")) {
+                    auto resType = std::static_pointer_cast<ResultType>(condType);
+                    for (auto& sub : pat->subPatterns) {
+                        if ((sub->kind == PatternKind::Variable || std::islower(static_cast<unsigned char>(sub->name[0])) || sub->name[0] == '$') && sub->name != "_") {
+                            m_currentScope->define(Symbol::makeVariable(sub->name, resType->getOkType(), false, sub->span));
+                        }
+                    }
+                } else if (condType->isResult() && (pat->name == "Err" || pat->name == "Result::Err")) {
+                    auto resType = std::static_pointer_cast<ResultType>(condType);
+                    for (auto& sub : pat->subPatterns) {
+                        if ((sub->kind == PatternKind::Variable || std::islower(static_cast<unsigned char>(sub->name[0])) || sub->name[0] == '$') && sub->name != "_") {
+                            m_currentScope->define(Symbol::makeVariable(sub->name, resType->getErrType(), false, sub->span));
+                        }
+                    }
+                }
+            } else if (pat->kind == PatternKind::Literal && pat->literal) {
+                pat->literal->accept(*this);
+            }
+        }
+
+        if (arm.guard) {
+            arm.guard->accept(*this);
+            auto guardType = arm.guard->getInferredType();
+            if (guardType && !guardType->isBoolean() && !guardType->isError()) {
+                error(arm.guard->getSpan(), "match guard must evaluate to a boolean expression, found '" + guardType->toString() + "'");
+            }
+        }
+
+        if (arm.body) {
+            arm.body->accept(*this);
+            auto armType = arm.body->getInferredType();
+            if (armType && !armType->isError()) {
+                if (!resultType) {
+                    resultType = armType;
+                } else if (!isAssignable(*armType, *resultType)) {
+                    error(arm.body->getSpan(), "incompatible types in match arms: expected '" + resultType->toString() + "', found '" + armType->toString() + "'", "E0308");
+                }
+            }
+        }
+
+        m_currentScope = m_currentScope->getParent();
+    }
+
+    node.setInferredType(resultType ? resultType : Type::getVoid());
 }
 
 } // namespace sph

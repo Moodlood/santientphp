@@ -1,0 +1,13 @@
+<?php
+
+fn main(): i32 {
+    mut s: string = "start";
+    mut i: i32 = 0;
+    while (i < 50000) {
+        s = s . "a";
+        i = i + 1;
+    }
+    println(i);
+    return 0;
+}
+

@@ -1,0 +1,114 @@
+[
+  {
+    "name": "Fibonacci (N=35)",
+    "category": "CPU / Recursion",
+    "sphc": {
+      "compile_ms": 1738.72,
+      "exec_ms": 356.88,
+      "bin_size_kb": 238.6
+    },
+    "gcc": {
+      "compile_ms": 1307.87,
+      "exec_ms": 130.18,
+      "bin_size_kb": 58.0
+    },
+    "rust": {
+      "compile_ms": 12798.18,
+      "exec_ms": 325.99,
+      "bin_size_kb": 4946.0
+    },
+    "go": {
+      "compile_ms": 18876.24,
+      "exec_ms": 271.63,
+      "bin_size_kb": 2436.0
+    },
+    "php": {
+      "exec_ms": 9488.43,
+      "type": "interpreted / JIT"
+    }
+  },
+  {
+    "name": "Matrix Multi (200x200)",
+    "category": "Arithmetic / Loops",
+    "sphc": {
+      "compile_ms": 2149.71,
+      "exec_ms": 245.45,
+      "bin_size_kb": 239.4
+    },
+    "gcc": {
+      "compile_ms": 1486.27,
+      "exec_ms": 63.69,
+      "bin_size_kb": 57.5
+    },
+    "rust": {
+      "compile_ms": 2272.96,
+      "exec_ms": 254.65,
+      "bin_size_kb": 4946.0
+    },
+    "go": {
+      "compile_ms": 2339.81,
+      "exec_ms": 48.49,
+      "bin_size_kb": 2435.5
+    },
+    "php": {
+      "exec_ms": 1737.84,
+      "type": "interpreted / JIT"
+    }
+  },
+  {
+    "name": "String Concat (50k)",
+    "category": "String Manipulation",
+    "sphc": {
+      "compile_ms": 1837.9,
+      "exec_ms": 132.17,
+      "bin_size_kb": 238.6
+    },
+    "gcc": {
+      "compile_ms": 1266.68,
+      "exec_ms": 61.98,
+      "bin_size_kb": 57.6
+    },
+    "rust": {
+      "compile_ms": 2524.06,
+      "exec_ms": 232.92,
+      "bin_size_kb": 4946.8
+    },
+    "go": {
+      "compile_ms": 2211.11,
+      "exec_ms": 37.12,
+      "bin_size_kb": 2437.5
+    },
+    "php": {
+      "exec_ms": 232.7,
+      "type": "interpreted / JIT"
+    }
+  },
+  {
+    "name": "Heap Alloc (1M items)",
+    "category": "Memory / Allocator",
+    "sphc": {
+      "compile_ms": 2513.85,
+      "exec_ms": 428.57,
+      "bin_size_kb": 239.1
+    },
+    "gcc": {
+      "compile_ms": 1115.69,
+      "exec_ms": 61.17,
+      "bin_size_kb": 57.4
+    },
+    "rust": {
+      "compile_ms": 2330.57,
+      "exec_ms": 303.91,
+      "bin_size_kb": 4946.0
+    },
+    "go": {
+      "compile_ms": 1972.94,
+      "exec_ms": 34.51,
+      "bin_size_kb": 2436.0
+    },
+    "php": {
+      "exec_ms": 1046.3,
+      "type": "interpreted / JIT"
+    }
+  }
+]

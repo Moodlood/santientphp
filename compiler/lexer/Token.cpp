@@ -45,6 +45,9 @@ const char* tokenKindToString(TokenKind kind) noexcept {
         case TokenKind::KwAsync:      return "async";
         case TokenKind::KwAwait:      return "await";
         case TokenKind::KwDefer:      return "defer";
+        case TokenKind::KwMatch:      return "match";
+        case TokenKind::KwOption:     return "Option";
+        case TokenKind::KwResult:     return "Result";
         case TokenKind::KwI32:        return "i32";
         case TokenKind::KwI64:        return "i64";
         case TokenKind::KwF32:        return "f32";
@@ -94,6 +97,7 @@ const char* tokenKindToString(TokenKind kind) noexcept {
         case TokenKind::LBracket:     return "[";
         case TokenKind::RBracket:     return "]";
         case TokenKind::Hash:         return "#";
+        case TokenKind::Question:     return "?";
     }
     return "Unknown";
 }

@@ -51,6 +51,8 @@ public:
     void visit(VecNewExpr& node) override;
     void visit(NewExpr& node) override;
     void visit(AwaitExpr& node) override;
+    void visit(MatchExpr& node) override;
+    void visit(TryPropagateExpr& node) override;
 
     void visit(VarDeclStmt& node) override;
     void visit(ReturnStmt& node) override;
@@ -76,7 +78,7 @@ public:
     void visit(ProgramAST& node) override;
 
 private:
-    void error(SourceSpan span, std::string message);
+    void error(SourceSpan span, std::string message, std::string code = "", std::string hint = "");
     bool checkReturns(const StmtAST& stmt) const;
     std::shared_ptr<Type> resolveType(const std::string& name);
     bool isAssignable(const Type& from, const Type& to) const;

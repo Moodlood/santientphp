@@ -183,15 +183,15 @@ std::unique_ptr<ProgramAST> Parser::parseProgram() {
                         targetFileId = m_sourceManager.loadFile(importPath);
                         canonicalKey = std::filesystem::weakly_canonical(importPath).string();
                     } else {
-                        // Search in standard library locations
+                        // Search in standard library locations: prefer local workspace stdlib first
                         std::vector<std::filesystem::path> candidateRoots;
-                        if (const char* envHome = std::getenv("SPH_HOME")) {
-                            candidateRoots.push_back(std::filesystem::path(envHome) / "stdlib");
-                        }
                         candidateRoots.push_back(std::filesystem::current_path() / "stdlib");
                         if (!currentFilename.empty()) {
                             candidateRoots.push_back(std::filesystem::path(currentFilename).parent_path() / "stdlib");
                             candidateRoots.push_back(std::filesystem::path(currentFilename).parent_path().parent_path() / "stdlib");
+                        }
+                        if (const char* envHome = std::getenv("SPH_HOME")) {
+                            candidateRoots.push_back(std::filesystem::path(envHome) / "stdlib");
                         }
 
                         std::string subPath = importPath;
@@ -658,6 +658,19 @@ std::vector<Parameter> Parser::parseParameterList() {
     return params;
 }
 
+bool Parser::consumeClosingAngle() {
+    if (match(TokenKind::Greater)) {
+        return true;
+    }
+    if (check(TokenKind::GreaterGreater)) {
+        m_tokens[m_current].kind = TokenKind::Greater;
+        m_tokens[m_current].text = ">";
+        return true;
+    }
+    expect(TokenKind::Greater, "expected '>' after type argument");
+    return false;
+}
+
 std::vector<std::string> Parser::parseTypeParameterList() {
     std::vector<std::string> params;
     if (!match(TokenKind::Less)) {
@@ -669,7 +682,7 @@ std::vector<std::string> Parser::parseTypeParameterList() {
         params.push_back(idTok->text);
     } while (match(TokenKind::Comma));
 
-    expect(TokenKind::Greater, "expected '>' after type parameters");
+    consumeClosingAngle();
     return params;
 }
 
@@ -684,7 +697,7 @@ std::vector<std::string> Parser::parseTypeArgumentList() {
         args.push_back(std::move(t));
     } while (match(TokenKind::Comma));
 
-    expect(TokenKind::Greater, "expected '>' after type arguments");
+    consumeClosingAngle();
     return args;
 }
 
@@ -747,31 +760,49 @@ std::string Parser::parseType() {
     if (match(TokenKind::KwBool))   return "bool";
     if (match(TokenKind::KwString)) return "string";
     if (match(TokenKind::KwVoid))   return "void";
+    if (match(TokenKind::KwDynamic)) return "dynamic";
     if (match(TokenKind::KwRc)) {
         if (!expect(TokenKind::Less, "expected '<' after 'Rc'")) return "";
         std::string elemType = parseType();
         if (elemType.empty()) return "";
-        if (!expect(TokenKind::Greater, "expected '>' after Rc type argument")) return "";
+        if (!consumeClosingAngle()) return "";
         return "Rc<" + elemType + ">";
     }
     if (match(TokenKind::KwBox)) {
         if (!expect(TokenKind::Less, "expected '<' after 'Box'")) return "";
         std::string elemType = parseType();
         if (elemType.empty()) return "";
-        if (!expect(TokenKind::Greater, "expected '>' after Box type argument")) return "";
+        if (!consumeClosingAngle()) return "";
         return "Box<" + elemType + ">";
     }
     if (match(TokenKind::KwArena)) {
         return "Arena";
     }
+    if (match(TokenKind::KwOption)) {
+        if (!expect(TokenKind::Less, "expected '<' after 'Option'")) return "";
+        std::string elemType = parseType();
+        if (elemType.empty()) return "";
+        if (!consumeClosingAngle()) return "";
+        return "Option<" + elemType + ">";
+    }
+    if (match(TokenKind::KwResult)) {
+        if (!expect(TokenKind::Less, "expected '<' after 'Result'")) return "";
+        std::string okType = parseType();
+        if (okType.empty()) return "";
+        if (!expect(TokenKind::Comma, "expected ',' between Result types")) return "";
+        std::string errType = parseType();
+        if (errType.empty()) return "";
+        if (!consumeClosingAngle()) return "";
+        return "Result<" + okType + ", " + errType + ">";
+    }
     if (match(TokenKind::KwVec)) {
         if (!expect(TokenKind::Less, "expected '<' after 'Vec'")) return "";
         std::string elemType = parseType();
         if (elemType.empty()) return "";
-        if (!expect(TokenKind::Greater, "expected '>' after Vec type argument")) return "";
+        if (!consumeClosingAngle()) return "";
         return "Vec<" + elemType + ">";
     }
-    if (match(TokenKind::Identifier)) {
+    if (match(TokenKind::Identifier) || match(TokenKind::KwOption) || match(TokenKind::KwResult)) {
         std::string name = previous().text;
         if (check(TokenKind::Less)) {
             auto args = parseTypeArgumentList();
@@ -1329,6 +1360,7 @@ std::unique_ptr<ExprAST> Parser::parsePostfix() {
         if (check(TokenKind::Dot)) {
             bool isMember = false;
             if (m_current + 1 < m_tokens.size()) {
+                const Token& dotTok = m_tokens[m_current];
                 const Token& nextTok = m_tokens[m_current + 1];
                 if (nextTok.kind == TokenKind::Identifier && !nextTok.text.empty() && nextTok.text[0] != '$') {
                     if (!dynamic_cast<StringLiteralExpr*>(expr.get()) &&
@@ -1336,7 +1368,12 @@ std::unique_ptr<ExprAST> Parser::parsePostfix() {
                         !dynamic_cast<FloatLiteralExpr*>(expr.get()) &&
                         !dynamic_cast<BoolLiteralExpr*>(expr.get()) &&
                         !dynamic_cast<ArrayLiteralExpr*>(expr.get())) {
-                        isMember = true;
+                        bool hasCall = (m_current + 2 < m_tokens.size() && m_tokens[m_current + 2].kind == TokenKind::LParen);
+                        if (hasCall ||
+                            dotTok.span.end.column == nextTok.span.start.column ||
+                            previous().span.end.column == dotTok.span.start.column) {
+                            isMember = true;
+                        }
                     }
                 }
             }
@@ -1433,6 +1470,10 @@ std::unique_ptr<ExprAST> Parser::parsePostfix() {
                     expr = std::make_unique<IndexExpr>(std::move(expr), std::move(firstExpr), span);
                 }
             }
+        } else if (match(TokenKind::Question)) {
+            SourceLocation endLoc = previous().span.end;
+            SourceSpan span(expr->getSpan().start, endLoc);
+            expr = std::make_unique<TryPropagateExpr>(std::move(expr), span);
         } else {
             break;
         }
@@ -1442,6 +1483,10 @@ std::unique_ptr<ExprAST> Parser::parsePostfix() {
 }
 
 std::unique_ptr<ExprAST> Parser::parsePrimary() {
+    if (match(TokenKind::KwMatch)) {
+        return parseMatch();
+    }
+
     if (match(TokenKind::LBracket)) {
         SourceLocation startLoc = previous().span.start;
         std::vector<ArrayLiteralExpr::Element> elements;
@@ -1673,7 +1718,7 @@ std::unique_ptr<ExprAST> Parser::parsePrimary() {
         }
     }
 
-    if (match(TokenKind::Identifier)) {
+    if (match(TokenKind::Identifier) || match(TokenKind::KwOption) || match(TokenKind::KwResult)) {
         const Token idTok = previous();
 
         std::vector<std::string> typeArgs;
@@ -1751,6 +1796,126 @@ std::unique_ptr<ExprAST> Parser::parsePrimary() {
     }
 
     error(peek().span, "expected expression");
+    return nullptr;
+}
+
+std::unique_ptr<ExprAST> Parser::parseMatch() {
+    SourceLocation startLoc = previous().span.start;
+    if (!expect(TokenKind::LParen, "expected '(' after 'match'")) return nullptr;
+    auto cond = parseExpression();
+    if (!cond) return nullptr;
+    if (!expect(TokenKind::RParen, "expected ')' after match condition")) return nullptr;
+    if (!expect(TokenKind::LBrace, "expected '{' after match condition")) return nullptr;
+
+    std::vector<MatchArm> arms;
+    while (!check(TokenKind::RBrace) && !isAtEnd()) {
+        MatchArm arm;
+        arm.span = peek().span;
+        do {
+            auto pat = parsePattern();
+            if (!pat) return nullptr;
+            arm.patterns.push_back(std::move(pat));
+        } while (match(TokenKind::Pipe));
+
+        if (match(TokenKind::KwIf)) {
+            if (check(TokenKind::LParen)) {
+                advance();
+                arm.guard = parseExpression();
+                expect(TokenKind::RParen, "expected ')' after match guard condition");
+            } else {
+                arm.guard = parseExpression();
+            }
+            if (!arm.guard) return nullptr;
+        }
+
+        if (!expect(TokenKind::DoubleArrow, "expected '=>' after match pattern")) return nullptr;
+
+        arm.body = parseExpression();
+        if (!arm.body) return nullptr;
+        arm.span.end = arm.body->getSpan().end;
+        arms.push_back(std::move(arm));
+
+        if (!match(TokenKind::Comma)) {
+            match(TokenKind::Semicolon);
+        }
+    }
+
+    const Token* rbrace = expect(TokenKind::RBrace, "expected '}' after match arms");
+    SourceLocation endLoc = rbrace ? rbrace->span.end : previous().span.end;
+    return std::make_unique<MatchExpr>(std::move(cond), std::move(arms), SourceSpan(startLoc, endLoc));
+}
+
+std::unique_ptr<Pattern> Parser::parsePattern() {
+    SourceLocation startLoc = peek().span.start;
+    if (check(TokenKind::Identifier) && peek().text == "_") {
+        advance();
+        return std::make_unique<Pattern>(PatternKind::Wildcard, SourceSpan(startLoc, previous().span.end), "_");
+    }
+
+    if (check(TokenKind::IntLiteral) || check(TokenKind::FloatLiteral) ||
+        check(TokenKind::StringLiteral) || check(TokenKind::KwTrue) || check(TokenKind::KwFalse)) {
+        auto lit = parsePrimary();
+        SourceLocation endLoc = previous().span.end;
+        if (match(TokenKind::DotDot)) {
+            auto endLit = parsePrimary();
+            int64_t startVal = 0, endVal = 0;
+            if (auto* il = dynamic_cast<IntegerLiteralExpr*>(lit.get())) startVal = il->getValue();
+            if (auto* el = dynamic_cast<IntegerLiteralExpr*>(endLit.get())) endVal = el->getValue();
+            auto pat = std::make_unique<Pattern>(PatternKind::Range, SourceSpan(startLoc, previous().span.end));
+            pat->rangeStart = startVal;
+            pat->rangeEnd = endVal;
+            return pat;
+        }
+        auto pat = std::make_unique<Pattern>(PatternKind::Literal, SourceSpan(startLoc, endLoc));
+        pat->literal = std::move(lit);
+        return pat;
+    }
+
+    if (match(TokenKind::Minus)) {
+        if (check(TokenKind::IntLiteral)) {
+            auto lit = parsePrimary();
+            if (auto* il = dynamic_cast<IntegerLiteralExpr*>(lit.get())) {
+                auto pat = std::make_unique<Pattern>(PatternKind::Literal, SourceSpan(startLoc, previous().span.end));
+                pat->literal = std::make_unique<IntegerLiteralExpr>(-il->getValue(), "-" + il->getRaw(), pat->span);
+                return pat;
+            }
+        }
+    }
+
+    if (match(TokenKind::Identifier) || match(TokenKind::KwOption) || match(TokenKind::KwResult)) {
+        std::string name = previous().text;
+        if (match(TokenKind::ColonColon)) {
+            const Token* subTok = expect(TokenKind::Identifier, "expected identifier after '::' in pattern");
+            if (!subTok) return nullptr;
+            name += "::" + subTok->text;
+        }
+
+        if (match(TokenKind::LParen)) {
+            auto pat = std::make_unique<Pattern>(PatternKind::Variant, SourceSpan(startLoc, previous().span.end), name);
+            if (!check(TokenKind::RParen)) {
+                do {
+                    auto sub = parsePattern();
+                    if (!sub) return nullptr;
+                    pat->subPatterns.push_back(std::move(sub));
+                } while (match(TokenKind::Comma));
+            }
+            const Token* rparen = expect(TokenKind::RParen, "expected ')' after pattern destructuring");
+            if (rparen) pat->span.end = rparen->span.end;
+            return pat;
+        }
+
+        if (name == "None" || name == "true" || name == "false") {
+            return std::make_unique<Pattern>(PatternKind::Variant, SourceSpan(startLoc, previous().span.end), name);
+        }
+
+        if (!name.empty() && (name[0] == '$' || std::islower(static_cast<unsigned char>(name[0])))) {
+            return std::make_unique<Pattern>(PatternKind::Variable, SourceSpan(startLoc, previous().span.end), name);
+        }
+
+        return std::make_unique<Pattern>(PatternKind::Variant, SourceSpan(startLoc, previous().span.end), name);
+    }
+
+    error(peek().span, "expected pattern in match arm");
     return nullptr;
 }
 

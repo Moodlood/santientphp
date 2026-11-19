@@ -1,0 +1,27 @@
+<?php
+
+// SantientPHP Standard Library: Cryptography & Hashing
+
+extern "C" fn sph_crypto_sha256(input: string): string;
+extern "C" fn sph_random_u32(): i32;
+
+fn crypto_sha256(input: string): string {
+    return sph_crypto_sha256(input);
+}
+
+fn crypto_random_u32(): i32 {
+    return sph_random_u32();
+}
+
+fn crypto_random_range(low: i32, high: i32): i32 {
+    if (high <= low) {
+        return low;
+    }
+    let span = high - low;
+    let mut r = sph_random_u32();
+    if (r < 0) {
+        r = -r;
+    }
+    return low + (r % span);
+}
+

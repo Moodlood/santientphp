@@ -79,6 +79,9 @@ private:
     std::unique_ptr<ExprAST> parseUnary();
     std::unique_ptr<ExprAST> parsePostfix();
     std::unique_ptr<ExprAST> parsePrimary();
+    std::unique_ptr<ExprAST> parseMatch();
+    std::unique_ptr<Pattern> parsePattern();
+    bool consumeClosingAngle();
 
     uint32_t m_fileId;
     SourceManager& m_sourceManager;

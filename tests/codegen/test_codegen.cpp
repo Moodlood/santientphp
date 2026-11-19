@@ -2520,5 +2520,145 @@ TEST_CASE("End-to-End Acceptance Test: Compiles and runs optimizations.sph with 
     }
 }
 
+TEST_CASE("Remediation: Float comparisons emit ucomiss/ucomisd in x86-64 and fcmp in LLVM") {
+    sph::SourceManager sm;
+    std::string code =
+        "<?php\n"
+        "fn test_float_cmp(a: f64, b: f64): bool {\n"
+        "    return a < b;\n"
+        "}\n"
+        "fn main(): i32 {\n"
+        "    let res = test_float_cmp(-2.5, 3.5);\n"
+        "    if (res) { return 0; }\n"
+        "    return 1;\n"
+        "}\n";
+
+    uint32_t fileId = sm.addSource("test_fcmp.sph", code);
+    sph::DiagnosticEmitter emitter(sm);
+    sph::Parser parser(fileId, sm, &emitter);
+    auto program = parser.parseProgram();
+    CHECK(program != nullptr);
+
+    sph::SemanticAnalyzer analyzer(emitter);
+    CHECK(analyzer.analyze(*program));
+
+    sph::IRGenerator irGen;
+    auto irModule = irGen.generate(*program, "fcmp_module");
+    CHECK(irModule != nullptr);
+
+    // Verify x86-64 backend emits ucomisd
+    std::ostringstream x86Out;
+    sph::X86_64CodeGen codegen(x86Out);
+    codegen.generate(*irModule);
+    std::string x86Asm = x86Out.str();
+    CHECK(x86Asm.find("ucomisd") != std::string::npos);
+    CHECK(x86Asm.find("seta") != std::string::npos);
+
+    // Verify LLVM backend emits fcmp
+    std::ostringstream llvmOut;
+    sph::LLVMEmitter llvmEmitter(llvmOut);
+    llvmEmitter.emit(*irModule);
+    std::string llvmIR = llvmOut.str();
+    CHECK(llvmIR.find("fcmp olt double") != std::string::npos);
+}
+
+TEST_CASE("Remediation: Boolean store emits mov byte ptr and load emits movzx") {
+    sph::SourceManager sm;
+    std::string code =
+        "<?php\n"
+        "struct FlagContainer {\n"
+        "    flag: bool,\n"
+        "    val: i32,\n"
+        "}\n"
+        "fn main(): i32 {\n"
+        "    let mut f = FlagContainer { flag: false, val: 42 };\n"
+        "    f.flag = true;\n"
+        "    let readFlag = f.flag;\n"
+        "    if (readFlag) { return 0; }\n"
+        "    return 1;\n"
+        "}\n";
+
+    uint32_t fileId = sm.addSource("test_bool_byte.sph", code);
+    sph::DiagnosticEmitter emitter(sm);
+    sph::Parser parser(fileId, sm, &emitter);
+    auto program = parser.parseProgram();
+    CHECK(program != nullptr);
+
+    sph::SemanticAnalyzer analyzer(emitter);
+    CHECK(analyzer.analyze(*program));
+
+    sph::IRGenerator irGen;
+    auto irModule = irGen.generate(*program, "bool_byte_module");
+    CHECK(irModule != nullptr);
+
+    std::ostringstream x86Out;
+    sph::X86_64CodeGen codegen(x86Out);
+    codegen.generate(*irModule);
+    std::string x86Asm = x86Out.str();
+    CHECK(x86Asm.find("mov byte ptr") != std::string::npos);
+    CHECK(x86Asm.find("movzx") != std::string::npos);
+}
+
+TEST_CASE("Remediation: Big struct return (> 8 bytes) passes hidden sret buffer") {
+    sph::SourceManager sm;
+    std::string code =
+        "<?php\n"
+        "struct BigData {\n"
+        "    x: i64,\n"
+        "    y: i64,\n"
+        "    z: i64,\n"
+        "}\n"
+        "fn make_data(a: i64, b: i64, c: i64): BigData {\n"
+        "    let d = BigData { x: a, y: b, z: c };\n"
+        "    return d;\n"
+        "}\n"
+        "fn main(): i32 {\n"
+        "    let d = make_data(10, 20, 30);\n"
+        "    if ((d.x + d.y + d.z) == 60) { return 0; }\n"
+        "    return 1;\n"
+        "}\n";
+
+    uint32_t fileId = sm.addSource("test_sret.sph", code);
+    sph::DiagnosticEmitter emitter(sm);
+    sph::Parser parser(fileId, sm, &emitter);
+    auto program = parser.parseProgram();
+    CHECK(program != nullptr);
+
+    sph::SemanticAnalyzer analyzer(emitter);
+    CHECK(analyzer.analyze(*program));
+
+    sph::IRGenerator irGen;
+    auto irModule = irGen.generate(*program, "sret_module");
+    CHECK(irModule != nullptr);
+
+    std::ostringstream x86Out;
+    sph::X86_64CodeGen codegen(x86Out);
+    codegen.generate(*irModule);
+    std::string x86Asm = x86Out.str();
+    // Function make_data has sret buffer passed in rcx/rdi
+    CHECK(x86Asm.find("make_data:") != std::string::npos);
+    CHECK(x86Asm.find("lea") != std::string::npos);
+}
+
+TEST_CASE("Remediation: Parser handles dynamic keyword in parseType") {
+    sph::SourceManager sm;
+    std::string code =
+        "<?php\n"
+        "fn test_dyn(x: dynamic): dynamic {\n"
+        "    return x;\n"
+        "}\n"
+        "fn main(): i32 {\n"
+        "    return 0;\n"
+        "}\n";
+
+    uint32_t fileId = sm.addSource("test_dyn.sph", code);
+    sph::DiagnosticEmitter emitter(sm);
+    sph::Parser parser(fileId, sm, &emitter);
+    auto program = parser.parseProgram();
+    CHECK(!emitter.hasErrors());
+    CHECK(program != nullptr);
+}
+
+
 
 

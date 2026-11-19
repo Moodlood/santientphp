@@ -7,7 +7,9 @@
 #include "compiler/optimizer/ConstantFoldingPass.hpp"
 #include "compiler/optimizer/ControlFlowOptimizationPass.hpp"
 #include "compiler/optimizer/DeadCodeEliminationPass.hpp"
+#include "compiler/optimizer/DeadStoreEliminationPass.hpp"
 #include "compiler/optimizer/FunctionInliningPass.hpp"
+#include "compiler/optimizer/LoopInvariantCodeMotionPass.hpp"
 #include "compiler/optimizer/PassManager.hpp"
 #include "compiler/optimizer/StoreToLoadForwardingPass.hpp"
 #include "compiler/parser/Parser.hpp"
@@ -470,6 +472,86 @@ TEST_CASE("Optimizer: AlgebraicSimplificationPass respects IEEE-754 floats and s
         CHECK(!hasShift);
     }
 }
+
+TEST_CASE("Optimizer: LoopInvariantCodeMotionPass does not hoist Div with non-constant divisor") {
+    std::string code =
+        "<?php\n"
+        "fn test_licm_div(n: i32, d: i32): i32 {\n"
+        "    let mut sum: i32 = 0;\n"
+        "    let mut i: i32 = 0;\n"
+        "    while (i < n) {\n"
+        "        let x: i32 = 100 / d;\n"
+        "        sum = sum + x;\n"
+        "        i = i + 1;\n"
+        "    }\n"
+        "    return sum;\n"
+        "}\n";
+
+    auto irModule = parseAndGenerateIR(code);
+    CHECK(irModule != nullptr);
+    if (!irModule) return;
+
+    auto* fn = irModule->getFunction("test_licm_div");
+    CHECK(fn != nullptr);
+    if (!fn) return;
+
+    sph::LoopInvariantCodeMotionPass licm;
+    licm.runOnFunction(*fn);
+
+    // Div should NOT be hoisted to the loop preheader because d is variable (potential division by zero)
+    // Find the loop header / body block containing the Div instruction
+    bool foundDivInLoop = false;
+    for (const auto& bb : fn->getBlocks()) {
+        if (bb->getName() != "entry") {
+            for (const auto& inst : bb->getInstructions()) {
+                if (inst->getOpcode() == IROpcode::Div) {
+                    foundDivInLoop = true;
+                    break;
+                }
+            }
+        }
+    }
+    CHECK(foundDivInLoop);
+}
+
+TEST_CASE("Optimizer: DeadStoreEliminationPass preserves stores with escaped pointers") {
+    std::string code =
+        "<?php\n"
+        "struct Point {\n"
+        "    x: i32,\n"
+        "    y: i32,\n"
+        "}\n"
+        "extern \"C\" fn use_ptr(p: *Point): void;\n"
+        "fn test_dse_escape(): i32 {\n"
+        "    let mut pt = Point { x: 10, y: 20 };\n"
+        "    pt.x = 30;\n"
+        "    use_ptr(&pt);\n"
+        "    return 0;\n"
+        "}\n";
+
+    auto irModule = parseAndGenerateIR(code);
+    CHECK(irModule != nullptr);
+    if (!irModule) return;
+
+    auto* fn = irModule->getFunction("test_dse_escape");
+    CHECK(fn != nullptr);
+    if (!fn) return;
+
+    sph::DeadStoreEliminationPass dse;
+    dse.runOnFunction(*fn);
+
+    // Stores to pt.x and pt.y should be preserved because pt escaped via &pt
+    size_t storeCount = 0;
+    for (const auto& bb : fn->getBlocks()) {
+        for (const auto& inst : bb->getInstructions()) {
+            if (inst->getOpcode() == IROpcode::Store) {
+                storeCount++;
+            }
+        }
+    }
+    CHECK(storeCount >= 2);
+}
+
 
 
 

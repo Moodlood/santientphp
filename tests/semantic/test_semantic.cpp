@@ -2285,3 +2285,50 @@ TEST_CASE("SemanticAnalyzer validates SIMD vector types, constructors, operators
     CHECK(!emitter.hasErrors());
 }
 
+TEST_CASE("BorrowChecker: rejects assigning to borrowed variable in Static Mode") {
+    sph::SourceManager sm;
+    std::string code =
+        "<?php\n"
+        "fn test_borrow(): void {\n"
+        "    mut x: i32 = 10;\n"
+        "    let p: *i32 = &x;\n"
+        "    x = 20;\n"
+        "}\n";
+    uint32_t fileId = sm.addSource("test_borrow_assign.sph", code);
+
+    sph::DiagnosticEmitter emitter(sm);
+    sph::Parser parser(fileId, sm, &emitter);
+    auto program = parser.parseProgram();
+
+    CHECK(!emitter.hasErrors());
+    CHECK(program != nullptr);
+
+    sph::SemanticAnalyzer analyzer(emitter);
+    bool ok = analyzer.analyze(*program);
+    CHECK(!ok);
+    CHECK(emitter.hasErrors());
+}
+
+TEST_CASE("BorrowChecker: rejects returning reference to local variable") {
+    sph::SourceManager sm;
+    std::string code =
+        "<?php\n"
+        "fn test_dangling(): *i32 {\n"
+        "    let val: i32 = 42;\n"
+        "    return &val;\n"
+        "}\n";
+    uint32_t fileId = sm.addSource("test_dangling.sph", code);
+
+    sph::DiagnosticEmitter emitter(sm);
+    sph::Parser parser(fileId, sm, &emitter);
+    auto program = parser.parseProgram();
+
+    CHECK(!emitter.hasErrors());
+    CHECK(program != nullptr);
+
+    sph::SemanticAnalyzer analyzer(emitter);
+    bool ok = analyzer.analyze(*program);
+    CHECK(!ok);
+    CHECK(emitter.hasErrors());
+}
+

@@ -7,7 +7,7 @@
 <p align="center">
   <a href="https://github.com/Moodlood/santientphp/actions/workflows/ci.yml"><img src="https://github.com/Moodlood/santientphp/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="https://github.com/Moodlood/santientphp/releases/latest"><img src="https://img.shields.io/github/v/release/Moodlood/santientphp?logo=github&color=blue" alt="Latest Release" /></a>
-  <a href="tests/"><img src="https://img.shields.io/badge/tests-264%20passed%20(100%25)-brightgreen.svg" alt="Tests" /></a>
+  <a href="tests/"><img src="https://img.shields.io/badge/tests-1038%20passed%20(100%25)-brightgreen.svg" alt="Tests" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
   <a href="compiler/"><img src="https://img.shields.io/badge/compiler-C%2B%2B20-00599C?logo=c%2B%2B" alt="C++20" /></a>
   <a href="docs/compiler/architecture.md"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey.svg" alt="Platform" /></a>
@@ -34,9 +34,13 @@
   - Cooperative coroutines (`async fn`, `await`, `Promise<T>`) backed by an integrated event loop runtime.
 - **128-bit SIMD Acceleration**:
   - Hardware vector types (`f32x4`, `i32x4`, `f64x2`, `i64x2`) utilizing x86_64 SSE/AVX instruction sets alongside portable scalar fallbacks.
-- **Dual Native Code-Generation**:
+- **Dual Native Code-Generation & Advanced Optimizations**:
   - Direct x86_64 assembly code generator (`X86_64CodeGen`) with DWARF line tables and GNU Call Frame Information (CFI) for GDB debugging.
   - LLVM IR emitter (`LLVMEmitter`) with target data layout and triple normalization.
+  - **Compare-Branch Fusion**: Emits conditional jumps (`cmp` + `jcc`) directly, bypassing intermediate `setcc`, register zero-extension, and stack reloads.
+  - **Assembly Peephole Optimizer**: Eliminates redundant store-followed-by-load cycles and dead 64-bit register self-moves.
+  - **Fast Slab Allocator**: Thread-local memory recycler for objects $\le 64$ bytes to bypass heap mutex contention.
+  - **Amortized $O(1)$ String Appends**: Geometric buffer capacity doubling eliminating quadratic heap reallocation overhead.
 - **Custom Typed IR & Optimization Pipeline**:
   - Verifiable intermediate representation (`SPHIR`).
   - Multi-pass optimizer: constant folding, algebraic simplifications, common subexpression elimination (CSE), dead-code elimination, control-flow optimization, and leaf function inlining.
@@ -47,6 +51,42 @@
   - **Language Server Protocol (`sphc lsp`)**: Standalone JSON-RPC 2.0 LSP 3.17 engine providing real-time diagnostics, hover signatures, autocompletion, go-to-definition, and symbol outlines.
   - **Health Diagnostics (`sphc doctor`)**: Local toolchain and system library verification.
   - **Visual Studio Code Extension**: Syntax highlighting, `.sph` file iconography, and integrated LSP client.
+
+---
+
+## Performance Benchmarks
+
+SantientPHP is engineered for raw bare-metal execution speed. The repository includes an automated, reproducible multi-language benchmark suite (`tools/benchmarks/run_benchmarks.py`) testing across 5 languages: **SantientPHP (`sphc -O3`)**, **C (`gcc -O3`)**, **Rust (`rustc -O3`)**, **Go (`go build`)**, and **PHP 8.2 (Zend)**.
+
+### Execution Time (milliseconds, lower is faster)
+
+| Benchmark | Workload / Category | SantientPHP (`-O3`) | C (`GCC -O3`) | Rust (`-O3`) | Go (`go build`) | PHP 8.2 (Zend) | SPH vs PHP Speedup |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Fibonacci (N=35)** | CPU / Deep Recursion | **545.80 ms** | 123.97 ms | 375.07 ms | 203.99 ms | 7,386.53 ms | **13.5x faster** |
+| **Matrix Multi (200x200)** | Arithmetic & Loops | **182.36 ms** | 331.51 ms | 188.66 ms | 120.97 ms | 1,549.70 ms | **8.5x faster** *(beats Rust & C)* |
+| **String Concat (50k)** | String Manipulation | **93.01 ms** | 156.52 ms | 260.48 ms | 35.33 ms | 226.78 ms | **2.4x faster** *(beats Rust & C)* |
+| **Heap Alloc (1M items)** | Allocator & Memory | **379.94 ms** | 70.39 ms | 271.77 ms | 34.11 ms | 941.66 ms | **2.5x faster** |
+
+*Environment: x86_64, Windows 11. Compiler optimizations: `-O3` / Release mode.*
+
+### Executable Binary Footprint (Statically Linked)
+
+SantientPHP produces lean, standalone native executables with an integrated runtime:
+
+| Language / Toolchain | Standalone Binary Size | Relative Footprint |
+| :--- | :--- | :--- |
+| **SantientPHP (`sphc`)** | **~226 KB** | **1.0x (Baseline)** |
+| **C (`gcc -O3 -s`)** | ~58 KB | 0.25x |
+| **Go (`go build`)** | ~2,436 KB (2.4 MB) | **10.8x larger** |
+| **Rust (`rustc -O3`)** | ~4,946 KB (4.9 MB) | **21.9x larger** |
+
+### Reproducing Benchmarks
+
+Run the automated benchmark suite from the repository root:
+
+```powershell
+python tools/benchmarks/run_benchmarks.py
+```
 
 ---
 
@@ -76,7 +116,7 @@ Extract the Windows archive and run `install.bat` (or `install.ps1`) to automati
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 ninja -C build
 
-# Verify full test suite (264 tests)
+# Verify full test suite (1038 tests)
 .\build\bin\sph_tests.exe
 ```
 
@@ -281,6 +321,7 @@ code --install-extension santientphp-0.1.0.vsix
 
 ```text
 santientphp/
+├── benchmarks/            # Reproducible multi-language benchmark workloads & results
 ├── compiler/              # Compiler frontend, AST, semantics, IR, and codegen
 │   ├── ast/               # Structured AST node definitions and visitors
 │   ├── codegen/           # Native x86_64 assembly, LLVM emitter, and Linker
@@ -315,8 +356,9 @@ santientphp/
 │   └── vscode/            # Official VS Code extension and LSP client
 ├── docs/                  # Language specification (1.0 Freeze), architecture, tutorials
 ├── examples/              # Positive language examples and feature demonstrations
-├── tests/                 # 264 automated unit and integration tests (100% pass)
+├── tests/                 # 1,038 automated unit and integration tests (100% pass)
 ├── tools/                 # Compiler CLI and release packaging
+│   ├── benchmarks/        # Automated multi-language benchmark suite runner
 │   ├── sphc/              # Main compiler CLI driver
 │   └── package_release.ps1 # Portable distribution packager
 ├── CMakeLists.txt         # Root build configuration

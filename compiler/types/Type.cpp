@@ -24,6 +24,7 @@ std::string Type::toString() const {
         case TypeKind::Arena:     return "arena";
         case TypeKind::Vector:    return "vector";
         case TypeKind::Result:    return "result";
+        case TypeKind::Option:    return "option";
         case TypeKind::Dynamic:   return "dynamic";
         case TypeKind::Enum:      return "enum";
         case TypeKind::Interface: return "interface";
@@ -86,6 +87,7 @@ size_t Type::getSize() const {
         case TypeKind::Arena:    return 8;
         case TypeKind::Vector:   return 8;
         case TypeKind::Result:   return 8;
+        case TypeKind::Option:   return 8;
         case TypeKind::Dynamic:  return 8;
         case TypeKind::Slice:     return 16;
         case TypeKind::Interface: return 16;
@@ -110,6 +112,7 @@ size_t Type::getAlignment() const {
         case TypeKind::Arena:    return 8;
         case TypeKind::Vector:   return 8;
         case TypeKind::Result:   return 8;
+        case TypeKind::Option:   return 8;
         case TypeKind::Dynamic:  return 8;
         case TypeKind::Slice:     return 8;
         case TypeKind::Interface: return 8;

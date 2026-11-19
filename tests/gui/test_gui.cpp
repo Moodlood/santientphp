@@ -200,7 +200,13 @@ TEST_CASE("GUI: Stdlib import std/gui.sph parses and passes semantic analysis") 
     CHECK(program != nullptr);
 
     sph::SemanticAnalyzer analyzer(emitter);
-    CHECK(analyzer.analyze(*program));
+    bool ok = analyzer.analyze(*program);
+    if (!ok) {
+        for (const auto& d : emitter.getDiagnostics()) {
+            std::cout << "DIAG ERROR: " << d.message << "\n";
+        }
+    }
+    CHECK(ok);
 
     sph::IRGenerator irGen;
     auto irModule = irGen.generate(*program, "test_gui_module");
@@ -328,4 +334,77 @@ TEST_CASE("GUI: LSP hover returns markdown documentation for Canvas2D and Window
     CHECK(val.find("Canvas2D") != std::string::npos);
     CHECK(val.find("128-bit SIMD") != std::string::npos);
 }
+
+// ============================================================================
+// 7. Flexbox Layout Engine & Reactive State Verification
+// ============================================================================
+
+TEST_CASE("GUI: Flexbox layout calculation in Row and Column directions") {
+    sph::SourceManager sm;
+    std::string code =
+        "<?php\n"
+        "import \"std/gui.sph\";\n"
+        "\n"
+        "fn main(): i32 {\n"
+        "    let row_container: FlexContainer = flex_container_create(0, 10, 15, 600, 400);\n"
+        "    let r0: LayoutRect = flex_compute_item_rect(row_container, 0, 100, 30);\n"
+        "    let r1: LayoutRect = flex_compute_item_rect(row_container, 1, 100, 30);\n"
+        "    let col_container: FlexContainer = flex_container_create(1, 8, 20, 600, 400);\n"
+        "    let c0: LayoutRect = flex_compute_item_rect(col_container, 0, 120, 40);\n"
+        "    let c1: LayoutRect = flex_compute_item_rect(col_container, 1, 120, 40);\n"
+        "    return 0;\n"
+        "}\n";
+
+    uint32_t fileId = sm.addSource("test_flex_gui.sph", code);
+    sph::DiagnosticEmitter emitter(sm);
+    sph::Parser parser(fileId, sm, &emitter);
+    auto program = parser.parseProgram();
+
+    CHECK(!emitter.hasErrors());
+    CHECK(program != nullptr);
+
+    sph::SemanticAnalyzer analyzer(emitter);
+    bool ok = analyzer.analyze(*program);
+    if (!ok) {
+        for (const auto& d : emitter.getDiagnostics()) {
+            std::cout << "DIAG ERROR: " << d.message << "\n";
+        }
+    }
+    CHECK(ok);
+}
+
+TEST_CASE("GUI: Reactive StateInt and StateString with dirty tracking") {
+    sph::SourceManager sm;
+    std::string code =
+        "<?php\n"
+        "import \"std/gui.sph\";\n"
+        "\n"
+        "fn main(): i32 {\n"
+        "    let count: StateInt = state_int(0);\n"
+        "    let val0: i32 = state_int_get(count);\n"
+        "    let updated: StateInt = state_int_set(count, 42);\n"
+        "    let val1: i32 = state_int_get(updated);\n"
+        "    let name: StateString = state_string(\"antigravity\");\n"
+        "    let name_val: string = state_string_get(name);\n"
+        "    return 0;\n"
+        "}\n";
+
+    uint32_t fileId = sm.addSource("test_state_gui.sph", code);
+    sph::DiagnosticEmitter emitter(sm);
+    sph::Parser parser(fileId, sm, &emitter);
+    auto program = parser.parseProgram();
+
+    CHECK(!emitter.hasErrors());
+    CHECK(program != nullptr);
+
+    sph::SemanticAnalyzer analyzer(emitter);
+    bool ok = analyzer.analyze(*program);
+    if (!ok) {
+        for (const auto& d : emitter.getDiagnostics()) {
+            std::cout << "DIAG ERROR: " << d.message << "\n";
+        }
+    }
+    CHECK(ok);
+}
+
 

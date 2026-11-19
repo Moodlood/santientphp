@@ -42,10 +42,11 @@ bool DeadCodeEliminationPass::isSideEffectFree(const IRInstruction& inst) noexce
 bool DeadCodeEliminationPass::eliminatePostTerminatorCode(IRFunction& fn) {
     bool changed = false;
     for (auto& bb : fn.getBlocks()) {
+        if (!bb) continue;
         auto& insts = bb->getInstructions();
         size_t termIdx = insts.size();
         for (size_t i = 0; i < insts.size(); ++i) {
-            if (insts[i]->isTerminator()) {
+            if (insts[i] && insts[i]->isTerminator()) {
                 termIdx = i;
                 break;
             }
@@ -74,7 +75,7 @@ bool DeadCodeEliminationPass::eliminateUnreachableBlocks(IRFunction& fn) {
         IRBasicBlock* curr = worklist.back();
         worklist.pop_back();
 
-        if (curr->hasTerminator()) {
+        if (curr && curr->hasTerminator()) {
             const auto* term = curr->getTerminator();
             if (term->getOpcode() == IROpcode::Br) {
                 const auto* br = static_cast<const BranchInst*>(term);
@@ -120,7 +121,9 @@ bool DeadCodeEliminationPass::eliminateDeadInstructions(IRFunction& fn) {
         // Build use count map
         std::unordered_map<const IRValue*, size_t> useCounts;
         for (const auto& bb : fn.getBlocks()) {
+            if (!bb) continue;
             for (const auto& inst : bb->getInstructions()) {
+                if (!inst) continue;
                 auto operands = getInstructionOperands(*inst);
                 for (const auto* op : operands) {
                     if (op) useCounts[op]++;
@@ -130,11 +133,13 @@ bool DeadCodeEliminationPass::eliminateDeadInstructions(IRFunction& fn) {
 
         // Identify and remove dead side-effect-free instructions
         for (auto& bb : fn.getBlocks()) {
+            if (!bb) continue;
             auto& insts = bb->getInstructions();
             size_t oldSize = insts.size();
             insts.erase(
                 std::remove_if(insts.begin(), insts.end(),
                     [&](const std::shared_ptr<IRInstruction>& inst) {
+                        if (!inst) return true;
                         if (isSideEffectFree(*inst)) {
                             auto it = useCounts.find(inst.get());
                             if (it == useCounts.end() || it->second == 0) {

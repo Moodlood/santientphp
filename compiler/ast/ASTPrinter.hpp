@@ -41,6 +41,8 @@ public:
     void visit(VecNewExpr& node) override;
     void visit(NewExpr& node) override;
     void visit(AwaitExpr& node) override;
+    void visit(MatchExpr& node) override;
+    void visit(TryPropagateExpr& node) override;
 
     void visit(VarDeclStmt& node) override;
     void visit(ReturnStmt& node) override;

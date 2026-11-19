@@ -83,6 +83,12 @@ Statement       ::= LetStmt
                   | ExprStmt
                   | Block
 
+MatchStmt       ::= "match" "("? Expression ")"? "{" MatchArm* "}"
+MatchArm        ::= Pattern ("|" Pattern)* ("if" Expression)? "=>" (Block | Expression ("," | ";"))
+Pattern         ::= Literal | Identifier | Identifier "::" Identifier ("(" Pattern* ")")? | RangePattern | "_"
+RangePattern    ::= Expression ".." Expression
+TryPropagate    ::= Expression "?"
+
 LetStmt         ::= "let" Identifier (":" Type)? ("=" Expression)? ";"
 MutStmt         ::= "mut" Identifier (":" Type)? ("=" Expression)? ";"
 DeferStmt       ::= "defer" (Block | Statement)
@@ -141,6 +147,13 @@ fn process_file(path: string): i32 {
     return read_data(handle); // defer runs before return
 }
 ```
+
+### 3.4 Sum Types & Algebraic Pattern Matching
+SantientPHP provides native sum types, error propagation, and pattern matching:
+- **`Option<T>`**: Encapsulates an optional value (`Some(T)` or `None`).
+- **`Result<T, E>`**: Encapsulates successful computation (`Ok(T)`) or failure (`Err(E)`).
+- **Error Propagation Operator (`?`)**: Suffix operator on `Result<T, E>` or `Option<T>` expressions that unwraps the inner value on success or returns early on error.
+- **Pattern Matching (`match`)**: Multi-way branching that tests an expression against value literals, closed/open ranges (`1..10`), wildcards (`_`), and boolean guard conditions (`if <cond>`).
 
 ---
 
@@ -232,11 +245,17 @@ The 1.0 Standard Library provides normative modules located in the `$SPH_HOME/st
 
 ### 8.1 Module Summary
 - `std/core.sph`: Mathematical utilities (`min_i32`, `max_i32`, `abs_i32`, `clamp_i32`), assertions (`assert`), panic aborts (`panic_str`), and process exit (`process_exit`).
-- `std/io.sph`: High-performance formatted console I/O (`print_str`, `println_str`, `println_i32`, `println_f64`).
+- `std/io.sph`: High-performance formatted console I/O (`print_str`, `println_str`, `println_i32`, `println_f64`, `println_bool`).
 - `std/fs.sph`: Cross-platform file operations (`read_file`, `write_file`, `append_file`, `file_exists`, `delete_file`).
 - `std/collections.sph`: High-level data structures and iterators (`KeyValuePair`, `IntRange`, `range`, `range_length`).
 - `std/async.sph`: Asynchronous fiber abstractions (`sleep_ms`, `yield_now`, `run_event_loop`).
 - `std/net.sph`: Network communication primitives (`http_get`).
+- `std/crypto.sph`: SHA-256 cryptographic hashing (`crypto_sha256`) and uniform random number generation (`crypto_random_u32`, `crypto_random_range`).
+- `std/json.sph`: JSON string validation (`json_validate`), escaping, and object/array stringification (`json_stringify_pair`, `json_wrap_object`).
+- `std/time.sph`: Monotonic microsecond clock (`instant_now`, `instant_elapsed_ms`, `instant_elapsed_micros`) and duration helpers (`Duration`).
+- `std/process.sph`: Process execution, process IDs (`process_id`, `process_exit`), and environment variables (`env_get`, `env_set`).
+- `std/web.sph`: Native embedded HTTP server routing, request dispatching (`Request`), and response generation (`Response`, `response_ok`, `response_json`).
+- `std/gui.sph`: Win32 native controls, event loop pumping, message boxes, and 32-bit SIMD RGBA canvas drawing.
 
 ### 8.2 Import Resolution Pipeline
 When an `import "path/to/module.sph"` declaration is encountered:

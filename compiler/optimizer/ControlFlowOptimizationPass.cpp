@@ -7,10 +7,12 @@ bool ControlFlowOptimizationPass::simplifyConditionalBranches(IRFunction& fn) {
     bool changed = false;
 
     for (auto& bb : fn.getBlocks()) {
+        if (!bb) continue;
         auto& insts = bb->getInstructions();
         if (insts.empty()) continue;
 
         auto& lastInst = insts.back();
+        if (!lastInst) continue;
         if (lastInst->getOpcode() == IROpcode::CondBr) {
             auto condBr = std::static_pointer_cast<CondBranchInst>(lastInst);
             if (condBr->getTrueTarget() == condBr->getFalseTarget()) {
@@ -29,10 +31,11 @@ bool ControlFlowOptimizationPass::bypassTrampolineBlocks(IRFunction& fn) {
     // Identify blocks that only contain an unconditional branch
     std::unordered_map<IRBasicBlock*, IRBasicBlock*> trampolines;
     for (auto& bb : fn.getBlocks()) {
+        if (!bb) continue;
         if (bb.get() == fn.getEntryBlock()) continue; // Don't bypass the entry block
 
         const auto& insts = bb->getInstructions();
-        if (insts.size() == 1 && insts[0]->getOpcode() == IROpcode::Br) {
+        if (insts.size() == 1 && insts[0] && insts[0]->getOpcode() == IROpcode::Br) {
             auto br = std::static_pointer_cast<BranchInst>(insts[0]);
             if (br->getTarget() && br->getTarget() != bb.get()) {
                 trampolines[bb.get()] = br->getTarget();
@@ -57,7 +60,9 @@ bool ControlFlowOptimizationPass::bypassTrampolineBlocks(IRFunction& fn) {
 
     // Update branches
     for (auto& bb : fn.getBlocks()) {
+        if (!bb) continue;
         for (auto& inst : bb->getInstructions()) {
+            if (!inst) continue;
             if (inst->getOpcode() == IROpcode::Br) {
                 auto br = std::static_pointer_cast<BranchInst>(inst);
                 auto it = trampolines.find(br->getTarget());

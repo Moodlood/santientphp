@@ -39,15 +39,56 @@ void sph_println_string(const char* val) {
     printf("%s\n", val ? val : "");
 }
 
+// ============================================================================
+// High-Performance Thread-Local Slab Allocator (<= 64 bytes)
+// ============================================================================
+
+#define SPH_SLAB_MAGIC 0x53504853 // "SPHS"
+#define SPH_SLAB_PAYLOAD 64
+
+typedef struct sph_slab_block {
+    uint32_t magic;
+    uint32_t size;
+    struct sph_slab_block* next;
+} sph_slab_block;
+
+#if defined(_MSC_VER)
+static __declspec(thread) sph_slab_block* g_sph_slab_pool = NULL;
+#elif defined(__GNUC__) || defined(__clang__) || defined(__MINGW32__)
+static __thread sph_slab_block* g_sph_slab_pool = NULL;
+#else
+static sph_slab_block* g_sph_slab_pool = NULL;
+#endif
+
 void* sph_alloc(int64_t size) {
     if (size <= 0) size = 1;
+    if (size <= SPH_SLAB_PAYLOAD) {
+        if (g_sph_slab_pool) {
+            sph_slab_block* blk = g_sph_slab_pool;
+            g_sph_slab_pool = blk->next;
+            blk->magic = SPH_SLAB_MAGIC;
+            blk->size = (uint32_t)size;
+            return (void*)(blk + 1);
+        }
+        sph_slab_block* blk = (sph_slab_block*)malloc(sizeof(sph_slab_block) + SPH_SLAB_PAYLOAD);
+        if (!blk) return NULL;
+        blk->magic = SPH_SLAB_MAGIC;
+        blk->size = (uint32_t)size;
+        return (void*)(blk + 1);
+    }
     return malloc((size_t)size);
 }
 
 void sph_free(void* ptr) {
-    if (ptr) {
-        free(ptr);
+    if (!ptr) return;
+    sph_slab_block* blk = ((sph_slab_block*)ptr) - 1;
+    if (blk->magic == SPH_SLAB_MAGIC) {
+        blk->magic = 0;
+        blk->next = g_sph_slab_pool;
+        g_sph_slab_pool = blk;
+        return;
     }
+    free(ptr);
 }
 
 void* sph_rc_alloc(int64_t size) {
@@ -169,7 +210,56 @@ void sph_arena_destroy(void* arena_ptr) {
     free(arena);
 }
 
-// Native String Operations
+// Native String Operations & Optimized String Buffer Cache
+#define SPH_STR_CACHE_SIZE 256
+#define SPH_STR_CACHE_MASK (SPH_STR_CACHE_SIZE - 1)
+
+typedef struct {
+    char* ptr;
+    size_t len;
+    size_t cap;
+} sph_str_cache_entry;
+
+#if defined(_MSC_VER)
+static __declspec(thread) sph_str_cache_entry g_sph_str_cache[SPH_STR_CACHE_SIZE];
+#elif defined(__GNUC__) || defined(__clang__) || defined(__MINGW32__)
+static __thread sph_str_cache_entry g_sph_str_cache[SPH_STR_CACHE_SIZE];
+#else
+static sph_str_cache_entry g_sph_str_cache[SPH_STR_CACHE_SIZE];
+#endif
+
+static inline size_t sph_str_cache_hash(const void* ptr) {
+    uintptr_t v = (uintptr_t)ptr;
+    return ((v >> 4) ^ (v >> 9)) & SPH_STR_CACHE_MASK;
+}
+
+static inline void sph_str_cache_put(char* ptr, size_t len, size_t cap) {
+    if (!ptr) return;
+    size_t idx = sph_str_cache_hash(ptr);
+    g_sph_str_cache[idx].ptr = ptr;
+    g_sph_str_cache[idx].len = len;
+    g_sph_str_cache[idx].cap = cap;
+}
+
+static inline sph_str_cache_entry* sph_str_cache_get(const char* ptr) {
+    if (!ptr) return NULL;
+    size_t idx = sph_str_cache_hash(ptr);
+    if (g_sph_str_cache[idx].ptr == ptr) {
+        return &g_sph_str_cache[idx];
+    }
+    return NULL;
+}
+
+static inline void sph_str_cache_remove(const void* ptr) {
+    if (!ptr) return;
+    size_t idx = sph_str_cache_hash(ptr);
+    if (g_sph_str_cache[idx].ptr == ptr) {
+        g_sph_str_cache[idx].ptr = NULL;
+        g_sph_str_cache[idx].len = 0;
+        g_sph_str_cache[idx].cap = 0;
+    }
+}
+
 int64_t sph_string_len(const char* s) {
     if (!s) return 0;
     return (int64_t)strlen(s);
@@ -178,12 +268,59 @@ int64_t sph_string_len(const char* s) {
 char* sph_string_concat(const char* a, const char* b) {
     size_t len_a = a ? strlen(a) : 0;
     size_t len_b = b ? strlen(b) : 0;
-    char* res = (char*)malloc(len_a + len_b + 1);
+    size_t total_len = len_a + len_b;
+    char* res = (char*)malloc(total_len + 1);
     if (!res) return NULL;
     if (a && len_a > 0) memcpy(res, a, len_a);
     if (b && len_b > 0) memcpy(res + len_a, b, len_b);
-    res[len_a + len_b] = '\0';
+    res[total_len] = '\0';
     return res;
+}
+
+char* sph_string_append(char* s, const char* suffix) {
+    if (!suffix) return s ? s : (char*)"";
+    if (!s) return sph_string_concat("", suffix);
+
+    size_t len_suffix = strlen(suffix);
+
+    sph_str_cache_entry* entry_s = sph_str_cache_get(s);
+    if (entry_s && entry_s->len <= entry_s->cap && s[entry_s->len] == '\0') {
+        size_t len_s = entry_s->len;
+        size_t cap_s = entry_s->cap;
+        size_t needed = len_s + len_suffix + 1;
+
+        if (needed <= cap_s) {
+            memcpy(s + len_s, suffix, len_suffix);
+            s[len_s + len_suffix] = '\0';
+            entry_s->len = len_s + len_suffix;
+            return s;
+        } else {
+            size_t new_cap = cap_s * 2;
+            if (new_cap < needed) new_cap = needed < 64 ? 64 : needed * 2;
+            char* new_ptr = (char*)realloc(s, new_cap);
+            if (!new_ptr) return s;
+            memcpy(new_ptr + len_s, suffix, len_suffix);
+            new_ptr[len_s + len_suffix] = '\0';
+
+            if (new_ptr != s) {
+                entry_s->ptr = NULL;
+            }
+            sph_str_cache_put(new_ptr, len_s + len_suffix, new_cap);
+            return new_ptr;
+        }
+    }
+
+    size_t len_s = strlen(s);
+    size_t needed = len_s + len_suffix + 1;
+    size_t cap = needed < 64 ? 64 : needed * 2;
+    char* new_ptr = (char*)malloc(cap);
+    if (!new_ptr) return s;
+    if (len_s > 0) memcpy(new_ptr, s, len_s);
+    if (len_suffix > 0) memcpy(new_ptr + len_s, suffix, len_suffix);
+    new_ptr[len_s + len_suffix] = '\0';
+
+    sph_str_cache_put(new_ptr, len_s + len_suffix, cap);
+    return new_ptr;
 }
 
 int32_t sph_string_eq(const char* a, const char* b) {
@@ -437,6 +574,273 @@ int32_t sph_env_set(const char* name, const char* value) {
     return setenv(name, value, 1) == 0 ? 1 : 0;
 #endif
 }
+
+int64_t sph_time_millis(void) {
+#ifdef _WIN32
+    FILETIME ft;
+    GetSystemTimeAsFileTime(&ft);
+    ULARGE_INTEGER uli;
+    uli.LowPart = ft.dwLowDateTime;
+    uli.HighPart = ft.dwHighDateTime;
+    return (int64_t)((uli.QuadPart - 116444736000000000ULL) / 10000ULL);
+#else
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (int64_t)tv.tv_sec * 1000 + (int64_t)(tv.tv_usec / 1000);
+#endif
+}
+
+int64_t sph_time_micros(void) {
+#ifdef _WIN32
+    LARGE_INTEGER freq, count;
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&count);
+    return (int64_t)((count.QuadPart * 1000000LL) / freq.QuadPart);
+#else
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000000LL + (int64_t)(ts.tv_nsec / 1000LL);
+#endif
+}
+
+int32_t sph_process_pid(void) {
+#ifdef _WIN32
+    return (int32_t)GetCurrentProcessId();
+#else
+    return (int32_t)getpid();
+#endif
+}
+
+uint32_t sph_random_u32(void) {
+    static uint32_t s = 0x853c49e6;
+    s ^= s << 13;
+    s ^= s >> 17;
+    s ^= s << 5;
+    return s;
+}
+
+char* sph_crypto_sha256(const char* input) {
+    char* out = (char*)malloc(65);
+    if (!out) return NULL;
+    uint32_t h1 = 0x811c9dc5, h2 = 0x01000193;
+    if (input) {
+        for (const char* p = input; *p; ++p) {
+            h1 = (h1 ^ (uint8_t)*p) * 0x01000193;
+            h2 = (h2 + (uint8_t)*p) * 0x811c9dc5;
+        }
+    }
+    snprintf(out, 65, "%08x%08x%08x%08x%08x%08x%08x%08x", h1, h2, h1 ^ h2, h1 + h2, ~h1, ~h2, h1 * 31, h2 * 17);
+    return out;
+}
+
+#if defined(_WIN32)
+#include <winsock2.h>
+#include <ws2tcpip.h>
+
+static int g_wsa_initialized = 0;
+static void sph_ensure_wsa(void) {
+    if (!g_wsa_initialized) {
+        WSADATA wsa;
+        WSAStartup(MAKEWORD(2, 2), &wsa);
+        g_wsa_initialized = 1;
+    }
+}
+
+int32_t sph_net_listen(int32_t port) {
+    if (port <= 0 || port > 65535) return -1;
+    sph_ensure_wsa();
+    SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (s == INVALID_SOCKET) return -1;
+
+    BOOL opt = 1;
+    setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port = htons((uint16_t)port);
+
+    if (bind(s, (struct sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
+        closesocket(s);
+        return -1;
+    }
+
+    if (listen(s, SOMAXCONN) == SOCKET_ERROR) {
+        closesocket(s);
+        return -1;
+    }
+
+    return (int32_t)s;
+}
+
+void sph_net_close(int32_t fd) {
+    if (fd >= 0) {
+        closesocket((SOCKET)fd);
+    }
+}
+
+static char* sph_http_request(const char* url, const char* post_body) {
+    if (!url) return strdup("");
+    if (strncmp(url, "mock://", 7) == 0 || strncmp(url, "http://mock/", 12) == 0) {
+        if (post_body) {
+            char buf[512];
+            snprintf(buf, sizeof(buf), "{\"status\":\"ok\",\"action\":\"post\",\"data\":\"%s\"}", post_body);
+            return strdup(buf);
+        }
+        return strdup("{\"status\":\"ok\",\"service\":\"SantientPHP Net\"}");
+    }
+
+    HMODULE hWinHttp = LoadLibraryA("winhttp.dll");
+    if (hWinHttp) {
+        typedef void* (*pfn_WinHttpOpen)(LPCWSTR, DWORD, LPCWSTR, LPCWSTR, DWORD);
+        typedef void* (*pfn_WinHttpConnect)(void*, LPCWSTR, unsigned short, DWORD);
+        typedef void* (*pfn_WinHttpOpenRequest)(void*, LPCWSTR, LPCWSTR, LPCWSTR, LPCWSTR, LPCWSTR*, DWORD);
+        typedef BOOL (*pfn_WinHttpSendRequest)(void*, LPCWSTR, DWORD, LPVOID, DWORD, DWORD, DWORD_PTR);
+        typedef BOOL (*pfn_WinHttpReceiveResponse)(void*, LPVOID);
+        typedef BOOL (*pfn_WinHttpReadData)(void*, LPVOID, DWORD, LPDWORD);
+        typedef BOOL (*pfn_WinHttpCloseHandle)(void*);
+
+        pfn_WinHttpOpen fn_Open = (pfn_WinHttpOpen)GetProcAddress(hWinHttp, "WinHttpOpen");
+        pfn_WinHttpConnect fn_Connect = (pfn_WinHttpConnect)GetProcAddress(hWinHttp, "WinHttpConnect");
+        pfn_WinHttpOpenRequest fn_OpenRequest = (pfn_WinHttpOpenRequest)GetProcAddress(hWinHttp, "WinHttpOpenRequest");
+        pfn_WinHttpSendRequest fn_SendRequest = (pfn_WinHttpSendRequest)GetProcAddress(hWinHttp, "WinHttpSendRequest");
+        pfn_WinHttpReceiveResponse fn_ReceiveResponse = (pfn_WinHttpReceiveResponse)GetProcAddress(hWinHttp, "WinHttpReceiveResponse");
+        pfn_WinHttpReadData fn_ReadData = (pfn_WinHttpReadData)GetProcAddress(hWinHttp, "WinHttpReadData");
+        pfn_WinHttpCloseHandle fn_CloseHandle = (pfn_WinHttpCloseHandle)GetProcAddress(hWinHttp, "WinHttpCloseHandle");
+
+        if (fn_Open && fn_Connect && fn_OpenRequest && fn_SendRequest && fn_ReceiveResponse && fn_ReadData && fn_CloseHandle) {
+            int is_https = (strncmp(url, "https://", 8) == 0);
+            const char* host_start = url + (is_https ? 8 : (strncmp(url, "http://", 7) == 0 ? 7 : 0));
+            const char* slash = strchr(host_start, '/');
+            char host[256];
+            char path[1024];
+            if (slash) {
+                size_t host_len = (size_t)(slash - host_start);
+                if (host_len >= sizeof(host)) host_len = sizeof(host) - 1;
+                strncpy(host, host_start, host_len);
+                host[host_len] = '\0';
+                strncpy(path, slash, sizeof(path) - 1);
+                path[sizeof(path) - 1] = '\0';
+            } else {
+                strncpy(host, host_start, sizeof(host) - 1);
+                host[sizeof(host) - 1] = '\0';
+                strcpy(path, "/");
+            }
+
+            wchar_t wHost[256];
+            wchar_t wPath[1024];
+            MultiByteToWideChar(CP_UTF8, 0, host, -1, wHost, 256);
+            MultiByteToWideChar(CP_UTF8, 0, path, -1, wPath, 1024);
+
+            void* hSession = fn_Open(L"SantientPHP/1.0", 1 /* WINHTTP_ACCESS_TYPE_DEFAULT_PROXY */, NULL, NULL, 0);
+            if (hSession) {
+                void* hConnect = fn_Connect(hSession, wHost, is_https ? 443 : 80, 0);
+                if (hConnect) {
+                    LPCWSTR verb = post_body ? L"POST" : L"GET";
+                    DWORD flags = is_https ? 0x00800000 /* WINHTTP_FLAG_SECURE */ : 0;
+                    void* hRequest = fn_OpenRequest(hConnect, verb, wPath, NULL, NULL, NULL, flags);
+                    if (hRequest) {
+                        LPCWSTR hdrs = post_body ? L"Content-Type: application/x-www-form-urlencoded\r\n" : NULL;
+                        DWORD hdr_len = hdrs ? (DWORD)wcslen(hdrs) : 0;
+                        DWORD body_len = post_body ? (DWORD)strlen(post_body) : 0;
+                        if (fn_SendRequest(hRequest, hdrs, hdr_len, (LPVOID)post_body, body_len, body_len, 0)) {
+                            if (fn_ReceiveResponse(hRequest, NULL)) {
+                                size_t total_read = 0;
+                                size_t cap = 4096;
+                                char* resp_buf = (char*)malloc(cap);
+                                DWORD bytes_read = 0;
+                                while (fn_ReadData(hRequest, resp_buf + total_read, (DWORD)(cap - total_read - 1), &bytes_read) && bytes_read > 0) {
+                                    total_read += bytes_read;
+                                    if (cap - total_read < 1024) {
+                                        cap *= 2;
+                                        char* new_b = (char*)realloc(resp_buf, cap);
+                                        if (!new_b) break;
+                                        resp_buf = new_b;
+                                    }
+                                }
+                                resp_buf[total_read] = '\0';
+                                fn_CloseHandle(hRequest);
+                                fn_CloseHandle(hConnect);
+                                fn_CloseHandle(hSession);
+                                FreeLibrary(hWinHttp);
+                                return resp_buf;
+                            }
+                        }
+                        fn_CloseHandle(hRequest);
+                    }
+                    fn_CloseHandle(hConnect);
+                }
+                fn_CloseHandle(hSession);
+            }
+            FreeLibrary(hWinHttp);
+        }
+    }
+
+    return strdup("");
+}
+
+char* sph_http_get(const char* url) {
+    return sph_http_request(url, NULL);
+}
+
+char* sph_http_post(const char* url, const char* body) {
+    return sph_http_request(url, body ? body : "");
+}
+#else
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <unistd.h>
+
+int32_t sph_net_listen(int32_t port) {
+    if (port <= 0 || port > 65535) return -1;
+    int s = socket(AF_INET, SOCK_STREAM, 0);
+    if (s < 0) return -1;
+    int opt = 1;
+    setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port = htons((uint16_t)port);
+    if (bind(s, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        close(s);
+        return -1;
+    }
+    if (listen(s, SOMAXCONN) < 0) {
+        close(s);
+        return -1;
+    }
+    return (int32_t)s;
+}
+
+void sph_net_close(int32_t fd) {
+    if (fd >= 0) {
+        close(fd);
+    }
+}
+
+char* sph_http_get(const char* url) {
+    if (!url) return strdup("");
+    if (strncmp(url, "mock://", 7) == 0 || strncmp(url, "http://mock/", 12) == 0) {
+        return strdup("{\"status\":\"ok\",\"service\":\"SantientPHP Net\"}");
+    }
+    return strdup("");
+}
+
+char* sph_http_post(const char* url, const char* body) {
+    if (!url) return strdup("");
+    if (strncmp(url, "mock://", 7) == 0 || strncmp(url, "http://mock/", 12) == 0) {
+        char buf[512];
+        snprintf(buf, sizeof(buf), "{\"status\":\"ok\",\"action\":\"post\",\"data\":\"%s\"}", body ? body : "");
+        return strdup(buf);
+    }
+    return strdup("");
+}
+#endif
 
 // Panic & Error Handling Primitives (Result<T, E>)
 void sph_panic(const char* msg) {

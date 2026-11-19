@@ -70,6 +70,9 @@ Source Code (.sph)
 - Scoped symbol tables (`Scope`, `Symbol`).
 - Enforces strict type compatibility for arithmetic, comparisons, conversions, and function arguments in static mode.
 - Infers variable types deterministically (`let x = 42;` -> `i32`).
+- Sum types and error handling: `Option<T>` (`Some(T)`, `None`), `Result<T, E>` (`Ok(T)`, `Err(E)`), and the `?` error propagation operator (`TryPropagateExpr`).
+- Pattern matching analysis: exhaustiveness and reachability checking across `match` expressions (literals, ranges, wildcards, guards).
+- **`BorrowChecker`**: Enforces single-mutable-writer / multi-reader ownership guarantees, verifying safe resource borrowing at compile time without a runtime garbage collector.
 - Bridges dynamic PHP operations through `dynamic` type semantics with loose coercions.
 
 ---
@@ -86,8 +89,10 @@ SantientPHP uses an explicit, typed intermediate representation rather than tran
   - Comparisons: `Eq`, `Ne`, `Lt`, `Le`, `Gt`, `Ge`.
   - Memory: `Alloca`, `Load`, `Store`, `GetElementPtr`.
   - Control Flow: `Br`, `CondBr`, `Call`, `Ret`.
+  - Pattern Matching: Multi-way branch chains lowered into arm blocks, guard evaluations, and merge blocks (`match.arm`, `match.merge`).
   - SIMD Operations: `SimdConstruct`, `SimdExtractLane`, `SimdInsertLane`, `SimdAdd`, `SimdSub`, `SimdMul`, `SimdDiv`, `SimdDot`.
   - Concurrency: `AtomicLoad`, `AtomicStore`, `AtomicFetchAdd`, `AtomicCompareExchange`.
+  - High-Performance Strings: In-place geometric append lowering (`sph_string_append`).
   - PHP Dynamic Bridge: `CallDynamic`, `DynamicCoerce`, `ArrayGet`, `ArraySet`.
 - **`IRVerifier`**: Enforces CFG and instruction invariants prior to optimization and code generation.
 
@@ -95,14 +100,17 @@ SantientPHP uses an explicit, typed intermediate representation rather than tran
 
 ## 4. Optimization Pipeline (`compiler/optimizer/`)
 
-The `PassManager` executes fixed-point iterative passes:
+The `PassManager` executes fixed-point iterative passes over SPHIR:
 1. `StoreToLoadForwardingPass`: Promotes stack allocations into virtual registers.
 2. `ConstantFoldingPass`: Evaluates constant arithmetic, logic, and branch targets at compile time.
-3. `AlgebraicSimplificationPass`: Applies identities ($x + 0 \to x$, $x \times 1 \to x$, $x \times 0 \to 0$) and strength reduction ($x \times 2^k \to x \ll k$).
-4. `CommonSubexpressionEliminationPass`: Eliminates redundant duplicate computations within basic blocks.
-5. `ControlFlowOptimizationPass`: Prunes unreachable blocks and collapses redundant jump trampolines.
-6. `DeadCodeEliminationPass`: Cascades dead instruction elimination.
-7. `FunctionInliningPass`: Inlines small leaf functions directly at call sites.
+3. `AlgebraicSimplificationPass`: Applies algebraic identities ($x + 0 \to x$, $x \times 1 \to x$, $x \times 0 \to 0$, $x - x \to 0$).
+4. `StrengthReductionPass`: Replaces expensive arithmetic with cheaper equivalents (e.g. integer multiplication by power-of-two converted to bitwise shifts $x \times 2^k \to x \ll k$).
+5. `CommonSubexpressionEliminationPass`: Eliminates redundant duplicate computations within basic blocks.
+6. `LoopInvariantCodeMotionPass`: Hoists loop-invariant computations out of loops to reduce per-iteration CPU cycles.
+7. `ControlFlowOptimizationPass`: Prunes unreachable blocks and collapses redundant jump trampolines.
+8. `DeadStoreEliminationPass`: Eliminates stores to stack slots that are overwritten before being read.
+9. `DeadCodeEliminationPass`: Cascades dead instruction elimination across the function CFG.
+10. `FunctionInliningPass`: Inlines small leaf functions directly at call sites to eliminate call-overhead.
 
 ---
 
@@ -111,6 +119,8 @@ The `PassManager` executes fixed-point iterative passes:
 ### Direct Native Generator (`X86_64CodeGen`)
 - Generates clean, comment-annotated GNU assembly (`.s`).
 - Implements Win64 calling convention (`rcx, rdx, r8, r9`, 32-byte shadow space) on Windows and System V AMD64 ABI on Linux.
+- **Compare-Branch Fusion**: Fuses comparisons directly with conditional jumps (`cmp` + `jcc`), bypassing intermediate boolean register flags (`setcc`), zero-extensions, and stack spill cycles.
+- **Assembly Peephole Optimizer**: Second-stage pass scanning emitted basic blocks to eliminate redundant store-followed-by-load cycles (`mov [rbp - X], reg` followed by `mov reg, [rbp - X]`) and dead 64-bit self-moves.
 - Emits DWARF line tables (`.file`, `.loc`) and GNU CFI directives (`.cfi_startproc`, `.cfi_def_cfa_offset`, `.cfi_endproc`) for full GDB call stack backtracing.
 
 ### LLVM IR Generator (`LLVMEmitter`)
@@ -118,5 +128,14 @@ The `PassManager` executes fixed-point iterative passes:
 
 ### Linker (`Linker`)
 - Discovers host tools (`gcc`, `clang`, `ld`) and target cross-compilers (`x86_64-linux-gnu-gcc`, `aarch64-linux-gnu-gcc`).
+- In non-debug builds, passes `-s` (symbol stripping) and `-pipe` (in-memory compiler piping) to produce compact binaries (~226 KB).
 - Links against the modular runtime library `libsph_runtime.a` with automatic retry logic for Windows file locking.
+
+---
+
+## 6. Runtime Performance Layer (`runtime/core/`)
+
+- **Fast Slab Allocator**: Thread-local slab and freelist memory recycling for objects $\le 64$ bytes, eliminating global heap lock contention for high-frequency allocations.
+- **Amortized $O(1)$ String Appends**: Geometric buffer capacity doubling (`cap *= 2`) tracked via thread-local string caches, eliminating quadratic reallocation bottlenecks in string-heavy loops.
+- **Stackful Fibers & Event Loop**: Native Windows Fiber / POSIX context switching integrated with cooperative coroutines (`async fn`, `await`).
 

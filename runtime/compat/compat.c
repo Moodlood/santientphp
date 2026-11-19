@@ -266,6 +266,9 @@ void sph_array_set(void* arr_or_val, void* key_val, void* elem_val) {
 
     sph_array_entry* existing = sph_array_find(arr, is_str, int_k, str_k);
     if (existing) {
+        if (existing->val && existing->val != val) {
+            sph_value_destroy(existing->val);
+        }
         existing->val = val;
         return;
     }
@@ -346,6 +349,9 @@ void sph_array_destroy(void* arr_ptr) {
         sph_array_entry* next = cur->next;
         if (cur->is_string_key && cur->str_key) {
             free(cur->str_key);
+        }
+        if (cur->val) {
+            sph_value_destroy(cur->val);
         }
         free(cur);
         cur = next;
@@ -1956,7 +1962,7 @@ void sph_curl_close(void* ch) {
     }
 }
 
-char* sph_http_get(const char* url) {
+static char* sph_compat_http_get(const char* url) {
     void* ch = sph_curl_init(url);
     sph_curl_setopt(ch, SPH_CURLOPT_RETURNTRANSFER, sph_value_create_bool(1));
     void* res = sph_curl_exec(ch);
@@ -1971,6 +1977,6 @@ char* sph_http_get(const char* url) {
 #if defined(__GNUC__) || defined(__clang__)
 __attribute__((constructor))
 static void sph_compat_init_hook(void) {
-    sph_register_http_get_hook(sph_http_get);
+    sph_register_http_get_hook(sph_compat_http_get);
 }
 #endif

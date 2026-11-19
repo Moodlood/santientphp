@@ -1,0 +1,68 @@
+<?php
+
+// SantientPHP Standard Library: High-Resolution Time & Durations
+
+extern "C" fn sph_time_millis(): i64;
+extern "C" fn sph_time_micros(): i64;
+extern "C" fn sph_thread_sleep_ms(ms: i32): void;
+
+struct Instant {
+    micros: i64,
+}
+
+struct Duration {
+    millis: i64,
+}
+
+fn instant_now(): Instant {
+    return Instant {
+        micros: sph_time_micros(),
+    };
+}
+
+fn instant_elapsed_ms(start: Instant): i64 {
+    let now_micros = sph_time_micros();
+    let diff = now_micros - start.micros;
+    if (diff <= 0) {
+        return 0;
+    }
+    return diff / 1000;
+}
+
+fn instant_elapsed_micros(start: Instant): i64 {
+    let now_micros = sph_time_micros();
+    let diff = now_micros - start.micros;
+    if (diff <= 0) {
+        return 0;
+    }
+    return diff;
+}
+
+fn duration_from_millis(ms: i64): Duration {
+    return Duration {
+        millis: ms,
+    };
+}
+
+fn duration_from_secs(s: i64): Duration {
+    return Duration {
+        millis: s * 1000,
+    };
+}
+
+fn duration_as_millis(d: Duration): i64 {
+    return d.millis;
+}
+
+fn duration_as_secs(d: Duration): i64 {
+    return d.millis / 1000;
+}
+
+fn time_now_ms(): i64 {
+    return sph_time_millis();
+}
+
+fn sleep_ms(ms: i32): void {
+    sph_thread_sleep_ms(ms);
+}
+

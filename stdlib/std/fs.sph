@@ -1,0 +1,51 @@
+<?php
+
+// SantientPHP Standard Library: Filesystem Operations
+
+extern "C" fn sph_file_read(path: string): string;
+extern "C" fn sph_file_write(path: string, content: string): i32;
+extern "C" fn sph_file_append(path: string, content: string): i32;
+extern "C" fn sph_file_exists(path: string): i32;
+extern "C" fn sph_file_delete(path: string): i32;
+
+fn read_file(path: string): string {
+    return sph_file_read(path);
+}
+
+fn write_file(path: string, content: string): bool {
+    let res: i32 = sph_file_write(path, content);
+    return res != 0;
+}
+
+fn append_file(path: string, content: string): bool {
+    let res: i32 = sph_file_append(path, content);
+    return res != 0;
+}
+
+fn file_exists(path: string): bool {
+    let res: i32 = sph_file_exists(path);
+    return res != 0;
+}
+
+fn delete_file(path: string): bool {
+    let res: i32 = sph_file_delete(path);
+    return res != 0;
+}
+
+struct FileHandle {
+    path: string,
+}
+
+fn open_file(path: string): FileHandle {
+    return FileHandle { path: path };
+}
+
+fn file_read_all(handle: FileHandle): string {
+    return sph_file_read(handle.path);
+}
+
+fn file_write_all(handle: FileHandle, content: string): bool {
+    let res: i32 = sph_file_write(handle.path, content);
+    return res != 0;
+}
+

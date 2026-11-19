@@ -108,6 +108,7 @@ void printHelp() {
               << "  doc        [file.sph]   Generate API documentation (--format=html|md, -o <path>)\n"
               << "  lsp                     Run Language Server Protocol engine (JSON-RPC over stdio)\n"
               << "  doctor                  Run environment and toolchain health diagnostics\n"
+              << "  bench                   Run multi-language compiler benchmark suite\n"
               << "  new        <name>       Create a new SantientPHP project structure\n"
               << "  init                    Initialize sph.toml in current directory\n"
               << "  pkg        <subcommand> Manage packages and dependencies (add, list)\n"
@@ -117,7 +118,7 @@ void printHelp() {
               << "  -t, --target <triple>   Set target compilation triple (e.g. x86_64-linux, aarch64-linux)\n"
               << "  --list-targets          List supported target triples and architectures\n"
               << "  -g, -g0..3              Emit debug information (DWARF / line tables)\n"
-              << "  -O, -O0..3, -Os         Set optimization level (default: -O0 or manifest)\n"
+              << "  -O, -O0..3, -Os, -Oz    Set optimization level (default: -O0 or manifest)\n"
               << "  --check                 Check formatting without modifying files (for 'fmt')\n"
               << "  --stdout                Print formatted output to stdout without modifying file\n"
               << "  --format=<fmt>          Output format for 'doc' (html, md)\n"
@@ -176,6 +177,20 @@ int cmdFmt(const std::string& path, bool checkOnly, bool toStdout) {
 std::filesystem::path findRuntimeLibrary() {
     std::vector<std::filesystem::path> candidates;
 
+    std::filesystem::path exeDir = getExecutableDir();
+    candidates.push_back(exeDir / "libsph_runtime.a");
+    candidates.push_back(exeDir / "lib" / "libsph_runtime.a");
+    candidates.push_back(exeDir.parent_path() / "lib" / "libsph_runtime.a");
+    candidates.push_back(exeDir.parent_path() / "libsph_runtime.a");
+    candidates.push_back(exeDir.parent_path().parent_path() / "build" / "lib" / "libsph_runtime.a");
+    candidates.push_back(exeDir.parent_path().parent_path() / "lib" / "libsph_runtime.a");
+
+    candidates.push_back("build/lib/libsph_runtime.a");
+    candidates.push_back("lib/libsph_runtime.a");
+    candidates.push_back("../lib/libsph_runtime.a");
+    candidates.push_back("../../lib/libsph_runtime.a");
+    candidates.push_back("../build/lib/libsph_runtime.a");
+
     if (const char* sphHome = std::getenv("SPH_HOME")) {
         candidates.push_back(std::filesystem::path(sphHome) / "lib" / "libsph_runtime.a");
         candidates.push_back(std::filesystem::path(sphHome) / "libsph_runtime.a");
@@ -185,22 +200,8 @@ std::filesystem::path findRuntimeLibrary() {
         candidates.push_back(std::filesystem::path(sphHome2) / "libsph_runtime.a");
     }
 
-    std::filesystem::path exeDir = getExecutableDir();
-    candidates.push_back(exeDir / "libsph_runtime.a");
-    candidates.push_back(exeDir / "lib" / "libsph_runtime.a");
-    candidates.push_back(exeDir.parent_path() / "lib" / "libsph_runtime.a");
-    candidates.push_back(exeDir.parent_path() / "libsph_runtime.a");
-    candidates.push_back(exeDir.parent_path().parent_path() / "build" / "lib" / "libsph_runtime.a");
-    candidates.push_back(exeDir.parent_path().parent_path() / "lib" / "libsph_runtime.a");
-
     candidates.push_back("C:/Program Files/SantientPHP/lib/libsph_runtime.a");
     candidates.push_back("C:/SantientPHP/lib/libsph_runtime.a");
-
-    candidates.push_back("build/lib/libsph_runtime.a");
-    candidates.push_back("lib/libsph_runtime.a");
-    candidates.push_back("../lib/libsph_runtime.a");
-    candidates.push_back("../../lib/libsph_runtime.a");
-    candidates.push_back("../build/lib/libsph_runtime.a");
 
     for (const auto& c : candidates) {
         std::error_code ec;
@@ -214,6 +215,20 @@ std::filesystem::path findRuntimeLibrary() {
 std::filesystem::path findGuiRuntimeLibrary() {
     std::vector<std::filesystem::path> candidates;
 
+    std::filesystem::path exeDir = getExecutableDir();
+    candidates.push_back(exeDir / "libsph_gui.a");
+    candidates.push_back(exeDir / "lib" / "libsph_gui.a");
+    candidates.push_back(exeDir.parent_path() / "lib" / "libsph_gui.a");
+    candidates.push_back(exeDir.parent_path() / "libsph_gui.a");
+    candidates.push_back(exeDir.parent_path().parent_path() / "build" / "lib" / "libsph_gui.a");
+    candidates.push_back(exeDir.parent_path().parent_path() / "lib" / "libsph_gui.a");
+
+    candidates.push_back("build/lib/libsph_gui.a");
+    candidates.push_back("lib/libsph_gui.a");
+    candidates.push_back("../lib/libsph_gui.a");
+    candidates.push_back("../../lib/libsph_gui.a");
+    candidates.push_back("../build/lib/libsph_gui.a");
+
     if (const char* sphHome = std::getenv("SPH_HOME")) {
         candidates.push_back(std::filesystem::path(sphHome) / "lib" / "libsph_gui.a");
         candidates.push_back(std::filesystem::path(sphHome) / "libsph_gui.a");
@@ -223,22 +238,8 @@ std::filesystem::path findGuiRuntimeLibrary() {
         candidates.push_back(std::filesystem::path(sphHome2) / "libsph_gui.a");
     }
 
-    std::filesystem::path exeDir = getExecutableDir();
-    candidates.push_back(exeDir / "libsph_gui.a");
-    candidates.push_back(exeDir / "lib" / "libsph_gui.a");
-    candidates.push_back(exeDir.parent_path() / "lib" / "libsph_gui.a");
-    candidates.push_back(exeDir.parent_path() / "libsph_gui.a");
-    candidates.push_back(exeDir.parent_path().parent_path() / "build" / "lib" / "libsph_gui.a");
-    candidates.push_back(exeDir.parent_path().parent_path() / "lib" / "libsph_gui.a");
-
     candidates.push_back("C:/Program Files/SantientPHP/lib/libsph_gui.a");
     candidates.push_back("C:/SantientPHP/lib/libsph_gui.a");
-
-    candidates.push_back("build/lib/libsph_gui.a");
-    candidates.push_back("lib/libsph_gui.a");
-    candidates.push_back("../lib/libsph_gui.a");
-    candidates.push_back("../../lib/libsph_gui.a");
-    candidates.push_back("../build/lib/libsph_gui.a");
 
     for (const auto& c : candidates) {
         std::error_code ec;
@@ -764,13 +765,27 @@ int cmdDoc(const std::string& inputPath, const std::string& outputPath, std::str
     return 0;
 }
 
-int cmdNew(const std::string& projectName) {
-    if (projectName.empty()) {
+int cmdNew(int argc, char* argv[]) {
+    if (argc < 3) {
         std::cerr << "error: missing project name for 'new'\n";
         return 1;
     }
+    std::string projectName = argv[2];
+    sph::ProjectTemplate tmpl = sph::ProjectTemplate::CLI;
+    for (int i = 3; i < argc; ++i) {
+        std::string_view arg = argv[i];
+        if (arg == "--template=gui" || arg == "--gui") {
+            tmpl = sph::ProjectTemplate::GUI;
+        } else if (arg == "--template=web" || arg == "--web") {
+            tmpl = sph::ProjectTemplate::Web;
+        } else if (arg == "--template=lib" || arg == "--lib") {
+            tmpl = sph::ProjectTemplate::Lib;
+        } else if (arg == "--template=cli" || arg == "--cli") {
+            tmpl = sph::ProjectTemplate::CLI;
+        }
+    }
     std::string err;
-    if (!sph::PackageManager::createProject(projectName, ".", err)) {
+    if (!sph::PackageManager::createProject(projectName, ".", tmpl, err)) {
         std::cerr << "error: " << err << "\n";
         return 1;
     }
@@ -851,6 +866,24 @@ int cmdPkg(int argc, char* argv[]) {
         return 0;
     }
 
+    if (subcmd == "lock") {
+        if (!sph::PackageManager::generateLockfile(".", err)) {
+            std::cerr << "error: " << err << "\n";
+            return 1;
+        }
+        std::cout << "sphc: generated sph.lock successfully\n";
+        return 0;
+    }
+
+    if (subcmd == "verify") {
+        if (!sph::PackageManager::verifyLockfile(".", err)) {
+            std::cerr << "error: " << err << "\n";
+            return 1;
+        }
+        std::cout << "sphc: verified sph.lock successfully\n";
+        return 0;
+    }
+
     std::cerr << "error: unknown pkg subcommand '" << subcmd << "'\n";
     return 1;
 }
@@ -885,6 +918,11 @@ int main(int argc, char* argv[]) {
         return doctor.report(std::cout);
     }
 
+    if (arg1 == "bench" || arg1 == "benchmark") {
+        std::string script = "python tools/benchmarks/run_benchmarks.py";
+        return std::system(script.c_str());
+    }
+
     if (arg1 == "lsp") {
         sph::lsp::LspServer server;
         return server.run(std::cin, std::cout);
@@ -899,7 +937,7 @@ int main(int argc, char* argv[]) {
             std::cerr << "error: missing project name for 'new'\n";
             return 1;
         }
-        return cmdNew(argv[2]);
+        return cmdNew(argc, argv);
     }
 
     if (arg1 == "pkg") {
@@ -968,6 +1006,9 @@ int main(int argc, char* argv[]) {
         } else if (a == "-Os") {
             optLevel = sph::OptimizationLevel::Os;
             optSpecified = true;
+        } else if (a == "-Oz") {
+            optLevel = sph::OptimizationLevel::Oz;
+            optSpecified = true;
         } else if (a == "--mode=dynamic" || a == "--compat-php") {
             forceDynamic = true;
         } else if (a == "--mode=transitional") {
@@ -1005,6 +1046,7 @@ int main(int argc, char* argv[]) {
             else if (manifest->optimization == "2" || manifest->optimization == "O2") optLevel = sph::OptimizationLevel::O2;
             else if (manifest->optimization == "3" || manifest->optimization == "O3") optLevel = sph::OptimizationLevel::O3;
             else if (manifest->optimization == "s" || manifest->optimization == "Os") optLevel = sph::OptimizationLevel::Os;
+            else if (manifest->optimization == "z" || manifest->optimization == "Oz") optLevel = sph::OptimizationLevel::Oz;
         }
     }
 

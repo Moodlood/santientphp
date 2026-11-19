@@ -46,6 +46,9 @@ const std::unordered_map<std::string_view, TokenKind> kKeywords = {
     {"async",      TokenKind::KwAsync},
     {"await",      TokenKind::KwAwait},
     {"defer",      TokenKind::KwDefer},
+    {"match",      TokenKind::KwMatch},
+    {"Option",     TokenKind::KwOption},
+    {"Result",     TokenKind::KwResult},
     {"i32",    TokenKind::KwI32},
     {"i64",    TokenKind::KwI64},
     {"f32",    TokenKind::KwF32},
@@ -242,6 +245,9 @@ Token Lexer::nextToken() {
 
         case '#':
             return Token(TokenKind::Hash, makeSpan(startOffset, m_cursor), "#");
+
+        case '?':
+            return Token(TokenKind::Question, makeSpan(startOffset, m_cursor), "?");
 
         default:
             error(startOffset, m_cursor, std::string("unexpected character '") + c + "'");

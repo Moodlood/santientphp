@@ -1,0 +1,47 @@
+<?php
+
+// SantientPHP Standard Library: JSON Parsing & Serializing
+
+fn json_validate(json: string): bool {
+    let len = strlen(json);
+    if (len < 2) {
+        return false;
+    }
+    let first = substr(json, 0, 1);
+    let last = substr(json, len - 1, 1);
+    if (first == "{" && last == "}") {
+        return true;
+    }
+    if (first == "[" && last == "]") {
+        return true;
+    }
+    return false;
+}
+
+fn json_escape(s: string): string {
+    return s;
+}
+
+fn json_stringify_pair(key: string, val: string): string {
+    return "\"" . key . "\":\"" . val . "\"";
+}
+
+fn json_stringify_pair_i32(key: string, val: i32): string {
+    return "\"" . key . "\":" . val;
+}
+
+fn json_stringify_pair_bool(key: string, val: bool): string {
+    if (val) {
+        return "\"" . key . "\":true";
+    }
+    return "\"" . key . "\":false";
+}
+
+fn json_wrap_object(content: string): string {
+    return "{" . content . "}";
+}
+
+fn json_wrap_array(content: string): string {
+    return "[" . content . "]";
+}
+

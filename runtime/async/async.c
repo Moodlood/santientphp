@@ -113,30 +113,33 @@ int32_t sph_atomic_compare_exchange_i64(void* atomic_ptr, int64_t expected, int6
 // Atomics for bool
 int32_t sph_atomic_load_bool(void* atomic_ptr, int32_t order) {
     if (!atomic_ptr) return 0;
-    return __atomic_load_n((int32_t*)atomic_ptr, sph_map_mem_order(order)) ? 1 : 0;
+    return __atomic_load_n((uint8_t*)atomic_ptr, sph_map_mem_order(order)) ? 1 : 0;
 }
 
 void sph_atomic_store_bool(void* atomic_ptr, int32_t val, int32_t order) {
     if (!atomic_ptr) return;
     int ord = sph_map_mem_order(order);
     if (ord == __ATOMIC_ACQUIRE || ord == __ATOMIC_ACQ_REL) ord = __ATOMIC_RELAXED;
-    __atomic_store_n((int32_t*)atomic_ptr, val ? 1 : 0, ord);
+    uint8_t v = val ? 1 : 0;
+    __atomic_store_n((uint8_t*)atomic_ptr, v, ord);
 }
 
 int32_t sph_atomic_exchange_bool(void* atomic_ptr, int32_t val, int32_t order) {
     if (!atomic_ptr) return 0;
-    return __atomic_exchange_n((int32_t*)atomic_ptr, val ? 1 : 0, sph_map_mem_order(order));
+    uint8_t v = val ? 1 : 0;
+    return __atomic_exchange_n((uint8_t*)atomic_ptr, v, sph_map_mem_order(order)) ? 1 : 0;
 }
 
 int32_t sph_atomic_compare_exchange_bool(void* atomic_ptr, int32_t expected, int32_t desired, int32_t succ_order, int32_t fail_order) {
     if (!atomic_ptr) return 0;
-    int32_t exp = expected ? 1 : 0;
+    uint8_t exp = expected ? 1 : 0;
+    uint8_t des = desired ? 1 : 0;
     int s_ord = sph_map_mem_order(succ_order);
     int f_ord = sph_map_mem_order(fail_order);
     if (f_ord > s_ord) f_ord = s_ord;
     if (f_ord == __ATOMIC_RELEASE) f_ord = __ATOMIC_RELAXED;
     if (f_ord == __ATOMIC_ACQ_REL) f_ord = __ATOMIC_ACQUIRE;
-    bool success = __atomic_compare_exchange_n((int32_t*)atomic_ptr, &exp, desired ? 1 : 0, 0, s_ord, f_ord);
+    bool success = __atomic_compare_exchange_n((uint8_t*)atomic_ptr, &exp, des, 0, s_ord, f_ord);
     return success ? 1 : 0;
 }
 
@@ -257,12 +260,36 @@ typedef struct sph_event_loop_state {
 
 static sph_event_loop_state g_event_loop = {0};
 
+#if defined(_WIN32)
+static CRITICAL_SECTION g_event_loop_lock;
+static int g_event_loop_lock_init = 0;
+static void sph_event_loop_lock_enter(void) {
+    if (!g_event_loop_lock_init) {
+        InitializeCriticalSection(&g_event_loop_lock);
+        g_event_loop_lock_init = 1;
+    }
+    EnterCriticalSection(&g_event_loop_lock);
+}
+static void sph_event_loop_lock_leave(void) {
+    LeaveCriticalSection(&g_event_loop_lock);
+}
+#else
+static pthread_mutex_t g_event_loop_lock = PTHREAD_MUTEX_INITIALIZER;
+static void sph_event_loop_lock_enter(void) {
+    pthread_mutex_lock(&g_event_loop_lock);
+}
+static void sph_event_loop_lock_leave(void) {
+    pthread_mutex_unlock(&g_event_loop_lock);
+}
+#endif
+
 static void sph_event_loop_queue_fiber(void* fiber) {
     if (!fiber) return;
     sph_coroutine_node* node = (sph_coroutine_node*)malloc(sizeof(sph_coroutine_node));
     if (!node) return;
     node->fiber = fiber;
     node->next = NULL;
+    sph_event_loop_lock_enter();
     if (!g_event_loop.queue_head) {
         g_event_loop.queue_head = node;
         g_event_loop.queue_tail = node;
@@ -270,16 +297,22 @@ static void sph_event_loop_queue_fiber(void* fiber) {
         g_event_loop.queue_tail->next = node;
         g_event_loop.queue_tail = node;
     }
+    sph_event_loop_lock_leave();
 }
 
 static void* sph_event_loop_pop_fiber(void) {
-    if (!g_event_loop.queue_head) return NULL;
+    sph_event_loop_lock_enter();
+    if (!g_event_loop.queue_head) {
+        sph_event_loop_lock_leave();
+        return NULL;
+    }
     sph_coroutine_node* node = g_event_loop.queue_head;
     void* fiber = node->fiber;
     g_event_loop.queue_head = node->next;
     if (!g_event_loop.queue_head) {
         g_event_loop.queue_tail = NULL;
     }
+    sph_event_loop_lock_leave();
     free(node);
     return fiber;
 }
@@ -289,8 +322,25 @@ void* sph_promise_create(void) {
     if (!p) return NULL;
     p->state = SPH_PROMISE_PENDING;
     p->value = NULL;
-    p->waiting_fiber = NULL;
+    p->waiting_fibers = NULL;
+    p->waiting_count = 0;
+    p->waiting_capacity = 0;
     return (void*)p;
+}
+
+static void sph_promise_add_waiter(sph_promise* p, void* fiber) {
+    if (!p || !fiber) return;
+    for (int32_t i = 0; i < p->waiting_count; ++i) {
+        if (p->waiting_fibers[i] == fiber) return;
+    }
+    if (p->waiting_count >= p->waiting_capacity) {
+        int32_t new_cap = (p->waiting_capacity == 0) ? 4 : (p->waiting_capacity * 2);
+        void** new_arr = (void**)realloc(p->waiting_fibers, sizeof(void*) * new_cap);
+        if (!new_arr) return;
+        p->waiting_fibers = new_arr;
+        p->waiting_capacity = new_cap;
+    }
+    p->waiting_fibers[p->waiting_count++] = fiber;
 }
 
 void sph_promise_resolve(void* promise_ptr, void* value) {
@@ -299,10 +349,12 @@ void sph_promise_resolve(void* promise_ptr, void* value) {
     if (p->state != SPH_PROMISE_PENDING) return;
     p->state = SPH_PROMISE_FULFILLED;
     p->value = value;
-    if (p->waiting_fiber) {
-        sph_event_loop_queue_fiber(p->waiting_fiber);
-        p->waiting_fiber = NULL;
+    for (int32_t i = 0; i < p->waiting_count; ++i) {
+        if (p->waiting_fibers[i]) {
+            sph_event_loop_queue_fiber(p->waiting_fibers[i]);
+        }
     }
+    p->waiting_count = 0;
 }
 
 void sph_promise_reject(void* promise_ptr, void* error) {
@@ -311,10 +363,12 @@ void sph_promise_reject(void* promise_ptr, void* error) {
     if (p->state != SPH_PROMISE_PENDING) return;
     p->state = SPH_PROMISE_REJECTED;
     p->value = error;
-    if (p->waiting_fiber) {
-        sph_event_loop_queue_fiber(p->waiting_fiber);
-        p->waiting_fiber = NULL;
+    for (int32_t i = 0; i < p->waiting_count; ++i) {
+        if (p->waiting_fibers[i]) {
+            sph_event_loop_queue_fiber(p->waiting_fibers[i]);
+        }
     }
+    p->waiting_count = 0;
 }
 
 int32_t sph_promise_is_ready(void* promise_ptr) {
@@ -420,7 +474,7 @@ void* sph_promise_await(void* promise_ptr) {
 
     if (cur && cur != g_event_loop.main_fiber) {
         while (p->state == SPH_PROMISE_PENDING) {
-            p->waiting_fiber = cur;
+            sph_promise_add_waiter(p, cur);
             g_event_loop.running_fiber = g_event_loop.main_fiber;
             SwitchToFiber(g_event_loop.main_fiber);
         }

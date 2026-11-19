@@ -1,0 +1,17 @@
+<?php
+
+struct Node {
+    value: i32,
+}
+
+fn main(): i32 {
+    mut i: i32 = 0;
+    mut sum: i32 = 0;
+    while (i < 1000000) {
+        let b: Box<Node> = Box::new(Node { value: i });
+        sum = sum + b.value;
+        i = i + 1;
+    }
+    println(sum);
+    return 0;
+}

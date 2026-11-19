@@ -86,7 +86,7 @@ inline int runAllTests() {
         auto& ctx = TestContext::current();
         ctx.reset();
 
-        std::cout << "[ RUN      ] " << test.name << "\n";
+        std::cout << "[ RUN      ] " << test.name << std::endl;
         try {
             test.func();
         } catch (const std::exception& ex) {
@@ -98,10 +98,10 @@ inline int runAllTests() {
         }
 
         if (ctx.assertionsFailed == 0) {
-            std::cout << "[       OK ] " << test.name << " (" << ctx.assertionsPassed << " assertions passed)\n";
+            std::cout << "[       OK ] " << test.name << " (" << ctx.assertionsPassed << " assertions passed)" << std::endl;
             testsPassed++;
         } else {
-            std::cout << "[  FAILED  ] " << test.name << " (" << ctx.assertionsFailed << " assertion failure(s))\n";
+            std::cout << "[  FAILED  ] " << test.name << " (" << ctx.assertionsFailed << " assertion failure(s))" << std::endl;
             for (const auto& msg : ctx.failureMessages) {
                 std::cout << "    " << msg << "\n";
                 std::cout << "::error title=" << test.name << "::" << msg << "\n";

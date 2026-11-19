@@ -113,6 +113,8 @@ add_library(sphc_core STATIC
     compiler/semantic/Scope.cpp
     compiler/semantic/SemanticAnalyzer.hpp
     compiler/semantic/SemanticAnalyzer.cpp
+    compiler/semantic/BorrowChecker.hpp
+    compiler/semantic/BorrowChecker.cpp
     compiler/ir/IRValue.hpp
     compiler/ir/IRValue.cpp
     compiler/ir/IRInstruction.hpp
@@ -142,6 +144,12 @@ add_library(sphc_core STATIC
     compiler/optimizer/AlgebraicSimplificationPass.cpp
     compiler/optimizer/DeadCodeEliminationPass.hpp
     compiler/optimizer/DeadCodeEliminationPass.cpp
+    compiler/optimizer/DeadStoreEliminationPass.hpp
+    compiler/optimizer/DeadStoreEliminationPass.cpp
+    compiler/optimizer/StrengthReductionPass.hpp
+    compiler/optimizer/StrengthReductionPass.cpp
+    compiler/optimizer/LoopInvariantCodeMotionPass.hpp
+    compiler/optimizer/LoopInvariantCodeMotionPass.cpp
     compiler/optimizer/CommonSubexpressionEliminationPass.hpp
     compiler/optimizer/CommonSubexpressionEliminationPass.cpp
     compiler/optimizer/ControlFlowOptimizationPass.hpp
@@ -165,6 +173,10 @@ add_library(sphc_core STATIC
     compiler/docgen/DocGenerator.cpp
     compiler/package/PackageManager.hpp
     compiler/package/PackageManager.cpp
+    compiler/package/SemVer.hpp
+    compiler/package/SemVer.cpp
+    compiler/package/Lockfile.hpp
+    compiler/package/Lockfile.cpp
     compiler/lsp/Json.hpp
     compiler/lsp/LspServer.hpp
     compiler/lsp/LspServer.cpp
@@ -203,6 +215,10 @@ add_executable(sph_tests
     tests/lexer/test_lexer.cpp
     tests/parser/test_parser.cpp
     tests/semantic/test_semantic.cpp
+    tests/semantic/test_option_result.cpp
+    tests/semantic/test_pattern_matching.cpp
+    tests/semantic/test_negative_suite.cpp
+    tests/diagnostics/test_diagnostic_codes.cpp
     tests/manifest/test_manifest.cpp
     tests/ir/test_ir.cpp
     tests/codegen/test_codegen.cpp
@@ -217,6 +233,12 @@ add_executable(sph_tests
     tests/doctor/test_doctor.cpp
     tests/stdlib/test_stdlib.cpp
     tests/gui/test_gui.cpp
+    tests/lexer/test_lexer_exhaustive.cpp
+    tests/parser/test_parser_exhaustive.cpp
+    tests/semantic/test_type_system_exhaustive.cpp
+    tests/optimizer/test_optimizer_exhaustive.cpp
+    tests/stdlib/test_stdlib_exhaustive.cpp
+    tests/codegen/test_codegen_exhaustive.cpp
 )
 
 target_link_libraries(sph_tests PRIVATE sphc_core sph_runtime_gui)

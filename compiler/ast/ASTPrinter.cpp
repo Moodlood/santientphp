@@ -657,5 +657,45 @@ void ASTPrinter::visit(AwaitExpr& node) {
     --m_indentLevel;
 }
 
+void ASTPrinter::visit(MatchExpr& node) {
+    indent();
+    m_out << "MatchExpr:\n";
+    ++m_indentLevel;
+    indent();
+    m_out << "Condition:\n";
+    ++m_indentLevel;
+    node.getCondition().accept(*this);
+    --m_indentLevel;
+    for (size_t i = 0; i < node.getArms().size(); ++i) {
+        indent();
+        m_out << "Arm " << i << ":\n";
+        ++m_indentLevel;
+        if (node.getArms()[i].guard) {
+            indent();
+            m_out << "Guard:\n";
+            ++m_indentLevel;
+            node.getArms()[i].guard->accept(*this);
+            --m_indentLevel;
+        }
+        if (node.getArms()[i].body) {
+            indent();
+            m_out << "Body:\n";
+            ++m_indentLevel;
+            node.getArms()[i].body->accept(*this);
+            --m_indentLevel;
+        }
+        --m_indentLevel;
+    }
+    --m_indentLevel;
+}
+
+void ASTPrinter::visit(TryPropagateExpr& node) {
+    indent();
+    m_out << "TryPropagate (?):\n";
+    ++m_indentLevel;
+    node.getExpr().accept(*this);
+    --m_indentLevel;
+}
+
 } // namespace sph
 

@@ -1,0 +1,20 @@
+<?php
+
+// SantientPHP Standard Library: Asynchronous Runtime & Fibers
+
+extern "C" fn sph_thread_sleep_ms(ms: i32): void;
+extern "C" fn sph_event_loop_yield(): void;
+extern "C" fn sph_event_loop_run(): void;
+
+fn sleep_ms(ms: i32): void {
+    sph_thread_sleep_ms(ms);
+}
+
+fn yield_now(): void {
+    sph_event_loop_yield();
+}
+
+fn run_event_loop(): void {
+    sph_event_loop_run();
+}
+

@@ -31,6 +31,7 @@ std::string LLVMEmitter::mapType(const Type& type) {
         case TypeKind::Arena:
         case TypeKind::Vector:
         case TypeKind::Result:
+        case TypeKind::Option:
         case TypeKind::Dynamic:   return "ptr";
         case TypeKind::Error:
         case TypeKind::Unknown:  return "void";
@@ -97,6 +98,7 @@ void LLVMEmitter::emit(const IRModule& module) {
     m_out << "declare i32 @sph_env_set(ptr, ptr)\n";
     m_out << "declare i64 @sph_string_len(ptr)\n";
     m_out << "declare ptr @sph_string_concat(ptr, ptr)\n";
+    m_out << "declare ptr @sph_string_append(ptr, ptr)\n";
     m_out << "declare i32 @sph_string_eq(ptr, ptr)\n";
     m_out << "declare ptr @sph_string_slice(ptr, i64, i64)\n";
     m_out << "declare ptr @sph_vec_create(i64, i64)\n";
@@ -353,19 +355,35 @@ void LLVMEmitter::emitInstruction(const IRInstruction& inst) {
         case IROpcode::Greater:
         case IROpcode::GreaterEqual: {
             const auto& binInst = static_cast<const BinaryInst&>(inst);
-            std::string cmpPred;
-            switch (binInst.getOpcode()) {
-                case IROpcode::Equal:        cmpPred = "eq"; break;
-                case IROpcode::NotEqual:     cmpPred = "ne"; break;
-                case IROpcode::Less:         cmpPred = "slt"; break;
-                case IROpcode::LessEqual:    cmpPred = "sle"; break;
-                case IROpcode::Greater:      cmpPred = "sgt"; break;
-                case IROpcode::GreaterEqual: cmpPred = "sge"; break;
-                default:                     cmpPred = "eq"; break;
+            if (binInst.getLhs()->getType()->isFloatingPoint()) {
+                std::string cmpPred;
+                switch (binInst.getOpcode()) {
+                    case IROpcode::Equal:        cmpPred = "oeq"; break;
+                    case IROpcode::NotEqual:     cmpPred = "une"; break;
+                    case IROpcode::Less:         cmpPred = "olt"; break;
+                    case IROpcode::LessEqual:    cmpPred = "ole"; break;
+                    case IROpcode::Greater:      cmpPred = "ogt"; break;
+                    case IROpcode::GreaterEqual: cmpPred = "oge"; break;
+                    default:                     cmpPred = "oeq"; break;
+                }
+                m_out << formatValue(binInst) << " = fcmp " << cmpPred << " "
+                      << mapType(*binInst.getLhs()->getType()) << " "
+                      << formatValue(*binInst.getLhs()) << ", " << formatValue(*binInst.getRhs());
+            } else {
+                std::string cmpPred;
+                switch (binInst.getOpcode()) {
+                    case IROpcode::Equal:        cmpPred = "eq"; break;
+                    case IROpcode::NotEqual:     cmpPred = "ne"; break;
+                    case IROpcode::Less:         cmpPred = "slt"; break;
+                    case IROpcode::LessEqual:    cmpPred = "sle"; break;
+                    case IROpcode::Greater:      cmpPred = "sgt"; break;
+                    case IROpcode::GreaterEqual: cmpPred = "sge"; break;
+                    default:                     cmpPred = "eq"; break;
+                }
+                m_out << formatValue(binInst) << " = icmp " << cmpPred << " "
+                      << mapType(*binInst.getLhs()->getType()) << " "
+                      << formatValue(*binInst.getLhs()) << ", " << formatValue(*binInst.getRhs());
             }
-            m_out << formatValue(binInst) << " = icmp " << cmpPred << " "
-                  << mapType(*binInst.getLhs()->getType()) << " "
-                  << formatValue(*binInst.getLhs()) << ", " << formatValue(*binInst.getRhs());
             break;
         }
         case IROpcode::LogicalAnd:

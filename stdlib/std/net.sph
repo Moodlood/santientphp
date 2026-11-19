@@ -1,0 +1,38 @@
+<?php
+
+// SantientPHP Standard Library: Networking & HTTP
+
+extern "C" fn sph_http_get(url: string): string;
+extern "C" fn sph_http_post(url: string, body: string): string;
+
+fn http_get(url: string): string {
+    return sph_http_get(url);
+}
+
+fn http_post(url: string, body: string): string {
+    return sph_http_post(url, body);
+}
+
+struct HttpResponse {
+    status_code: i32,
+    body: string,
+}
+
+fn make_http_response(status: i32, body: string): HttpResponse {
+    return HttpResponse {
+        status_code: status,
+        body: body,
+    };
+}
+
+extern "C" fn sph_net_listen(port: i32): i32;
+extern "C" fn sph_net_close(fd: i32): void;
+
+fn server_listen(port: i32): i32 {
+    return sph_net_listen(port);
+}
+
+fn server_close(fd: i32): void {
+    sph_net_close(fd);
+}
+

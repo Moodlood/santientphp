@@ -33,3 +33,27 @@ fn range_length(r: IntRange): i32 {
     return r.end - r.start;
 }
 
+struct IntStack {
+    top: i32,
+    capacity: i32,
+}
+
+fn stack_create(capacity: i32): IntStack {
+    return IntStack {
+        top: 0,
+        capacity: capacity,
+    };
+}
+
+fn stack_is_empty(s: IntStack): bool {
+    return s.top == 0;
+}
+
+fn stack_is_full(s: IntStack): bool {
+    return s.top >= s.capacity;
+}
+
+fn stack_size(s: IntStack): i32 {
+    return s.top;
+}
+

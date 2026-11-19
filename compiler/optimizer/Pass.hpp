@@ -11,7 +11,8 @@ enum class OptimizationLevel {
     O1, // Basic optimization: constant folding, algebraic simplification, simple DCE
     O2, // Standard optimization: iterative folding, CSE, control flow, full DCE
     O3, // Aggressive optimization: O2 + function inlining
-    Os  // Size-optimized: O2 with size-conscious thresholds
+    Os, // Size-optimized: O2 with size-conscious thresholds
+    Oz  // Maximum size reduction
 };
 
 [[nodiscard]] inline const char* optimizationLevelToString(OptimizationLevel level) noexcept {
@@ -21,6 +22,7 @@ enum class OptimizationLevel {
         case OptimizationLevel::O2: return "O2";
         case OptimizationLevel::O3: return "O3";
         case OptimizationLevel::Os: return "Os";
+        case OptimizationLevel::Oz: return "Oz";
     }
     return "O0";
 }

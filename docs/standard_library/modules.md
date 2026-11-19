@@ -12,6 +12,12 @@ This document details the standard library modules distributed with SantientPHP 
 - [4. `std/collections.sph` - Collections & Iterators](#4-stdcollectionssph---collections--iterators)
 - [5. `std/async.sph` - Concurrency & Event Loop](#5-stdasyncsph---concurrency--event-loop)
 - [6. `std/net.sph` - Networking & HTTP](#6-stdnetsph---networking--http)
+- [7. `std/crypto.sph` - Cryptography & Randomness](#7-stdcryptosph---cryptography--randomness)
+- [8. `std/json.sph` - JSON Serialization & Parsing](#8-stdjsonsph---json-serialization--parsing)
+- [9. `std/time.sph` - High-Resolution Time & Durations](#9-stdtimesph---high-resolution-time--durations)
+- [10. `std/process.sph` - Process Management & Environment](#10-stdprocesssph---process-management--environment)
+- [11. `std/web.sph` - Native Web Application Framework](#11-stdwebsph---native-web-application-framework)
+- [12. `std/gui.sph` - Native Win32 Controls & SIMD Canvas](#12-stdguisph---native-win32-controls--simd-canvas)
 
 ---
 
@@ -228,6 +234,252 @@ import "std/io.sph";
 fn main(): i32 {
     let response = http_get("https://httpbin.org/get");
     println_str(response);
+    return 0;
+}
+```
+
+---
+
+## 7. `std/crypto.sph` - Cryptography & Randomness
+
+Cryptographic hashing algorithms and hardware entropy-backed random number generators.
+
+### Functions
+
+```php
+fn crypto_sha256(input: string): string
+fn crypto_random_u32(): u32
+fn crypto_random_range(low: i32, high: i32): i32
+```
+
+### Example
+
+```php
+<?php
+import "std/crypto.sph";
+import "std/io.sph";
+
+fn main(): i32 {
+    let hash = crypto_sha256("santientphp");
+    println_str(hash);
+
+    let roll = crypto_random_range(1, 7); // [1, 6]
+    println_i32(roll);
+    return 0;
+}
+```
+
+---
+
+## 8. `std/json.sph` - JSON Serialization & Parsing
+
+Validation and typed key-value stringifying for JSON objects and arrays.
+
+### Functions
+
+```php
+fn json_validate(json: string): bool
+fn json_escape(s: string): string
+fn json_stringify_pair(key: string, val: string): string
+fn json_stringify_pair_i32(key: string, val: i32): string
+fn json_stringify_pair_bool(key: string, val: bool): string
+fn json_wrap_object(content: string): string
+fn json_wrap_array(content: string): string
+```
+
+### Example
+
+```php
+<?php
+import "std/json.sph";
+import "std/io.sph";
+
+fn main(): i32 {
+    let pair1 = json_stringify_pair("name", "SantientPHP");
+    let pair2 = json_stringify_pair_i32("version", 1);
+    let payload = json_wrap_object(pair1 . "," . pair2);
+
+    if (json_validate(payload)) {
+        println_str(payload);
+    }
+    return 0;
+}
+```
+
+---
+
+## 9. `std/time.sph` - High-Resolution Time & Durations
+
+Nanosecond-capable microsecond clock timers and duration conversions.
+
+### Types & Functions
+
+```php
+struct Instant {
+    micros: i64,
+}
+
+struct Duration {
+    millis: i64,
+}
+
+fn instant_now(): Instant
+fn instant_elapsed_ms(start: Instant): i64
+fn instant_elapsed_micros(start: Instant): i64
+fn duration_from_millis(ms: i64): Duration
+fn duration_from_secs(s: i64): Duration
+```
+
+### Example
+
+```php
+<?php
+import "std/time.sph";
+import "std/async.sph";
+import "std/io.sph";
+
+fn main(): i32 {
+    let t0 = instant_now();
+    sleep_ms(25);
+    let elapsed = instant_elapsed_ms(t0);
+
+    println_str("Elapsed ms:");
+    println_i64(elapsed);
+    return 0;
+}
+```
+
+---
+
+## 10. `std/process.sph` - Process Management & Environment
+
+Operating system process metadata, exit codes, and environment variable manipulation.
+
+### Functions
+
+```php
+fn process_id(): i32
+fn process_exit(code: i32): void
+fn env_get(name: string): string
+fn env_set(name: string, value: string): bool
+```
+
+### Example
+
+```php
+<?php
+import "std/process.sph";
+import "std/io.sph";
+
+fn main(): i32 {
+    let pid = process_id();
+    println_str("Current PID:");
+    println_i32(pid);
+
+    env_set("SPH_ENV", "production");
+    println_str(env_get("SPH_ENV"));
+    return 0;
+}
+```
+
+---
+
+## 11. `std/web.sph` - Native Web Application Framework
+
+High-performance native web application router, request/response models, and embedded server engine.
+
+### Types & Functions
+
+```php
+struct Request {
+    method: string,
+    path: string,
+    body: string,
+}
+
+struct Response {
+    status_code: i32,
+    content_type: string,
+    body: string,
+}
+
+fn request_create(method: string, path: string, body: string): Request
+fn response_ok(body: string): Response
+fn response_json(json_body: string): Response
+```
+
+### Example
+
+```php
+<?php
+import "std/web.sph";
+import "std/io.sph";
+
+fn main(): i32 {
+    let req = request_create("GET", "/api/v1/health", "");
+    let res = response_json("{\"status\":\"healthy\"}");
+
+    println_str(res.content_type);
+    println_str(res.body);
+    return 0;
+}
+```
+
+---
+
+## 12. `std/gui.sph` - Native Win32 Controls & SIMD Canvas
+
+Direct hardware-accelerated desktop GUI subsystem with Win32 controls (buttons, textboxes, progress bars, dialogs) and a 32-bit SIMD RGBA canvas.
+
+### Types & Functions
+
+```php
+struct Window {
+    hwnd: *void,
+    title: string,
+    width: i32,
+    height: i32,
+}
+
+// Window lifecycle
+fn window_create(title: string, width: i32, height: i32): Window
+fn window_show(win: Window): void
+fn window_hide(win: Window): void
+fn window_set_title(win: Window, title: string): void
+fn window_is_open(win: Window): bool
+fn window_close(win: Window): void
+
+// Native controls
+fn button_create(parent: Window, text: string, x: i32, y: i32, w: i32, h: i32, id: i32): *void
+fn label_create(parent: Window, text: string, x: i32, y: i32, w: i32, h: i32, id: i32): *void
+fn textbox_create(parent: Window, text: string, x: i32, y: i32, w: i32, h: i32, id: i32, multiline: bool): *void
+fn progressbar_create(parent: Window, x: i32, y: i32, w: i32, h: i32, id: i32): *void
+
+// SIMD 32-bit RGBA Canvas
+fn canvas_create(win: Window, width: i32, height: i32): *void
+fn canvas_clear(canvas: *void, color: i32): void
+fn canvas_fill_rect(canvas: *void, x: i32, y: i32, w: i32, h: i32, color: i32): void
+fn canvas_present(canvas: *void): void
+
+// Event pump & Message dialogs
+fn gui_run_event_loop(): void
+fn gui_pump_events(): i32
+fn gui_quit(): void
+fn gui_messagebox(parent: Window, text: string, title: string, utype: i32): i32
+```
+
+### Example
+
+```php
+<?php
+import "std/gui.sph";
+
+fn main(): i32 {
+    let win = window_create("SantientPHP App", 640, 480);
+    button_create(win, "Click Me", 20, 20, 100, 32, 101);
+    window_show(win);
+
+    gui_run_event_loop();
     return 0;
 }
 ```

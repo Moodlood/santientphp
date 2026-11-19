@@ -53,6 +53,9 @@ enum class TokenKind {
     KwAsync,
     KwAwait,
     KwDefer,
+    KwMatch,
+    KwOption,
+    KwResult,
 
     // Primitive Type Keywords
     KwI32,
@@ -113,7 +116,8 @@ enum class TokenKind {
     RBrace,        // }
     LBracket,      // [
     RBracket,      // ]
-    Hash           // #
+    Hash,          // #
+    Question       // ?
 };
 
 [[nodiscard]] const char* tokenKindToString(TokenKind kind) noexcept;

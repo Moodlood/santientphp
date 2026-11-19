@@ -5,6 +5,57 @@
 #include <thread>
 #include <vector>
 
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+
+static int runProcessDirect(const std::string& commandLine) {
+    std::wstring wcmd(commandLine.begin(), commandLine.end());
+    STARTUPINFOW si;
+    PROCESS_INFORMATION pi;
+    ZeroMemory(&si, sizeof(si));
+    si.cb = sizeof(si);
+    ZeroMemory(&pi, sizeof(pi));
+
+    std::vector<wchar_t> cmdBuf(wcmd.begin(), wcmd.end());
+    cmdBuf.push_back(L'\0');
+
+    if (!CreateProcessW(NULL, cmdBuf.data(), NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) {
+        return -1;
+    }
+
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD exitCode = 0;
+    GetExitCodeProcess(pi.hProcess, &exitCode);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    return static_cast<int>(exitCode);
+}
+#else
+#include <sys/wait.h>
+#include <unistd.h>
+#include <wordexp.h>
+
+static int runProcessDirect(const std::string& commandLine) {
+    wordexp_t p;
+    if (wordexp(commandLine.c_str(), &p, WRDE_NOCMD) != 0) {
+        return -1;
+    }
+    pid_t pid = fork();
+    if (pid == 0) {
+        execvp(p.we_wordv[0], p.we_wordv);
+        _exit(127);
+    }
+    wordfree(&p);
+    if (pid < 0) return -1;
+    int status = 0;
+    waitpid(pid, &status, 0);
+    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+}
+#endif
+
 namespace sph {
 
 std::optional<std::string> Linker::findCrossToolchain(const Target& target) const {
@@ -78,15 +129,14 @@ bool Linker::linkExecutable(const std::filesystem::path& asmPath,
     }
     if (debugInfo) {
         cmd << "-g ";
+    } else {
+        cmd << "-s -pipe ";
     }
     if (!optLevel.empty()) {
         if (optLevel.front() == 'O') {
             cmd << "-" << optLevel << " ";
         } else {
             cmd << "-O" << optLevel << " ";
-        }
-        if (!debugInfo && (optLevel == "s" || optLevel == "Os")) {
-            cmd << "-s ";
         }
     }
     cmd << "\"" << asmPath.string() << "\" ";
@@ -125,12 +175,12 @@ bool Linker::linkExecutable(const std::filesystem::path& asmPath,
         std::this_thread::sleep_for(std::chrono::milliseconds(40));
     }
 
-    int result = std::system(cmd.str().c_str());
+    int result = runProcessDirect(cmd.str());
     if (result != 0) {
         // Retry once after a brief delay in case antivirus or indexing locked the executable
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         std::filesystem::remove(outputPath, ec);
-        result = std::system(cmd.str().c_str());
+        result = runProcessDirect(cmd.str());
     }
 
     if (result != 0) {

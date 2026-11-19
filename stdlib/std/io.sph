@@ -1,0 +1,90 @@
+<?php
+
+// SantientPHP Standard Library: Standard I/O
+
+extern "C" fn sph_println_i32(val: i32): void;
+extern "C" fn sph_println_i64(val: i64): void;
+extern "C" fn sph_println_f32(val: f32): void;
+extern "C" fn sph_println_f64(val: f64): void;
+extern "C" fn sph_println_bool(val: i32): void;
+extern "C" fn sph_println_string(val: string): void;
+extern "C" fn sph_file_read(path: string): string;
+extern "C" fn sph_file_write(path: string, content: string): i32;
+
+fn print_str(val: string): void {
+    sph_println_string(val);
+}
+
+fn println_str(val: string): void {
+    sph_println_string(val);
+}
+
+fn print_i32(val: i32): void {
+    sph_println_i32(val);
+}
+
+fn println_i32(val: i32): void {
+    sph_println_i32(val);
+}
+
+fn print_i64(val: i64): void {
+    sph_println_i64(val);
+}
+
+fn println_i64(val: i64): void {
+    sph_println_i64(val);
+}
+
+fn print_f64(val: f64): void {
+    sph_println_f64(val);
+}
+
+fn println_f64(val: f64): void {
+    sph_println_f64(val);
+}
+
+fn print_bool(val: bool): void {
+    if (val) {
+        sph_println_bool(1);
+    } else {
+        sph_println_bool(0);
+    }
+}
+
+fn println_bool(val: bool): void {
+    print_bool(val);
+}
+
+struct BufferedReader {
+    path: string,
+    buffer_size: i32,
+}
+
+fn buffered_reader_open(path: string, buffer_size: i32): BufferedReader {
+    return BufferedReader {
+        path: path,
+        buffer_size: buffer_size,
+    };
+}
+
+fn buffered_reader_read_all(reader: BufferedReader): string {
+    return sph_file_read(reader.path);
+}
+
+struct BufferedWriter {
+    path: string,
+    buffer_size: i32,
+}
+
+fn buffered_writer_open(path: string, buffer_size: i32): BufferedWriter {
+    return BufferedWriter {
+        path: path,
+        buffer_size: buffer_size,
+    };
+}
+
+fn buffered_writer_write(writer: BufferedWriter, data: string): bool {
+    let res: i32 = sph_file_write(writer.path, data);
+    return res != 0;
+}
+

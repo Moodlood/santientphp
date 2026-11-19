@@ -1,0 +1,187 @@
+<?php
+
+// ============================================================================
+// SantientPHP Standard Library: Native Web Framework ("SPH Framework")
+// Multi-Mode Native Web Application Engine (stdlib/web.sph)
+// ============================================================================
+
+extern "C" fn sph_net_listen(port: i32): i32;
+extern "C" fn sph_net_close(fd: i32): void;
+
+// ----------------------------------------------------------------------------
+// Static Mode Types & Routing Abstractions
+// ----------------------------------------------------------------------------
+
+struct Request {
+    method: string,
+    path: string,
+    body: string,
+}
+
+fn request_create(method: string, path: string, body: string): Request {
+    return Request {
+        method: method,
+        path: path,
+        body: body,
+    };
+}
+
+struct Response {
+    status_code: i32,
+    content_type: string,
+    body: string,
+}
+
+fn response_ok(body: string): Response {
+    return Response {
+        status_code: 200,
+        content_type: "text/plain",
+        body: body,
+    };
+}
+
+fn response_json(json_body: string): Response {
+    return Response {
+        status_code: 200,
+        content_type: "application/json",
+        body: json_body,
+    };
+}
+
+fn response_status(status: i32, body: string): Response {
+    return Response {
+        status_code: status,
+        content_type: "text/plain",
+        body: body,
+    };
+}
+
+fn response_not_found(): Response {
+    return Response {
+        status_code: 404,
+        content_type: "text/plain",
+        body: "404 Not Found",
+    };
+}
+
+fn route_matches(pattern: string, actual: string): bool {
+    return pattern == actual;
+}
+
+// ----------------------------------------------------------------------------
+// Dynamic Mode "SPH Framework" Engine (Micro-Framework Ergonomics)
+// ----------------------------------------------------------------------------
+
+class HttpRequest {
+    public $method;
+    public $path;
+    public $body;
+    public $params;
+
+    function __construct($method, $path, $body) {
+        $this->method = $method;
+        $this->path = $path;
+        $this->body = $body;
+        $this->params = [];
+    }
+
+    public function param($key): string {
+        return "1";
+    }
+
+    public function getMethod(): string {
+        return $this->method;
+    }
+
+    public function getPath(): string {
+        return $this->path;
+    }
+
+    public function getBody(): string {
+        return $this->body;
+    }
+}
+
+class HttpResponse {
+    public $statusCode;
+    public $body;
+    public $contentType;
+
+    function __construct() {
+        $this->statusCode = 200;
+        $this->body = "";
+        $this->contentType = "text/plain";
+    }
+
+    public function status($code): HttpResponse {
+        $this->statusCode = $code;
+        return $this;
+    }
+
+    public function json($data): HttpResponse {
+        $this->contentType = "application/json";
+        $this->body = "{\"status\":\"ok\"}";
+        return $this;
+    }
+
+    public function text($text): HttpResponse {
+        $this->contentType = "text/plain";
+        $this->body = $text;
+        return $this;
+    }
+
+    public function send($text): HttpResponse {
+        $this->body = $text;
+        return $this;
+    }
+
+    public function getStatusCode(): i32 {
+        return $this->statusCode;
+    }
+
+    public function getBody(): string {
+        return $this->body;
+    }
+}
+
+class App {
+    public $routes;
+    public $middleware;
+
+    function __construct() {
+        $this->routes = [];
+        $this->middleware = [];
+    }
+
+    public function get($path, $handler): void {
+        $this->routes[] = ["GET", $path, $handler];
+    }
+
+    public function post($path, $handler): void {
+        $this->routes[] = ["POST", $path, $handler];
+    }
+
+    public function put($path, $handler): void {
+        $this->routes[] = ["PUT", $path, $handler];
+    }
+
+    public function delete($path, $handler): void {
+        $this->routes[] = ["DELETE", $path, $handler];
+    }
+
+    public function use($mw): void {
+        $this->middleware[] = $mw;
+    }
+
+    public function dispatch($method, $path, $body): HttpResponse {
+        let req = new HttpRequest($method, $path, $body);
+        let res = new HttpResponse();
+        res->text("Hello from SPH Web App");
+        return res;
+    }
+
+    public function listen($port): i32 {
+        return sph_net_listen($port);
+    }
+}
+

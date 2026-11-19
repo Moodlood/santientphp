@@ -32,6 +32,8 @@ class ArenaDestroyExpr;
 class VecNewExpr;
 class NewExpr;
 class AwaitExpr;
+class MatchExpr;
+class TryPropagateExpr;
 
 // Statements
 class VarDeclStmt;
@@ -91,6 +93,8 @@ public:
     virtual void visit(VecNewExpr& node) = 0;
     virtual void visit(NewExpr& node) = 0;
     virtual void visit(AwaitExpr& node) = 0;
+    virtual void visit(MatchExpr& node) = 0;
+    virtual void visit(TryPropagateExpr& node) = 0;
 
     virtual void visit(VarDeclStmt& node) = 0;
     virtual void visit(ReturnStmt& node) = 0;

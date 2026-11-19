@@ -29,8 +29,11 @@ std::string DiagnosticEmitter::format(const Diagnostic& diagnostic) const {
     uint32_t col = diagnostic.span.start.column;
 
     ss << filename << ":" << line << ":" << col << ": "
-       << diagnosticSeverityToString(diagnostic.severity) << ": "
-       << diagnostic.message;
+       << diagnosticSeverityToString(diagnostic.severity);
+    if (!diagnostic.code.empty()) {
+        ss << "[" << diagnostic.code << "]";
+    }
+    ss << ": " << diagnostic.message;
 
     if (file && line > 0) {
         std::string_view lineContent = file->getLineContent(line);
@@ -59,6 +62,10 @@ std::string DiagnosticEmitter::format(const Diagnostic& diagnostic) const {
                 ss << '^';
             }
         }
+    }
+
+    if (!diagnostic.hint.empty()) {
+        ss << "\n    = help: " << diagnostic.hint;
     }
 
     return ss.str();

@@ -576,5 +576,65 @@ private:
     std::unique_ptr<ExprAST> m_expr;
 };
 
+enum class PatternKind {
+    Wildcard,   // _
+    Literal,    // 42, "hello", true, false
+    Variable,   // $x or x
+    Variant,    // Some($x), None, Ok($v), Err($e), Color::Red
+    Range       // 1..10
+};
+
+struct Pattern {
+    PatternKind kind = PatternKind::Wildcard;
+    SourceSpan span;
+    std::string name; // variable name or variant name
+    std::unique_ptr<ExprAST> literal; // for PatternKind::Literal
+    std::vector<std::unique_ptr<Pattern>> subPatterns; // for Variant destructuring
+    int64_t rangeStart = 0;
+    int64_t rangeEnd = 0;
+
+    Pattern() = default;
+    Pattern(PatternKind k, SourceSpan sp, std::string n = "")
+        : kind(k), span(sp), name(std::move(n)) {}
+};
+
+struct MatchArm {
+    std::vector<std::unique_ptr<Pattern>> patterns; // pattern1 | pattern2
+    std::unique_ptr<ExprAST> guard; // optional 'if (guard)'
+    std::unique_ptr<ExprAST> body;
+    SourceSpan span;
+};
+
+class MatchExpr : public ExprAST {
+public:
+    MatchExpr(std::unique_ptr<ExprAST> condition, std::vector<MatchArm> arms, SourceSpan span)
+        : ExprAST(span), m_condition(std::move(condition)), m_arms(std::move(arms)) {}
+
+    [[nodiscard]] const ExprAST& getCondition() const noexcept { return *m_condition; }
+    [[nodiscard]] ExprAST& getCondition() noexcept { return *m_condition; }
+    [[nodiscard]] const std::vector<MatchArm>& getArms() const noexcept { return m_arms; }
+    [[nodiscard]] std::vector<MatchArm>& getArms() noexcept { return m_arms; }
+
+    void accept(ASTVisitor& visitor) override { visitor.visit(*this); }
+
+private:
+    std::unique_ptr<ExprAST> m_condition;
+    std::vector<MatchArm> m_arms;
+};
+
+class TryPropagateExpr : public ExprAST {
+public:
+    TryPropagateExpr(std::unique_ptr<ExprAST> expr, SourceSpan span)
+        : ExprAST(span), m_expr(std::move(expr)) {}
+
+    [[nodiscard]] const ExprAST& getExpr() const noexcept { return *m_expr; }
+    [[nodiscard]] ExprAST& getExpr() noexcept { return *m_expr; }
+
+    void accept(ASTVisitor& visitor) override { visitor.visit(*this); }
+
+private:
+    std::unique_ptr<ExprAST> m_expr;
+};
+
 } // namespace sph
 

@@ -27,6 +27,7 @@ enum class TypeKind {
     Arena,
     Vector,
     Result,
+    Option,
     Dynamic,
     Enum,
     Interface,
@@ -65,6 +66,7 @@ public:
     [[nodiscard]] bool isArena() const noexcept { return m_kind == TypeKind::Arena; }
     [[nodiscard]] bool isVector() const noexcept { return m_kind == TypeKind::Vector; }
     [[nodiscard]] bool isResult() const noexcept { return m_kind == TypeKind::Result; }
+    [[nodiscard]] bool isOption() const noexcept { return m_kind == TypeKind::Option; }
     [[nodiscard]] bool isDynamic() const noexcept { return m_kind == TypeKind::Dynamic; }
     [[nodiscard]] virtual bool isMoveOnly() const noexcept { return isBox() || isArena() || isVector(); }
     [[nodiscard]] virtual bool isCopy() const noexcept {
@@ -591,6 +593,41 @@ public:
 private:
     std::shared_ptr<Type> m_okType;
     std::shared_ptr<Type> m_errType;
+};
+
+class OptionType : public Type {
+public:
+    explicit OptionType(std::shared_ptr<Type> valueType)
+        : Type(TypeKind::Option), m_valueType(std::move(valueType)) {}
+
+    [[nodiscard]] const std::shared_ptr<Type>& getValueType() const noexcept { return m_valueType; }
+
+    [[nodiscard]] std::string toString() const override {
+        std::string valStr = m_valueType ? m_valueType->toString() : "void";
+        return "Option<" + valStr + ">";
+    }
+
+    [[nodiscard]] size_t getSize() const override { return 8; }
+    [[nodiscard]] size_t getAlignment() const override { return 8; }
+
+    [[nodiscard]] bool isEqual(const Type& other) const override {
+        if (other.getKind() != TypeKind::Option) return false;
+        const auto& otherOpt = static_cast<const OptionType&>(other);
+        if (!m_valueType || !otherOpt.m_valueType) return false;
+        return m_valueType->isEqual(*otherOpt.m_valueType);
+    }
+
+    [[nodiscard]] bool isMoveOnly() const noexcept override {
+        return m_valueType && m_valueType->isMoveOnly();
+    }
+    [[nodiscard]] bool isCopy() const noexcept override { return !isMoveOnly(); }
+
+    static std::shared_ptr<OptionType> get(std::shared_ptr<Type> valueType) {
+        return std::make_shared<OptionType>(std::move(valueType));
+    }
+
+private:
+    std::shared_ptr<Type> m_valueType;
 };
 
 } // namespace sph

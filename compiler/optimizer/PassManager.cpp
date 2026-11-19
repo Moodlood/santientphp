@@ -4,8 +4,11 @@
 #include "ConstantFoldingPass.hpp"
 #include "ControlFlowOptimizationPass.hpp"
 #include "DeadCodeEliminationPass.hpp"
+#include "DeadStoreEliminationPass.hpp"
 #include "FunctionInliningPass.hpp"
+#include "LoopInvariantCodeMotionPass.hpp"
 #include "StoreToLoadForwardingPass.hpp"
+#include "StrengthReductionPass.hpp"
 
 namespace sph {
 
@@ -28,6 +31,8 @@ PassManager PassManager::createForLevel(OptimizationLevel level) {
         pm.addFunctionPass(std::make_unique<StoreToLoadForwardingPass>());
         pm.addFunctionPass(std::make_unique<ConstantFoldingPass>());
         pm.addFunctionPass(std::make_unique<AlgebraicSimplificationPass>());
+        pm.addFunctionPass(std::make_unique<StrengthReductionPass>());
+        pm.addFunctionPass(std::make_unique<DeadStoreEliminationPass>());
         pm.addFunctionPass(std::make_unique<DeadCodeEliminationPass>());
         return pm;
     }
@@ -36,19 +41,36 @@ PassManager PassManager::createForLevel(OptimizationLevel level) {
         pm.addFunctionPass(std::make_unique<StoreToLoadForwardingPass>());
         pm.addFunctionPass(std::make_unique<ConstantFoldingPass>());
         pm.addFunctionPass(std::make_unique<AlgebraicSimplificationPass>());
+        pm.addFunctionPass(std::make_unique<StrengthReductionPass>());
+        pm.addFunctionPass(std::make_unique<CommonSubexpressionEliminationPass>());
+        pm.addFunctionPass(std::make_unique<LoopInvariantCodeMotionPass>());
+        pm.addFunctionPass(std::make_unique<ControlFlowOptimizationPass>());
+        pm.addFunctionPass(std::make_unique<DeadStoreEliminationPass>());
+        pm.addFunctionPass(std::make_unique<DeadCodeEliminationPass>());
+        return pm;
+    }
+
+    if (level == OptimizationLevel::Oz) {
+        // Size-constrained: no inlining, maximum dead store and dead code removal
+        pm.addFunctionPass(std::make_unique<StoreToLoadForwardingPass>());
+        pm.addFunctionPass(std::make_unique<ConstantFoldingPass>());
         pm.addFunctionPass(std::make_unique<CommonSubexpressionEliminationPass>());
         pm.addFunctionPass(std::make_unique<ControlFlowOptimizationPass>());
+        pm.addFunctionPass(std::make_unique<DeadStoreEliminationPass>());
         pm.addFunctionPass(std::make_unique<DeadCodeEliminationPass>());
         return pm;
     }
 
     if (level == OptimizationLevel::O3) {
-        pm.addModulePass(std::make_unique<FunctionInliningPass>(12));
+        pm.addModulePass(std::make_unique<FunctionInliningPass>(16));
         pm.addFunctionPass(std::make_unique<StoreToLoadForwardingPass>());
         pm.addFunctionPass(std::make_unique<ConstantFoldingPass>());
         pm.addFunctionPass(std::make_unique<AlgebraicSimplificationPass>());
+        pm.addFunctionPass(std::make_unique<StrengthReductionPass>());
         pm.addFunctionPass(std::make_unique<CommonSubexpressionEliminationPass>());
+        pm.addFunctionPass(std::make_unique<LoopInvariantCodeMotionPass>());
         pm.addFunctionPass(std::make_unique<ControlFlowOptimizationPass>());
+        pm.addFunctionPass(std::make_unique<DeadStoreEliminationPass>());
         pm.addFunctionPass(std::make_unique<DeadCodeEliminationPass>());
         return pm;
     }

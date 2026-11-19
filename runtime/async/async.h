@@ -19,7 +19,7 @@ typedef struct sph_atomic_i64 {
 } sph_atomic_i64;
 
 typedef struct sph_atomic_bool {
-    int32_t value;
+    uint8_t value;
 } sph_atomic_bool;
 
 // Memory ordering models
@@ -66,7 +66,9 @@ typedef enum sph_promise_state {
 typedef struct sph_promise {
     int32_t state;
     void* value;
-    void* waiting_fiber;
+    void** waiting_fibers;
+    int32_t waiting_count;
+    int32_t waiting_capacity;
 } sph_promise;
 
 void* sph_promise_create(void);
