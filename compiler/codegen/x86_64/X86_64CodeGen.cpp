@@ -1010,7 +1010,7 @@ void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunct
                 m_out << "  call " << callee << "\n";
             }
 
-            if (!callInst.getType()->isVoid()) {
+            if (!callInst.getType()->isVoid() && !isSret) {
                 if (callInst.getType()->isFloatingPoint()) {
                     if (callInst.getType()->isF32()) {
                         m_out << "  movd eax, xmm0\n";
