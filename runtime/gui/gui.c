@@ -14,6 +14,7 @@
 
 #include "gui_canvas.c"
 #include "gui_webview.c"
+#include "gui_audio.c"
 
 // ============================================================================
 // Thread-Safe UI Dispatch Queue (Gui::post_to_main)

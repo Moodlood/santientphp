@@ -18,6 +18,7 @@ const char* tokenKindToString(TokenKind kind) noexcept {
         case TokenKind::KwBreak:      return "break";
         case TokenKind::KwContinue:   return "continue";
         case TokenKind::KwStruct:     return "struct";
+        case TokenKind::KwUnion:      return "union";
         case TokenKind::KwEnum:       return "enum";
         case TokenKind::KwImport:     return "import";
         case TokenKind::KwClass:      return "class";
@@ -48,8 +49,14 @@ const char* tokenKindToString(TokenKind kind) noexcept {
         case TokenKind::KwMatch:      return "match";
         case TokenKind::KwOption:     return "Option";
         case TokenKind::KwResult:     return "Result";
+        case TokenKind::KwSizeof:     return "sizeof";
         case TokenKind::KwI32:        return "i32";
         case TokenKind::KwI64:        return "i64";
+        case TokenKind::KwU8:         return "u8";
+        case TokenKind::KwU16:        return "u16";
+        case TokenKind::KwU32:        return "u32";
+        case TokenKind::KwU64:        return "u64";
+        case TokenKind::KwUsize:      return "usize";
         case TokenKind::KwF32:        return "f32";
         case TokenKind::KwF64:        return "f64";
         case TokenKind::KwBool:       return "bool";

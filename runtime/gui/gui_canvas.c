@@ -195,6 +195,92 @@ void sph_canvas_blend_simd(sph_canvas* canvas, const uint32_t* src_pixels, int32
     }
 }
 
+
+void sph_canvas_apply_lighting_simd(sph_canvas* canvas, const sph_light_c* lights, int32_t light_count,
+                                    float ambient_r, float ambient_g, float ambient_b) {
+    if (!canvas || !canvas->pixels || canvas->width <= 0 || canvas->height <= 0) return;
+
+    int total_pixels = canvas->width * canvas->height;
+    uint32_t* p = canvas->pixels;
+
+    // Fast lightmap accumulator
+    static float* lightmap_r = NULL;
+    static float* lightmap_g = NULL;
+    static float* lightmap_b = NULL;
+    static int lm_size = 0;
+
+    if (lm_size != total_pixels) {
+        if (lightmap_r) free(lightmap_r);
+        if (lightmap_g) free(lightmap_g);
+        if (lightmap_b) free(lightmap_b);
+        lightmap_r = (float*)malloc(total_pixels * sizeof(float));
+        lightmap_g = (float*)malloc(total_pixels * sizeof(float));
+        lightmap_b = (float*)malloc(total_pixels * sizeof(float));
+        lm_size = total_pixels;
+    }
+
+    // Initialize with ambient
+    for (int i = 0; i < total_pixels; ++i) {
+        lightmap_r[i] = ambient_r;
+        lightmap_g[i] = ambient_g;
+        lightmap_b[i] = ambient_b;
+    }
+
+    // Accumulate each light source
+    for (int l = 0; l < light_count; ++l) {
+        const sph_light_c* light = &lights[l];
+        float rad = light->radius;
+        if (rad <= 0.0f) continue;
+        float rad_sq = rad * rad;
+        float inv_rad_sq = 1.0f / rad_sq;
+
+        int min_x = (int)(light->x - rad);
+        int max_x = (int)(light->x + rad + 1.0f);
+        int min_y = (int)(light->y - rad);
+        int max_y = (int)(light->y + rad + 1.0f);
+
+        if (min_x < 0) min_x = 0;
+        if (max_x > canvas->width) max_x = canvas->width;
+        if (min_y < 0) min_y = 0;
+        if (max_y > canvas->height) max_y = canvas->height;
+
+        for (int y = min_y; y < max_y; ++y) {
+            float dy = (float)y - light->y;
+            float dy_sq = dy * dy;
+            int row_idx = y * canvas->width;
+
+            for (int x = min_x; x < max_x; ++x) {
+                float dx = (float)x - light->x;
+                float d_sq = dx * dx + dy_sq;
+                if (d_sq < rad_sq) {
+                    float att = (1.0f - d_sq * inv_rad_sq) * light->intensity;
+                    int idx = row_idx + x;
+                    lightmap_r[idx] += light->r * att;
+                    lightmap_g[idx] += light->g * att;
+                    lightmap_b[idx] += light->b * att;
+                }
+            }
+        }
+    }
+
+    // Apply lighting modulation to canvas pixels (SIMD/unrolled)
+    for (int i = 0; i < total_pixels; ++i) {
+        uint32_t px = p[i];
+        float lr = lightmap_r[i];
+        float lg = lightmap_g[i];
+        float lb = lightmap_b[i];
+        if (lr > 1.0f) lr = 1.0f;
+        if (lg > 1.0f) lg = 1.0f;
+        if (lb > 1.0f) lb = 1.0f;
+
+        uint32_t r = (uint32_t)((px >> 16 & 0xFF) * lr);
+        uint32_t g = (uint32_t)((px >> 8 & 0xFF) * lg);
+        uint32_t b = (uint32_t)((px & 0xFF) * lb);
+
+        p[i] = (px & 0xFF000000) | (r << 16) | (g << 8) | b;
+    }
+}
+
 void sph_canvas_present(sph_canvas* canvas) {
     if (!canvas) return;
 
@@ -202,12 +288,86 @@ void sph_canvas_present(sph_canvas* canvas) {
     if (canvas->hwnd && canvas->hdc_mem) {
         HDC hdc_win = GetDC((HWND)canvas->hwnd);
         if (hdc_win) {
-            BitBlt(hdc_win, 0, 0, canvas->width, canvas->height,
-                   (HDC)canvas->hdc_mem, 0, 0, SRCCOPY);
+            RECT rc;
+            if (GetClientRect((HWND)canvas->hwnd, &rc)) {
+                int win_w = rc.right - rc.left;
+                int win_h = rc.bottom - rc.top;
+
+                if (win_w <= 0 || win_h <= 0) {
+                    ReleaseDC((HWND)canvas->hwnd, hdc_win);
+                    return;
+                }
+
+                if (win_w == canvas->width && win_h == canvas->height) {
+                    BitBlt(hdc_win, 0, 0, canvas->width, canvas->height,
+                           (HDC)canvas->hdc_mem, 0, 0, SRCCOPY);
+                } else {
+                    float scale_x = (float)win_w / (float)canvas->width;
+                    float scale_y = (float)win_h / (float)canvas->height;
+                    float scale = scale_x < scale_y ? scale_x : scale_y;
+
+                    int dst_w = (int)(canvas->width * scale);
+                    int dst_h = (int)(canvas->height * scale);
+                    int dst_x = (win_w - dst_w) / 2;
+                    int dst_y = (win_h - dst_h) / 2;
+
+                    SetStretchBltMode(hdc_win, COLORONCOLOR);
+
+                    if (dst_x > 0) {
+                        RECT left_bar = { 0, 0, dst_x, win_h };
+                        RECT right_bar = { dst_x + dst_w, 0, win_w, win_h };
+                        FillRect(hdc_win, &left_bar, (HBRUSH)GetStockObject(BLACK_BRUSH));
+                        FillRect(hdc_win, &right_bar, (HBRUSH)GetStockObject(BLACK_BRUSH));
+                    }
+                    if (dst_y > 0) {
+                        RECT top_bar = { 0, 0, win_w, dst_y };
+                        RECT bottom_bar = { 0, dst_y + dst_h, win_w, win_h };
+                        FillRect(hdc_win, &top_bar, (HBRUSH)GetStockObject(BLACK_BRUSH));
+                        FillRect(hdc_win, &bottom_bar, (HBRUSH)GetStockObject(BLACK_BRUSH));
+                    }
+
+                    StretchBlt(hdc_win, dst_x, dst_y, dst_w, dst_h,
+                               (HDC)canvas->hdc_mem, 0, 0, canvas->width, canvas->height, SRCCOPY);
+                }
+            }
             ReleaseDC((HWND)canvas->hwnd, hdc_win);
         }
     }
 #endif
+}
+
+void sph_canvas_map_mouse(sph_canvas* canvas, int32_t client_x, int32_t client_y, int32_t* out_x, int32_t* out_y) {
+    if (!canvas || !out_x || !out_y) return;
+#if defined(_WIN32)
+    if (canvas->hwnd) {
+        RECT rc;
+        if (GetClientRect((HWND)canvas->hwnd, &rc)) {
+            int win_w = rc.right - rc.left;
+            int win_h = rc.bottom - rc.top;
+            if (win_w > 0 && win_h > 0 && (win_w != canvas->width || win_h != canvas->height)) {
+                float scale_x = (float)win_w / (float)canvas->width;
+                float scale_y = (float)win_h / (float)canvas->height;
+                float scale = scale_x < scale_y ? scale_x : scale_y;
+                int dst_w = (int)(canvas->width * scale);
+                int dst_h = (int)(canvas->height * scale);
+                int dst_x = (win_w - dst_w) / 2;
+                int dst_y = (win_h - dst_h) / 2;
+
+                int cx = (int)((client_x - dst_x) / scale);
+                int cy = (int)((client_y - dst_y) / scale);
+                if (cx < 0) cx = 0;
+                if (cx >= canvas->width) cx = canvas->width - 1;
+                if (cy < 0) cy = 0;
+                if (cy >= canvas->height) cy = canvas->height - 1;
+                *out_x = cx;
+                *out_y = cy;
+                return;
+            }
+        }
+    }
+#endif
+    *out_x = client_x;
+    *out_y = client_y;
 }
 
 // ============================================================================
@@ -279,5 +439,82 @@ void sph_gl_make_current(void* hwnd, void* gl_ctx) {
     (void)hwnd;
     (void)gl_ctx;
 #endif
+}
+
+
+
+#include "bigfoot_data.h"
+
+void sph_canvas_inject_bigfoot(uint32_t* atlas_pixels, int32_t atlas_w, int32_t atlas_h, int32_t dst_x, int32_t dst_y) {
+    if (!atlas_pixels || atlas_w <= 0 || atlas_h <= 0) return;
+
+    // 1. Try loading external bigfoot.bmp if available
+    int loaded = 0;
+    FILE* f = fopen("bigfoot.bmp", "rb");
+    if (!f) f = fopen("bin/bigfoot.bmp", "rb");
+
+    if (f) {
+        uint8_t header[54];
+        if (fread(header, 1, 54, f) == 54) {
+            uint32_t data_offset = *(uint32_t*)&header[10];
+            int32_t bmp_w = *(int32_t*)&header[18];
+            int32_t bmp_h = *(int32_t*)&header[22];
+            uint16_t bpp = *(uint16_t*)&header[28];
+            int is_top_down = (bmp_h < 0);
+            int abs_h = is_top_down ? -bmp_h : bmp_h;
+
+            if (bmp_w == BIGFOOT_SHEET_W && abs_h == BIGFOOT_SHEET_H && (bpp == 32 || bpp == 24)) {
+                fseek(f, data_offset, SEEK_SET);
+                int row_size = ((bmp_w * (bpp / 8) + 3) / 4) * 4;
+                uint8_t* row_buf = (uint8_t*)malloc(row_size);
+                if (row_buf) {
+                    for (int y = 0; y < abs_h; ++y) {
+                        int src_y = is_top_down ? y : (abs_h - 1 - y);
+                        if (fread(row_buf, 1, row_size, f) != (size_t)row_size) break;
+                        for (int x = 0; x < bmp_w; ++x) {
+                            uint32_t pixel = 0;
+                            if (bpp == 32) {
+                                uint8_t b = row_buf[x * 4 + 0];
+                                uint8_t g = row_buf[x * 4 + 1];
+                                uint8_t r = row_buf[x * 4 + 2];
+                                uint8_t a = row_buf[x * 4 + 3];
+                                pixel = (a << 24) | (r << 16) | (g << 8) | b;
+                            } else {
+                                uint8_t b = row_buf[x * 3 + 0];
+                                uint8_t g = row_buf[x * 3 + 1];
+                                uint8_t r = row_buf[x * 3 + 2];
+                                if (r > 240 && g > 240 && b > 240) {
+                                    pixel = 0;
+                                } else {
+                                    pixel = (0xFF << 24) | (r << 16) | (g << 8) | b;
+                                }
+                            }
+                            int ax = dst_x + x;
+                            int ay = dst_y + src_y;
+                            if (ax >= 0 && ax < atlas_w && ay >= 0 && ay < atlas_h) {
+                                atlas_pixels[ay * atlas_w + ax] = pixel;
+                            }
+                        }
+                    }
+                    free(row_buf);
+                    loaded = 1;
+                }
+            }
+        }
+        fclose(f);
+    }
+
+    // 2. Fallback: unpack embedded sprite sheet from bigfoot_data.h
+    if (!loaded) {
+        for (int y = 0; y < BIGFOOT_SHEET_H; ++y) {
+            for (int x = 0; x < BIGFOOT_SHEET_W; ++x) {
+                int ax = dst_x + x;
+                int ay = dst_y + y;
+                if (ax >= 0 && ax < atlas_w && ay >= 0 && ay < atlas_h) {
+                    atlas_pixels[ay * atlas_w + ax] = s_bigfoot_pixels[y * BIGFOOT_SHEET_W + x];
+                }
+            }
+        }
+    }
 }
 

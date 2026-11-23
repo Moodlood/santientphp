@@ -56,6 +56,12 @@ void* sph_thread_spawn(void* fn_ptr, void* arg);
 void sph_thread_join(void* thread_handle);
 void sph_thread_sleep_ms(int32_t ms);
 
+// Mutual Exclusion (Mutex)
+void* sph_mutex_create(void);
+void sph_mutex_lock(void* mutex_ptr);
+void sph_mutex_unlock(void* mutex_ptr);
+void sph_mutex_destroy(void* mutex_ptr);
+
 // Coroutine, Promise & EventLoop Subsystem
 typedef enum sph_promise_state {
     SPH_PROMISE_PENDING = 0,

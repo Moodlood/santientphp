@@ -1,6 +1,7 @@
 <?php
 
 // SantientPHP Standard Library: Networking & HTTP
+// High-performance networking, HTTP requests, and RFC 6455 WebSockets
 
 extern "C" fn sph_http_get(url: string): string;
 extern "C" fn sph_http_post(url: string, body: string): string;
@@ -36,3 +37,102 @@ fn server_close(fd: i32): void {
     sph_net_close(fd);
 }
 
+// ============================================================================
+// RFC 6455 WebSocket Client & Server Support
+// ============================================================================
+
+extern "C" fn sph_ws_connect(host: string, port: i32, path: string): *u8;
+extern "C" fn sph_ws_is_open(ws: *u8): i32;
+extern "C" fn sph_ws_close(ws: *u8): void;
+extern "C" fn sph_ws_send_text(ws: *u8, text: string): i32;
+extern "C" fn sph_ws_send_binary(ws: *u8, data: *u8, len: i64): i32;
+extern "C" fn sph_ws_send_ping(ws: *u8): i32;
+extern "C" fn sph_ws_recv(ws: *u8, timeout_ms: i32): i32;
+extern "C" fn sph_ws_get_message(ws: *u8): string;
+extern "C" fn sph_ws_get_binary(ws: *u8): *u8;
+extern "C" fn sph_ws_accept_upgrade(client_fd: i32, request: string): *u8;
+
+fn ws_connect(host: string, port: i32, path: string): *u8 {
+    return sph_ws_connect(host, port, path);
+}
+
+fn ws_is_open(ws: *u8): bool {
+    return sph_ws_is_open(ws) != 0;
+}
+
+fn ws_close(ws: *u8): void {
+    sph_ws_close(ws);
+}
+
+fn ws_send_text(ws: *u8, text: string): bool {
+    return sph_ws_send_text(ws, text) >= 0;
+}
+
+fn ws_send_binary(ws: *u8, buf: *u8, len: i64): bool {
+    return sph_ws_send_binary(ws, buf, len) >= 0;
+}
+
+fn ws_send_ping(ws: *u8): bool {
+    return sph_ws_send_ping(ws) >= 0;
+}
+
+fn ws_recv(ws: *u8, timeout_ms: i32): i32 {
+    return sph_ws_recv(ws, timeout_ms);
+}
+
+fn ws_get_message(ws: *u8): string {
+    return sph_ws_get_message(ws);
+}
+
+fn ws_get_binary(ws: *u8): *u8 {
+    return sph_ws_get_binary(ws);
+}
+
+fn ws_accept_upgrade(client_fd: i32, request: string): *u8 {
+    return sph_ws_accept_upgrade(client_fd, request);
+}
+
+class WebSocketClient {
+    public $handle;
+
+    public function __construct(host: string, port: i32, path: string) {
+        $this->handle = sph_ws_connect(host, port, path);
+    }
+
+    public static function connect(host: string, port: i32, path: string): WebSocketClient {
+        let ws = new WebSocketClient(host, port, path);
+        return ws;
+    }
+
+    public function is_open(): bool {
+        return sph_ws_is_open($this->handle) != 0;
+    }
+
+    public function send(text: string): bool {
+        return sph_ws_send_text($this->handle, text) >= 0;
+    }
+
+    public function send_binary(buf: *u8, len: i64): bool {
+        return sph_ws_send_binary($this->handle, buf, len) >= 0;
+    }
+
+    public function ping(): bool {
+        return sph_ws_send_ping($this->handle) >= 0;
+    }
+
+    public function recv(timeout_ms: i32): i32 {
+        return sph_ws_recv($this->handle, timeout_ms);
+    }
+
+    public function get_message(): string {
+        return sph_ws_get_message($this->handle);
+    }
+
+    public function get_binary(): *u8 {
+        return sph_ws_get_binary($this->handle);
+    }
+
+    public function close(): void {
+        sph_ws_close($this->handle);
+    }
+}

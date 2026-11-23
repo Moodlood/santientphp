@@ -1,0 +1,164 @@
+<?php
+
+// SantientPHP Standard Library: Binary Buffer (ByteBuffer)
+// Null-byte safe byte manipulation for systems programming and networking
+
+extern "C" fn sph_buffer_alloc(capacity: i64): *u8;
+extern "C" fn sph_buffer_from_raw(ptr: *u8, len: i64): *u8;
+extern "C" fn sph_buffer_len(buf: *u8): i64;
+extern "C" fn sph_buffer_cap(buf: *u8): i64;
+extern "C" fn sph_buffer_ptr(buf: *u8): *u8;
+extern "C" fn sph_buffer_get_u8(buf: *u8, offset: i64): u8;
+extern "C" fn sph_buffer_set_u8(buf: *u8, offset: i64, val: u8): void;
+extern "C" fn sph_buffer_get_u16_le(buf: *u8, offset: i64): u16;
+extern "C" fn sph_buffer_set_u16_le(buf: *u8, offset: i64, val: u16): void;
+extern "C" fn sph_buffer_get_u32_le(buf: *u8, offset: i64): u32;
+extern "C" fn sph_buffer_set_u32_le(buf: *u8, offset: i64, val: u32): void;
+extern "C" fn sph_buffer_append(buf: *u8, src: *u8, len: i64): void;
+extern "C" fn sph_buffer_write(buf: *u8, offset: i64, src: *u8, count: i64): void;
+extern "C" fn sph_buffer_read(buf: *u8, offset: i64, dst: *u8, count: i64): void;
+extern "C" fn sph_buffer_slice(buf: *u8, start: i64, len: i64): *u8;
+extern "C" fn sph_buffer_free(buf: *u8): void;
+
+fn buffer_alloc(capacity: i64): *u8 {
+    return sph_buffer_alloc(capacity);
+}
+
+fn buffer_from_raw(ptr: *u8, len: i64): *u8 {
+    return sph_buffer_from_raw(ptr, len);
+}
+
+fn buffer_len(buf: *u8): i64 {
+    return sph_buffer_len(buf);
+}
+
+fn buffer_cap(buf: *u8): i64 {
+    return sph_buffer_cap(buf);
+}
+
+fn buffer_ptr(buf: *u8): *u8 {
+    return sph_buffer_ptr(buf);
+}
+
+fn buffer_get_u8(buf: *u8, offset: i64): u8 {
+    return sph_buffer_get_u8(buf, offset);
+}
+
+fn buffer_set_u8(buf: *u8, offset: i64, val: u8): void {
+    sph_buffer_set_u8(buf, offset, val);
+}
+
+fn buffer_get_u16_le(buf: *u8, offset: i64): u16 {
+    return sph_buffer_get_u16_le(buf, offset);
+}
+
+fn buffer_set_u16_le(buf: *u8, offset: i64, val: u16): void {
+    sph_buffer_set_u16_le(buf, offset, val);
+}
+
+fn buffer_get_u32_le(buf: *u8, offset: i64): u32 {
+    return sph_buffer_get_u32_le(buf, offset);
+}
+
+fn buffer_set_u32_le(buf: *u8, offset: i64, val: u32): void {
+    sph_buffer_set_u32_le(buf, offset, val);
+}
+
+fn buffer_append(buf: *u8, src: *u8, len: i64): void {
+    sph_buffer_append(buf, src, len);
+}
+
+fn buffer_write(buf: *u8, offset: i64, src: *u8, count: i64): void {
+    sph_buffer_write(buf, offset, src, count);
+}
+
+fn buffer_read(buf: *u8, offset: i64, dst: *u8, count: i64): void {
+    sph_buffer_read(buf, offset, dst, count);
+}
+
+fn buffer_slice(buf: *u8, start: i64, len: i64): *u8 {
+    return sph_buffer_slice(buf, start, len);
+}
+
+fn buffer_free(buf: *u8): void {
+    sph_buffer_free(buf);
+}
+
+class ByteBuffer {
+    public $handle;
+
+    public function __construct(capacity: i64) {
+        $this->handle = sph_buffer_alloc(capacity);
+    }
+
+    public static function alloc(capacity: i64): ByteBuffer {
+        let b = new ByteBuffer(capacity);
+        return b;
+    }
+
+    public static function from_raw(ptr: *u8, len: i64): ByteBuffer {
+        mut b = new ByteBuffer(0);
+        sph_buffer_free(b->handle);
+        b->handle = sph_buffer_from_raw(ptr, len);
+        return b;
+    }
+
+    public function len(): i64 {
+        return sph_buffer_len($this->handle);
+    }
+
+    public function cap(): i64 {
+        return sph_buffer_cap($this->handle);
+    }
+
+    public function as_ptr(): *u8 {
+        return sph_buffer_ptr($this->handle);
+    }
+
+    public function get_u8(offset: i64): u8 {
+        return sph_buffer_get_u8($this->handle, offset);
+    }
+
+    public function set_u8(offset: i64, val: u8): void {
+        sph_buffer_set_u8($this->handle, offset, val);
+    }
+
+    public function get_u16_le(offset: i64): u16 {
+        return sph_buffer_get_u16_le($this->handle, offset);
+    }
+
+    public function set_u16_le(offset: i64, val: u16): void {
+        sph_buffer_set_u16_le($this->handle, offset, val);
+    }
+
+    public function get_u32_le(offset: i64): u32 {
+        return sph_buffer_get_u32_le($this->handle, offset);
+    }
+
+    public function set_u32_le(offset: i64, val: u32): void {
+        sph_buffer_set_u32_le($this->handle, offset, val);
+    }
+
+    public function append(src: *u8, len: i64): void {
+        sph_buffer_append($this->handle, src, len);
+    }
+
+    public function write_bytes(offset: i64, src: *u8, count: i64): void {
+        sph_buffer_write($this->handle, offset, src, count);
+    }
+
+    public function read_bytes(offset: i64, dst: *u8, count: i64): void {
+        sph_buffer_read($this->handle, offset, dst, count);
+    }
+
+    public function slice(start: i64, len: i64): ByteBuffer {
+        mut b = new ByteBuffer(0);
+        sph_buffer_free(b->handle);
+        b->handle = sph_buffer_slice($this->handle, start, len);
+        return b;
+    }
+
+    public function free(): void {
+        sph_buffer_free($this->handle);
+    }
+}

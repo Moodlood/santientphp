@@ -51,6 +51,7 @@ NullLiteral     ::= "null"
 TopLevelItem    ::= ImportDecl
                   | AttributeList? FunctionDecl
                   | AttributeList? StructDecl
+                  | AttributeList? UnionDecl
                   | AttributeList? EnumDecl
                   | AttributeList? ClassDecl
                   | AttributeList? InterfaceDecl
@@ -65,6 +66,7 @@ FunctionDecl    ::= "fn" Identifier "(" ParamList? ")" (":" Type)? Block
 ExternDecl      ::= "extern" StringLiteral? "fn" Identifier "(" ParamList? ")" (":" Type)? ";"
 
 StructDecl      ::= "struct" Identifier "{" (StructField ("," StructField)* ","?)? "}"
+UnionDecl       ::= "union" Identifier "{" (StructField ("," StructField)* ","?)? "}"
 StructField     ::= Identifier ":" Type
 
 EnumDecl        ::= "enum" Identifier "{" (EnumVariant ("," EnumVariant)* ","?)? "}"
@@ -110,26 +112,45 @@ ExprStmt        ::= Expression ";"
 | `i16`, `u16` | 16 bits | 2 bytes | Signed / unsigned 16-bit integer |
 | `i32`, `u32` | 32 bits | 4 bytes | Standard signed / unsigned integer |
 | `i64`, `u64` | 64 bits | 8 bytes | 64-bit integer |
+| `usize` | 64 bits | 8 bytes | Target pointer-width unsigned integer |
 | `f32` | 32 bits | 4 bytes | IEEE 754 single-precision float |
 | `f64` | 64 bits | 8 bytes | IEEE 754 double-precision float |
 | `bool` | 8 bits | 1 byte | Boolean value (`true` or `false`) |
 | `char` | 32 bits | 4 bytes | Unicode scalar code point |
 | `void` | 0 bits | - | Absence of value |
-| `*const T`, `*mut T` | 64 bits | 8 bytes | Raw systems pointer (Systems Mode) |
+| `*T`, `ptr<T>` | 64 bits | 8 bytes | Raw systems pointer (Systems Mode / C FFI) |
+| `*const T`, `*mut T` | 64 bits | 8 bytes | Raw const / mut pointer (Systems Mode) |
 
-### 3.2 Compound Types & `#[repr(C)]`
-Struct field declarations are comma-delimited:
+### 3.2 Compound Types, Unions & `#[repr(C)]`
+Struct and union field declarations are comma-delimited:
 ```php
 #[repr(C)]
-struct Vector3 {
-    x: f32,
-    y: f32,
-    z: f32,
+struct MOUSEINPUT {
+    dx: i32,
+    dy: i32,
+    mouseData: u32,
+    dwFlags: u32,
+    time: u32,
+    dwExtraInfo: usize,
+}
+
+#[repr(C)]
+union InputPayload {
+    mi: MOUSEINPUT,
+}
+
+#[repr(C)]
+struct INPUT {
+    type: u32,
+    payload: InputPayload,
 }
 ```
-Field layout in memory follows the target platform's C struct alignment rules:
-- Natural alignment: each field offset is aligned to a multiple of `min(sizeof(field), max_alignment)`.
-- Struct alignment: the overall struct size is padded to a multiple of the largest member alignment.
+Field layout in memory follows target C ABI alignment rules:
+- **Structs**: Natural alignment; field offset aligned to `min(sizeof(field), max_alignment)`. Total struct size padded to multiple of largest member alignment.
+- **Unions**: Every union field has byte offset `0`. Total union size is the maximum size across all member types, padded to the largest member alignment.
+- **`sizeof(T)` Operator**: Evaluated at compile time to a constant integer equal to the byte footprint of type `T`.
+- **Function Pointers & Callbacks**: Applying `&fn_name` produces a raw code pointer (`*u8`) directly compatible with OS callback signatures (e.g. Win32 `WNDPROC`, `LPTHREAD_START_ROUTINE`).
+- **Binary Buffers (`ByteBuffer`)**: Zero-overhead null-byte safe dynamic buffer type in `std/buffer.sph` preserving arbitrary `0x00` bytes.
 
 ### 3.3 Ownership & Deterministic Cleanup (`defer`)
 SantientPHP employs lexical scoping with deterministic stack deallocation and the `defer` keyword.
@@ -245,16 +266,18 @@ The 1.0 Standard Library provides normative modules located in the `$SPH_HOME/st
 
 ### 8.1 Module Summary
 - `std/core.sph`: Mathematical utilities (`min_i32`, `max_i32`, `abs_i32`, `clamp_i32`), assertions (`assert`), panic aborts (`panic_str`), and process exit (`process_exit`).
+- `std/buffer.sph`: Binary buffer type (`ByteBuffer`), offset manipulation, slicing, integer endianness (`set_u16_le`, `set_u32_le`), and null-byte safe storage.
+- `std/thread.sph`: Operating system multi-threading (`Thread::spawn`, `thread_spawn`, `thread_join`) and recursive mutexes (`Mutex`, `mutex_create`, `mutex_lock`).
 - `std/io.sph`: High-performance formatted console I/O (`print_str`, `println_str`, `println_i32`, `println_f64`, `println_bool`).
 - `std/fs.sph`: Cross-platform file operations (`read_file`, `write_file`, `append_file`, `file_exists`, `delete_file`).
 - `std/collections.sph`: High-level data structures and iterators (`KeyValuePair`, `IntRange`, `range`, `range_length`).
 - `std/async.sph`: Asynchronous fiber abstractions (`sleep_ms`, `yield_now`, `run_event_loop`).
-- `std/net.sph`: Network communication primitives (`http_get`).
+- `std/net.sph`: Network communication primitives (`http_get`), TCP listener (`server_listen`), and zero-dependency RFC 6455 WebSocket client (`WebSocketClient`, `ws_connect`).
 - `std/crypto.sph`: SHA-256 cryptographic hashing (`crypto_sha256`) and uniform random number generation (`crypto_random_u32`, `crypto_random_range`).
 - `std/json.sph`: JSON string validation (`json_validate`), escaping, and object/array stringification (`json_stringify_pair`, `json_wrap_object`).
 - `std/time.sph`: Monotonic microsecond clock (`instant_now`, `instant_elapsed_ms`, `instant_elapsed_micros`) and duration helpers (`Duration`).
 - `std/process.sph`: Process execution, process IDs (`process_id`, `process_exit`), and environment variables (`env_get`, `env_set`).
-- `std/web.sph`: Native embedded HTTP server routing, request dispatching (`Request`), and response generation (`Response`, `response_ok`, `response_json`).
+- `std/web.sph`: Native embedded HTTP server routing, request dispatching (`Request`), response generation (`WebResponse`), and non-blocking socket multiplexing (`server_accept`, `server_poll`).
 - `std/gui.sph`: Win32 native controls, event loop pumping, message boxes, and 32-bit SIMD RGBA canvas drawing.
 
 ### 8.2 Import Resolution Pipeline

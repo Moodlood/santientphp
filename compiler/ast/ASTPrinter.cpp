@@ -697,5 +697,10 @@ void ASTPrinter::visit(TryPropagateExpr& node) {
     --m_indentLevel;
 }
 
+void ASTPrinter::visit(SizeofExpr& node) {
+    indent();
+    m_out << "Sizeof: " << node.getTypeName() << "\n";
+}
+
 } // namespace sph
 

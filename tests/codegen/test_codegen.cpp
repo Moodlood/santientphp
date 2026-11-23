@@ -2659,6 +2659,46 @@ TEST_CASE("Remediation: Parser handles dynamic keyword in parseType") {
     CHECK(program != nullptr);
 }
 
+TEST_CASE("P2 Systems FFI: C Callback function pointer and address-of emission") {
+    sph::SourceManager sm;
+    std::string code =
+        "<?php\n"
+        "extern \"C\" fn SetWindowLongPtrA(hwnd: usize, nIndex: i32, newProc: *u8): usize;\n"
+        "\n"
+        "fn custom_wndproc(hwnd: usize, msg: u32, wparam: usize, lparam: usize): usize {\n"
+        "    if (msg == 132 as u32) { return 0 as usize; }\n"
+        "    return 0 as usize;\n"
+        "}\n"
+        "\n"
+        "fn main(): i32 {\n"
+        "    unsafe {\n"
+        "        SetWindowLongPtrA(100 as usize, -4, &custom_wndproc as *u8);\n"
+        "    }\n"
+        "    return 0;\n"
+        "}\n";
+
+    uint32_t fileId = sm.addSource("test_wndproc.sph", code);
+    sph::DiagnosticEmitter emitter(sm);
+    sph::Parser parser(fileId, sm, &emitter);
+    auto program = parser.parseProgram();
+    CHECK(!emitter.hasErrors());
+    CHECK(program != nullptr);
+
+    sph::SemanticAnalyzer analyzer(emitter);
+    CHECK(analyzer.analyze(*program));
+
+    sph::IRGenerator irGen;
+    auto irModule = irGen.generate(*program, "wndproc_module");
+    CHECK(irModule != nullptr);
+
+    std::ostringstream x86Out;
+    sph::X86_64CodeGen codegen(x86Out);
+    codegen.generate(*irModule);
+    std::string x86Asm = x86Out.str();
+    CHECK(x86Asm.find("custom_wndproc") != std::string::npos);
+    CHECK(x86Asm.find("lea") != std::string::npos);
+}
+
 
 
 

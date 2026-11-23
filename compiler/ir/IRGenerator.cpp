@@ -151,9 +151,22 @@ std::shared_ptr<Type> IRGenerator::resolveType(const std::string& rawName) const
         }
     }
 
-    // Check if pointer type: e.g. *i32, *Point, *void
+    // Check if pointer type: e.g. *i32, *Point, *void, ptr<Point>, Pointer<void>
     if (name.size() >= 2 && name.front() == '*') {
         std::string inner = name.substr(1);
+        while (!inner.empty() && (inner.front() == ' ' || inner.front() == '\t')) inner.erase(0, 1);
+        while (!inner.empty() && (inner.back() == ' ' || inner.back() == '\t')) inner.pop_back();
+        auto elemType = resolveType(inner);
+        if (elemType) {
+            return PointerType::get(elemType);
+        }
+        return Type::getVoid();
+    }
+
+    if ((name.size() >= 5 && name.substr(0, 4) == "ptr<" && name.back() == '>') ||
+        (name.size() >= 9 && name.substr(0, 8) == "Pointer<" && name.back() == '>')) {
+        size_t prefixLen = (name.front() == 'p') ? 4 : 8;
+        std::string inner = name.substr(prefixLen, name.size() - prefixLen - 1);
         while (!inner.empty() && (inner.front() == ' ' || inner.front() == '\t')) inner.erase(0, 1);
         while (!inner.empty() && (inner.back() == ' ' || inner.back() == '\t')) inner.pop_back();
         auto elemType = resolveType(inner);
@@ -345,7 +358,11 @@ std::unique_ptr<IRModule> IRGenerator::generate(ProgramAST& program, const std::
 
     for (const auto& st : program.getStructs()) {
         if (st->isGeneric()) continue;
-        m_types[st->getName()] = StructType::get(st->getName(), {});
+        if (st->isUnion()) {
+            m_types[st->getName()] = UnionType::get(st->getName(), {});
+        } else {
+            m_types[st->getName()] = StructType::get(st->getName(), {});
+        }
     }
 
     for (const auto& st : program.getStructs()) {
@@ -355,7 +372,11 @@ std::unique_ptr<IRModule> IRGenerator::generate(ProgramAST& program, const std::
             auto fType = resolveType(f.type);
             members.push_back(StructMember{f.name, fType, 0});
         }
-        m_types[st->getName()] = StructType::get(st->getName(), std::move(members), st->isPacked(), st->getAttribute().explicitAlignment);
+        if (st->isUnion()) {
+            m_types[st->getName()] = UnionType::get(st->getName(), std::move(members));
+        } else {
+            m_types[st->getName()] = StructType::get(st->getName(), std::move(members), st->isPacked(), st->getAttribute().explicitAlignment);
+        }
     }
 
     for (const auto& iface : program.getInterfaces()) {
@@ -2498,6 +2519,9 @@ void IRGenerator::visit(UnaryExpr& node) {
                 emitInst(addrInst);
                 m_lastValue = addrInst;
                 return;
+            } else if (m_functionParamTypes.count(varExpr->getName()) || (m_module && m_module->getFunction(varExpr->getName()))) {
+                m_lastValue = ConstantGlobal::get(varExpr->getName(), ptrType ? ptrType : PointerType::get(Type::getVoid()));
+                return;
             }
         } else if (auto* memExpr = dynamic_cast<MemberAccessExpr*>(&node.getOperand())) {
             std::shared_ptr<IRValue> baseVal;
@@ -4596,6 +4620,13 @@ void IRGenerator::visit(TryPropagateExpr& node) {
     LocGuard locGuard(*this, node.getSpan().start);
     node.getExpr().accept(*this);
     // In current IR model, the inner expression is evaluated; error propagation is handled through the unwrapped value
+}
+
+void IRGenerator::visit(SizeofExpr& node) {
+    LocGuard locGuard(*this, node.getSpan().start);
+    auto t = resolveType(node.getTypeName());
+    size_t size = t ? t->getSize() : 0;
+    m_lastValue = ConstantInt::get(static_cast<int64_t>(size), Type::getI64());
 }
 
 void IRGenerator::visit(MatchExpr& node) {

@@ -5,8 +5,34 @@
 // Multi-Mode Native Web Application Engine (stdlib/web.sph)
 // ============================================================================
 
-extern "C" fn sph_net_listen(port: i32): i32;
-extern "C" fn sph_net_close(fd: i32): void;
+import "std/net.sph";
+
+extern "C" fn sph_server_accept(server_fd: i32, timeout_ms: i32): i32;
+extern "C" fn sph_server_read_request(client_fd: i32, timeout_ms: i32): string;
+extern "C" fn sph_server_write_response(client_fd: i32, status_code: i32, content_type: string, body: string): i32;
+extern "C" fn sph_server_write_raw(client_fd: i32, data: *u8, len: i64): i32;
+extern "C" fn sph_server_poll_read(fd: i32, timeout_ms: i32): i32;
+extern "C" fn sph_ws_accept_upgrade(client_fd: i32, request: string): *u8;
+
+fn server_accept(server_fd: i32, timeout_ms: i32): i32 {
+    return sph_server_accept(server_fd, timeout_ms);
+}
+
+fn server_read_request(client_fd: i32, timeout_ms: i32): string {
+    return sph_server_read_request(client_fd, timeout_ms);
+}
+
+fn server_write_response(client_fd: i32, status: i32, content_type: string, body: string): i32 {
+    return sph_server_write_response(client_fd, status, content_type, body);
+}
+
+fn server_write_raw(client_fd: i32, data: *u8, len: i64): i32 {
+    return sph_server_write_raw(client_fd, data, len);
+}
+
+fn server_poll(fd: i32, timeout_ms: i32): bool {
+    return sph_server_poll_read(fd, timeout_ms) != 0;
+}
 
 // ----------------------------------------------------------------------------
 // Static Mode Types & Routing Abstractions
@@ -102,7 +128,7 @@ class HttpRequest {
     }
 }
 
-class HttpResponse {
+class WebResponse {
     public $statusCode;
     public $body;
     public $contentType;
@@ -113,24 +139,24 @@ class HttpResponse {
         $this->contentType = "text/plain";
     }
 
-    public function status($code): HttpResponse {
+    public function status($code): WebResponse {
         $this->statusCode = $code;
         return $this;
     }
 
-    public function json($data): HttpResponse {
+    public function json($data): WebResponse {
         $this->contentType = "application/json";
         $this->body = "{\"status\":\"ok\"}";
         return $this;
     }
 
-    public function text($text): HttpResponse {
+    public function text($text): WebResponse {
         $this->contentType = "text/plain";
         $this->body = $text;
         return $this;
     }
 
-    public function send($text): HttpResponse {
+    public function send($text): WebResponse {
         $this->body = $text;
         return $this;
     }
@@ -173,9 +199,9 @@ class App {
         $this->middleware[] = $mw;
     }
 
-    public function dispatch($method, $path, $body): HttpResponse {
+    public function dispatch($method, $path, $body): WebResponse {
         let req = new HttpRequest($method, $path, $body);
-        let res = new HttpResponse();
+        let res = new WebResponse();
         res->text("Hello from SPH Web App");
         return res;
     }
@@ -183,5 +209,17 @@ class App {
     public function listen($port): i32 {
         return sph_net_listen($port);
     }
-}
 
+    public function serve_once($port, $timeout_ms): i32 {
+        let fd = $this->listen($port);
+        if (fd < 0) { return -1; }
+        let client = sph_server_accept(fd, $timeout_ms);
+        if (client >= 0) {
+            let req = sph_server_read_request(client, 1000);
+            sph_server_write_response(client, 200, "application/json", "{\"status\":\"ok\"}");
+            sph_net_close(client);
+        }
+        sph_net_close(fd);
+        return 0;
+    }
+}

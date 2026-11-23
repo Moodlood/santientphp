@@ -8,14 +8,19 @@ This reference documents the core types, built-in functions, concurrency primiti
 
 | Type | Size | Description |
 | :--- | :--- | :--- |
+| `i8`, `u8` | 8-bit | Signed / unsigned 8-bit byte integer |
+| `i16`, `u16` | 16-bit | Signed / unsigned 16-bit short integer |
 | `i32` | 32-bit | Signed 32-bit two's complement integer |
-| `i64` | 64-bit | Signed 64-bit two's complement integer |
 | `u32` | 32-bit | Unsigned 32-bit integer |
+| `i64` | 64-bit | Signed 64-bit two's complement integer |
 | `u64` | 64-bit | Unsigned 64-bit integer |
+| `usize` | 64-bit | Pointer-width unsigned integer |
+| `*T`, `ptr<T>` | 64-bit | Raw typed pointer (Systems Mode / C FFI) |
 | `f32` | 32-bit | IEEE 754 single-precision floating point |
 | `f64` | 64-bit | IEEE 754 double-precision floating point |
 | `bool` | 8-bit | Boolean value (`true` or `false`) |
-| `string` | Pointer + Len | Immutable byte sequence |
+| `string` | Pointer + Len | Immutable byte sequence (null-terminated) |
+| `ByteBuffer` | Pointer + Len + Cap | Null-byte safe binary buffer (`std/buffer.sph`) |
 | `void` | 0-bit | Unit return type |
 | `dynamic` | 128-bit | Dynamic variant supporting PHP loose coercion and associative arrays |
 | `Option<T>` | Discriminant + T | Sum type representing an optional value (`Some(T)` or `None`) |
@@ -63,9 +68,16 @@ Hardware-accelerated vector types utilizing x86_64 SSE/AVX instructions:
   - `compare_exchange(expected, desired)`: CAS operation
 
 ### 3.2 Native OS Threading
-- `Thread::spawn(fn_ptr)`: Spawns an operating system thread
-- `Thread::join(thread_handle)`: Waits for thread termination
-- `Thread::sleep_ms(ms)`: Suspends current thread execution
+- `Thread::spawn(fn_ptr, arg)`: Spawns an operating system thread (`sph_thread_spawn`)
+- `Thread::join(thread_handle)`: Waits for thread termination (`sph_thread_join`)
+- `Thread::sleep_ms(ms)`: Suspends current thread execution (`sph_thread_sleep_ms`)
+
+### 3.3 Mutex Synchronization
+- `mutex_create()`: Creates an OS-level mutual exclusion lock (`sph_mutex_create`)
+- `mutex_lock(mutex)`: Acquires lock (`sph_mutex_lock`)
+- `mutex_unlock(mutex)`: Releases lock (`sph_mutex_unlock`)
+- `mutex_destroy(mutex)`: Cleans up mutex handle (`sph_mutex_destroy`)
+- `class Mutex`: OOP wrapper with `lock()`, `unlock()`, and `destroy()`
 
 ---
 

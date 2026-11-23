@@ -34,6 +34,7 @@ class NewExpr;
 class AwaitExpr;
 class MatchExpr;
 class TryPropagateExpr;
+class SizeofExpr;
 
 // Statements
 class VarDeclStmt;
@@ -95,6 +96,7 @@ public:
     virtual void visit(AwaitExpr& node) = 0;
     virtual void visit(MatchExpr& node) = 0;
     virtual void visit(TryPropagateExpr& node) = 0;
+    virtual void visit(SizeofExpr& node) = 0;
 
     virtual void visit(VarDeclStmt& node) = 0;
     virtual void visit(ReturnStmt& node) = 0;

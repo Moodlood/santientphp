@@ -120,7 +120,49 @@ fn calculate_physics(): void {
 
 ---
 
-## 6. Code Formatting & Documentation
+## 6. Systems Programming & Native Interop
+
+SantientPHP provides bare-metal C FFI, C-compatible structs and unions, typed raw pointers, and null-byte safe binary buffers:
+
+```php
+<?php
+import "std/buffer.sph";
+import "std/thread.sph";
+
+#[repr(C)]
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn worker(arg: *u8): *u8 {
+    let buf = buffer_alloc(1024);
+    buffer_set_u8(buf, 0, 0x42 as u8);
+    buffer_free(buf);
+    unsafe { return 0 as *u8; }
+}
+
+fn main(): i32 {
+    let m = mutex_create();
+    mutex_lock(m);
+    unsafe {
+        let t = thread_spawn(&worker as *u8, 0 as *u8);
+        mutex_unlock(m);
+        thread_join(t);
+    }
+    mutex_destroy(m);
+    return 0;
+}
+```
+
+Compile directly with custom native libraries:
+```powershell
+sphc build src/main.sph -luser32 -lgdi32 -lws2_32 -o app.exe
+```
+
+---
+
+## 7. Code Formatting & Documentation
 
 ### Format Source Code
 Ensure consistent indentation and spacing:
@@ -145,7 +187,7 @@ Open `docs/api/index.html` in your browser to explore interactive symbol docs an
 
 ---
 
-## 7. Working in Visual Studio Code
+## 8. Working in Visual Studio Code
 
 1. Install the official SantientPHP extension:
    ```powershell

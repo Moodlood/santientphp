@@ -241,9 +241,9 @@ add_executable(sph_tests
     tests/codegen/test_codegen_exhaustive.cpp
 )
 
-target_link_libraries(sph_tests PRIVATE sphc_core sph_runtime_gui)
+target_link_libraries(sph_tests PRIVATE sphc_core sph_runtime sph_runtime_gui)
 if(WIN32)
-    target_link_libraries(sph_tests PRIVATE comctl32 gdi32 user32 opengl32 ole32)
+    target_link_libraries(sph_tests PRIVATE comctl32 gdi32 user32 opengl32 ole32 winmm ws2_32 winhttp)
 endif()
 if(UNIX AND NOT APPLE)
     target_link_libraries(sph_tests PRIVATE Threads::Threads ${CMAKE_DL_LIBS})

@@ -19,6 +19,12 @@ enum class TypeKind {
     String,
     Function,
     Struct,
+    Union,
+    U8,
+    U16,
+    U32,
+    U64,
+    Usize,
     Array,
     Slice,
     Pointer,
@@ -47,9 +53,19 @@ public:
     [[nodiscard]] bool isVoid() const noexcept { return m_kind == TypeKind::Void; }
     [[nodiscard]] bool isI32() const noexcept { return m_kind == TypeKind::I32; }
     [[nodiscard]] bool isI64() const noexcept { return m_kind == TypeKind::I64; }
+    [[nodiscard]] bool isU8() const noexcept { return m_kind == TypeKind::U8; }
+    [[nodiscard]] bool isU16() const noexcept { return m_kind == TypeKind::U16; }
+    [[nodiscard]] bool isU32() const noexcept { return m_kind == TypeKind::U32; }
+    [[nodiscard]] bool isU64() const noexcept { return m_kind == TypeKind::U64; }
+    [[nodiscard]] bool isUsize() const noexcept { return m_kind == TypeKind::Usize; }
     [[nodiscard]] bool isF32() const noexcept { return m_kind == TypeKind::F32; }
     [[nodiscard]] bool isF64() const noexcept { return m_kind == TypeKind::F64; }
-    [[nodiscard]] bool isInteger() const noexcept { return m_kind == TypeKind::I32 || m_kind == TypeKind::I64; }
+    [[nodiscard]] bool isInteger() const noexcept {
+        return m_kind == TypeKind::I32 || m_kind == TypeKind::I64 ||
+               m_kind == TypeKind::U8 || m_kind == TypeKind::U16 ||
+               m_kind == TypeKind::U32 || m_kind == TypeKind::U64 ||
+               m_kind == TypeKind::Usize;
+    }
     [[nodiscard]] bool isFloatingPoint() const noexcept { return m_kind == TypeKind::F32 || m_kind == TypeKind::F64; }
     [[nodiscard]] bool isNumeric() const noexcept { return isInteger() || isFloatingPoint(); }
     [[nodiscard]] bool isBoolean() const noexcept { return m_kind == TypeKind::Bool; }
@@ -58,6 +74,7 @@ public:
     [[nodiscard]] bool isUnknown() const noexcept { return m_kind == TypeKind::Unknown; }
     [[nodiscard]] bool isFunction() const noexcept { return m_kind == TypeKind::Function; }
     [[nodiscard]] bool isStruct() const noexcept { return m_kind == TypeKind::Struct; }
+    [[nodiscard]] bool isUnion() const noexcept { return m_kind == TypeKind::Union; }
     [[nodiscard]] bool isArray() const noexcept { return m_kind == TypeKind::Array; }
     [[nodiscard]] bool isSlice() const noexcept { return m_kind == TypeKind::Slice; }
     [[nodiscard]] bool isPointer() const noexcept { return m_kind == TypeKind::Pointer; }
@@ -81,7 +98,7 @@ public:
     [[nodiscard]] bool isI32x4() const noexcept;
     [[nodiscard]] bool isF64x2() const noexcept;
     [[nodiscard]] bool isI64x2() const noexcept;
-    [[nodiscard]] bool isRecord() const noexcept { return isStruct() || isClass(); }
+    [[nodiscard]] bool isRecord() const noexcept { return isStruct() || isClass() || isUnion(); }
 
     [[nodiscard]] virtual size_t getSize() const;
     [[nodiscard]] virtual size_t getAlignment() const;
@@ -89,6 +106,11 @@ public:
     static std::shared_ptr<Type> getVoid();
     static std::shared_ptr<Type> getI32();
     static std::shared_ptr<Type> getI64();
+    static std::shared_ptr<Type> getU8();
+    static std::shared_ptr<Type> getU16();
+    static std::shared_ptr<Type> getU32();
+    static std::shared_ptr<Type> getU64();
+    static std::shared_ptr<Type> getUsize();
     static std::shared_ptr<Type> getF32();
     static std::shared_ptr<Type> getF64();
     static std::shared_ptr<Type> getBool();
@@ -160,13 +182,19 @@ public:
 
     static std::shared_ptr<StructType> get(std::string name, std::vector<StructMember> members, bool isPacked = false, size_t explicitAlign = 0);
 
-private:
+protected:
     std::string m_name;
     std::vector<StructMember> m_members;
     size_t m_size = 0;
     size_t m_alignment = 1;
     bool m_isPacked = false;
     size_t m_explicitAlignment = 0;
+};
+
+class UnionType : public StructType {
+public:
+    UnionType(std::string name, std::vector<StructMember> members);
+    static std::shared_ptr<UnionType> get(std::string name, std::vector<StructMember> members);
 };
 
 struct ClassMethodInfo {

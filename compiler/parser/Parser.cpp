@@ -252,7 +252,7 @@ std::unique_ptr<ProgramAST> Parser::parseProgram() {
             } else {
                 synchronize();
             }
-        } else if (check(TokenKind::Hash) || check(TokenKind::KwStruct)) {
+        } else if (check(TokenKind::Hash) || check(TokenKind::KwStruct) || check(TokenKind::KwUnion)) {
             StructAttribute attr = parseStructAttributes();
             auto st = parseStruct(attr);
             if (st) {
@@ -377,11 +377,18 @@ std::unique_ptr<StructDecl> Parser::parseStruct(StructAttribute attr) {
     if (check(TokenKind::Hash)) {
         attr = parseStructAttributes();
     }
-    const Token* structToken = expect(TokenKind::KwStruct, "expected 'struct'");
+    bool isUnion = false;
+    const Token* structToken = nullptr;
+    if (check(TokenKind::KwUnion)) {
+        structToken = &advance();
+        isUnion = true;
+    } else {
+        structToken = expect(TokenKind::KwStruct, "expected 'struct' or 'union'");
+    }
     if (!structToken) return nullptr;
     SourceLocation startLoc = structToken->span.start;
 
-    const Token* nameTok = expect(TokenKind::Identifier, "expected struct name after 'struct'");
+    const Token* nameTok = expect(TokenKind::Identifier, isUnion ? "expected union name after 'union'" : "expected struct name after 'struct'");
     if (!nameTok) return nullptr;
     std::string structName = nameTok->text;
 
@@ -390,7 +397,7 @@ std::unique_ptr<StructDecl> Parser::parseStruct(StructAttribute attr) {
         typeParams = parseTypeParameterList();
     }
 
-    if (!expect(TokenKind::LBrace, "expected '{' after struct name")) return nullptr;
+    if (!expect(TokenKind::LBrace, isUnion ? "expected '{' after union name" : "expected '{' after struct name")) return nullptr;
 
     std::vector<StructField> fields;
     while (!check(TokenKind::RBrace) && !isAtEnd()) {
@@ -409,9 +416,11 @@ std::unique_ptr<StructDecl> Parser::parseStruct(StructAttribute attr) {
         }
     }
 
-    const Token* rbrace = expect(TokenKind::RBrace, "expected '}' after struct body");
+    const Token* rbrace = expect(TokenKind::RBrace, isUnion ? "expected '}' after union body" : "expected '}' after struct body");
     SourceLocation endLoc = rbrace ? rbrace->span.end : (fields.empty() ? nameTok->span.end : fields.back().span.end);
-    return std::make_unique<StructDecl>(std::move(structName), std::move(typeParams), std::move(fields), attr, SourceSpan(startLoc, endLoc));
+    auto decl = std::make_unique<StructDecl>(std::move(structName), std::move(typeParams), std::move(fields), attr, SourceSpan(startLoc, endLoc));
+    decl->setIsUnion(isUnion);
+    return decl;
 }
 
 std::unique_ptr<InterfaceDecl> Parser::parseInterface() {
@@ -480,7 +489,16 @@ std::unique_ptr<ClassDecl> Parser::parseClass() {
     std::vector<std::unique_ptr<FunctionDecl>> methods;
 
     while (!check(TokenKind::RBrace) && !isAtEnd()) {
-        match(TokenKind::KwPublic) || match(TokenKind::KwPrivate) || match(TokenKind::KwProtected);
+        bool modifierSeen = true;
+        while (modifierSeen) {
+            modifierSeen = false;
+            if (match(TokenKind::KwPublic) || match(TokenKind::KwPrivate) || match(TokenKind::KwProtected)) {
+                modifierSeen = true;
+            } else if (check(TokenKind::Identifier) && peek().text == "static") {
+                advance();
+                modifierSeen = true;
+            }
+        }
         if (check(TokenKind::KwAsync) || check(TokenKind::KwFn) || check(TokenKind::KwFunction)) {
             auto method = parseFunction();
             if (!method) return nullptr;
@@ -755,6 +773,11 @@ std::string Parser::parseType() {
     }
     if (match(TokenKind::KwI32))    return "i32";
     if (match(TokenKind::KwI64))    return "i64";
+    if (match(TokenKind::KwU8))     return "u8";
+    if (match(TokenKind::KwU16))    return "u16";
+    if (match(TokenKind::KwU32))    return "u32";
+    if (match(TokenKind::KwU64))    return "u64";
+    if (match(TokenKind::KwUsize))  return "usize";
     if (match(TokenKind::KwF32))    return "f32";
     if (match(TokenKind::KwF64))    return "f64";
     if (match(TokenKind::KwBool))   return "bool";
@@ -1483,6 +1506,16 @@ std::unique_ptr<ExprAST> Parser::parsePostfix() {
 }
 
 std::unique_ptr<ExprAST> Parser::parsePrimary() {
+    if (match(TokenKind::KwSizeof)) {
+        SourceLocation startLoc = previous().span.start;
+        if (!expect(TokenKind::LParen, "expected '(' after 'sizeof'")) return nullptr;
+        std::string typeName = parseType();
+        if (typeName.empty()) return nullptr;
+        const Token* rparen = expect(TokenKind::RParen, "expected ')' after sizeof argument");
+        SourceLocation endLoc = rparen ? rparen->span.end : previous().span.end;
+        return std::make_unique<SizeofExpr>(std::move(typeName), SourceSpan(startLoc, endLoc));
+    }
+
     if (match(TokenKind::KwMatch)) {
         return parseMatch();
     }

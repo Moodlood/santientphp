@@ -29,6 +29,12 @@ std::string Type::toString() const {
         case TypeKind::Enum:      return "enum";
         case TypeKind::Interface: return "interface";
         case TypeKind::Class:     return "class";
+        case TypeKind::Union:     return "union";
+        case TypeKind::U8:        return "u8";
+        case TypeKind::U16:       return "u16";
+        case TypeKind::U32:       return "u32";
+        case TypeKind::U64:       return "u64";
+        case TypeKind::Usize:     return "usize";
     }
     return "unknown";
 }
@@ -75,6 +81,11 @@ size_t Type::getSize() const {
     switch (m_kind) {
         case TypeKind::Void:     return 0;
         case TypeKind::Bool:     return 1;
+        case TypeKind::U8:       return 1;
+        case TypeKind::U16:      return 2;
+        case TypeKind::U32:      return 4;
+        case TypeKind::U64:      return 8;
+        case TypeKind::Usize:    return 8;
         case TypeKind::I32:      return 4;
         case TypeKind::I64:      return 8;
         case TypeKind::F32:      return 4;
@@ -100,6 +111,11 @@ size_t Type::getAlignment() const {
     switch (m_kind) {
         case TypeKind::Void:     return 1;
         case TypeKind::Bool:     return 1;
+        case TypeKind::U8:       return 1;
+        case TypeKind::U16:      return 2;
+        case TypeKind::U32:      return 4;
+        case TypeKind::U64:      return 8;
+        case TypeKind::Usize:    return 8;
         case TypeKind::I32:      return 4;
         case TypeKind::I64:      return 8;
         case TypeKind::F32:      return 4;
@@ -133,6 +149,31 @@ std::shared_ptr<Type> Type::getI32() {
 
 std::shared_ptr<Type> Type::getI64() {
     static auto instance = std::shared_ptr<Type>(new Type(TypeKind::I64));
+    return instance;
+}
+
+std::shared_ptr<Type> Type::getU8() {
+    static auto instance = std::shared_ptr<Type>(new Type(TypeKind::U8));
+    return instance;
+}
+
+std::shared_ptr<Type> Type::getU16() {
+    static auto instance = std::shared_ptr<Type>(new Type(TypeKind::U16));
+    return instance;
+}
+
+std::shared_ptr<Type> Type::getU32() {
+    static auto instance = std::shared_ptr<Type>(new Type(TypeKind::U32));
+    return instance;
+}
+
+std::shared_ptr<Type> Type::getU64() {
+    static auto instance = std::shared_ptr<Type>(new Type(TypeKind::U64));
+    return instance;
+}
+
+std::shared_ptr<Type> Type::getUsize() {
+    static auto instance = std::shared_ptr<Type>(new Type(TypeKind::Usize));
     return instance;
 }
 
@@ -284,6 +325,11 @@ std::shared_ptr<ClassType> Type::getI64x2() {
 std::shared_ptr<Type> Type::fromString(const std::string& name) {
     if (name == "i32" || name == "int")     return getI32();
     if (name == "i64")                      return getI64();
+    if (name == "u8" || name == "byte")     return getU8();
+    if (name == "u16")                      return getU16();
+    if (name == "u32")                      return getU32();
+    if (name == "u64")                      return getU64();
+    if (name == "usize" || name == "uintptr") return getUsize();
     if (name == "f32")                      return getF32();
     if (name == "f64" || name == "float")   return getF64();
     if (name == "bool" || name == "boolean") return getBool();
@@ -388,6 +434,29 @@ bool StructType::isEqual(const Type& other) const {
 
 std::shared_ptr<StructType> StructType::get(std::string name, std::vector<StructMember> members, bool isPacked, size_t explicitAlign) {
     return std::make_shared<StructType>(std::move(name), std::move(members), isPacked, explicitAlign);
+}
+
+UnionType::UnionType(std::string name, std::vector<StructMember> members)
+    : StructType(std::move(name), std::vector<StructMember>{}, false, 0, TypeKind::Union) {
+    m_members = std::move(members);
+    size_t maxSize = 0;
+    size_t maxAlign = 1;
+    for (auto& member : m_members) {
+        member.offset = 0;
+        size_t align = member.type ? member.type->getAlignment() : 1;
+        size_t size = member.type ? member.type->getSize() : 0;
+        if (align > maxAlign) maxAlign = align;
+        if (size > maxSize) maxSize = size;
+    }
+    if (maxAlign > 0) {
+        maxSize = (maxSize + maxAlign - 1) & ~(maxAlign - 1);
+    }
+    m_alignment = maxAlign;
+    m_size = maxSize;
+}
+
+std::shared_ptr<UnionType> UnionType::get(std::string name, std::vector<StructMember> members) {
+    return std::make_shared<UnionType>(std::move(name), std::move(members));
 }
 
 } // namespace sph

@@ -20,7 +20,9 @@ public:
                                      const Target& target = Target::getHostTarget(),
                                      bool isGui = false,
                                      const std::filesystem::path& guiLibPath = "",
-                                     const std::filesystem::path& resourceObjPath = "") const;
+                                     const std::filesystem::path& resourceObjPath = "",
+                                     const std::vector<std::string>& extraLibs = {},
+                                     const std::vector<std::filesystem::path>& libSearchPaths = {}) const;
 
     [[nodiscard]] std::optional<std::string> findCrossToolchain(const Target& target) const;
 };

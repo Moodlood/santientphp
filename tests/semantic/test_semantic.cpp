@@ -2332,3 +2332,87 @@ TEST_CASE("BorrowChecker: rejects returning reference to local variable") {
     CHECK(emitter.hasErrors());
 }
 
+TEST_CASE("P0 Systems FFI: accepts C struct, union, sizeof, and raw pointer Win32 SendInput") {
+    sph::SourceManager sm;
+    std::string code =
+        "<?php\n"
+        "#[repr(C)]\n"
+        "struct MOUSEINPUT {\n"
+        "    dx: i32,\n"
+        "    dy: i32,\n"
+        "    mouseData: u32,\n"
+        "    dwFlags: u32,\n"
+        "    time: u32,\n"
+        "    dwExtraInfo: usize,\n"
+        "}\n"
+        "\n"
+        "#[repr(C)]\n"
+        "struct KEYBDINPUT {\n"
+        "    wVk: u16,\n"
+        "    wScan: u16,\n"
+        "    dwFlags: u32,\n"
+        "    time: u32,\n"
+        "    dwExtraInfo: usize,\n"
+        "}\n"
+        "\n"
+        "#[repr(C)]\n"
+        "union InputPayload {\n"
+        "    mi: MOUSEINPUT,\n"
+        "    ki: KEYBDINPUT,\n"
+        "}\n"
+        "\n"
+        "#[repr(C)]\n"
+        "struct INPUT {\n"
+        "    type: u32,\n"
+        "    payload: InputPayload,\n"
+        "}\n"
+        "\n"
+        "extern \"C\" fn SendInput(cInputs: u32, pInputs: *INPUT, cbSize: i32): u32;\n"
+        "\n"
+        "fn dispatch_mouse(): u32 {\n"
+        "    let mi = MOUSEINPUT { dx: 0, dy: 0, mouseData: 0 as u32, dwFlags: 0 as u32, time: 0 as u32, dwExtraInfo: 0 as usize };\n"
+        "    let payload = InputPayload { mi: mi };\n"
+        "    mut inp = INPUT { type: 0 as u32, payload: payload };\n"
+        "    let size: i64 = sizeof(INPUT);\n"
+        "    return SendInput(1 as u32, &inp, size as i32);\n"
+        "}\n";
+
+    uint32_t fileId = sm.addSource("test_sendinput.sph", code);
+    sph::DiagnosticEmitter emitter(sm);
+    sph::Parser parser(fileId, sm, &emitter);
+    auto program = parser.parseProgram();
+
+    CHECK(!emitter.hasErrors());
+    CHECK(program != nullptr);
+
+    sph::SemanticAnalyzer analyzer(emitter);
+    bool ok = analyzer.analyze(*program);
+    CHECK(ok);
+    CHECK(!emitter.hasErrors());
+}
+
+TEST_CASE("P0 Systems FFI: accepts ptr<T> parameter and return type in extern C function") {
+    sph::SourceManager sm;
+    std::string code =
+        "<?php\n"
+        "struct Point {\n"
+        "    x: i32,\n"
+        "    y: i32,\n"
+        "}\n"
+        "\n"
+        "extern \"C\" fn query_point(p: ptr<Point>): ptr<Point>;\n";
+
+    uint32_t fileId = sm.addSource("test_ptr_ffi.sph", code);
+    sph::DiagnosticEmitter emitter(sm);
+    sph::Parser parser(fileId, sm, &emitter);
+    auto program = parser.parseProgram();
+
+    CHECK(!emitter.hasErrors());
+    CHECK(program != nullptr);
+
+    sph::SemanticAnalyzer analyzer(emitter);
+    bool ok = analyzer.analyze(*program);
+    CHECK(ok);
+    CHECK(!emitter.hasErrors());
+}
+

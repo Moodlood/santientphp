@@ -111,6 +111,11 @@ uint32_t sph_random_u32(void);
 char* sph_crypto_sha256(const char* input);
 int32_t sph_net_listen(int32_t port);
 void sph_net_close(int32_t fd);
+int32_t sph_server_accept(int32_t server_fd, int32_t timeout_ms);
+char* sph_server_read_request(int32_t client_fd, int32_t timeout_ms);
+int32_t sph_server_write_response(int32_t client_fd, int32_t status_code, const char* content_type, const char* body);
+int32_t sph_server_write_raw(int32_t client_fd, const uint8_t* data, int64_t len);
+int32_t sph_server_poll_read(int32_t fd, int32_t timeout_ms);
 char* sph_http_get(const char* url);
 char* sph_http_post(const char* url, const char* body);
 
@@ -247,6 +252,33 @@ int64_t sph_simd_i64x2_sum(const sph_i64x2* vec);
 int64_t sph_simd_i64x2_dot(const sph_i64x2* a, const sph_i64x2* b);
 char* sph_simd_i64x2_to_string(const sph_i64x2* vec);
 void sph_println_i64x2(const sph_i64x2* vec);
+
+// ============================================================================
+// Binary Buffer (ByteBuffer) - Null-byte safe binary sequences
+// ============================================================================
+
+typedef struct {
+    uint8_t* data;
+    int64_t len;
+    int64_t cap;
+} sph_byte_buffer;
+
+sph_byte_buffer* sph_buffer_alloc(int64_t capacity);
+sph_byte_buffer* sph_buffer_from_raw(const uint8_t* ptr, int64_t len);
+int64_t sph_buffer_len(const sph_byte_buffer* buf);
+int64_t sph_buffer_cap(const sph_byte_buffer* buf);
+uint8_t* sph_buffer_ptr(sph_byte_buffer* buf);
+uint8_t sph_buffer_get_u8(const sph_byte_buffer* buf, int64_t offset);
+void sph_buffer_set_u8(sph_byte_buffer* buf, int64_t offset, uint8_t val);
+uint16_t sph_buffer_get_u16_le(const sph_byte_buffer* buf, int64_t offset);
+void sph_buffer_set_u16_le(sph_byte_buffer* buf, int64_t offset, uint16_t val);
+uint32_t sph_buffer_get_u32_le(const sph_byte_buffer* buf, int64_t offset);
+void sph_buffer_set_u32_le(sph_byte_buffer* buf, int64_t offset, uint32_t val);
+void sph_buffer_append(sph_byte_buffer* buf, const uint8_t* src, int64_t len);
+void sph_buffer_write(sph_byte_buffer* buf, int64_t offset, const void* src, int64_t count);
+void sph_buffer_read(const sph_byte_buffer* buf, int64_t offset, void* dst, int64_t count);
+sph_byte_buffer* sph_buffer_slice(const sph_byte_buffer* buf, int64_t start, int64_t len);
+void sph_buffer_free(sph_byte_buffer* buf);
 
 #ifdef __cplusplus
 }

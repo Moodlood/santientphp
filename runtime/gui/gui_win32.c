@@ -95,6 +95,14 @@ static LRESULT CALLBACK sph_main_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPA
             break;
         }
 
+        case WM_ERASEBKGND: {
+            sph_canvas* canvas = (sph_canvas*)(intptr_t)GetPropW(hwnd, L"SPH_CANVAS");
+            if (canvas) {
+                return 1;
+            }
+            break;
+        }
+
         case WM_PAINT: {
             sph_canvas* canvas = (sph_canvas*)(intptr_t)GetPropW(hwnd, L"SPH_CANVAS");
             if (canvas) {
@@ -154,7 +162,7 @@ static void sph_register_window_class(void) {
     wc.hIcon = LoadIconW(wc.hInstance, MAKEINTRESOURCEW(1));
     if (!wc.hIcon) wc.hIcon = LoadIconW(NULL, (LPCWSTR)IDI_APPLICATION);
     wc.hCursor = LoadCursorW(NULL, (LPCWSTR)IDC_ARROW);
-    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
     wc.lpszClassName = SPH_WINDOW_CLASS;
 
     RegisterClassExW(&wc);
@@ -655,3 +663,43 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 }
 
 #endif // _WIN32
+
+void sph_gui_window_toggle_fullscreen(void* hwnd) {
+    if (!hwnd) return;
+    HWND h = (HWND)hwnd;
+    DWORD dwStyle = GetWindowLongW(h, GWL_STYLE);
+    if (dwStyle & WS_OVERLAPPEDWINDOW) {
+        MONITORINFO mi;
+        mi.cbSize = sizeof(mi);
+        WINDOWPLACEMENT wp;
+        wp.length = sizeof(wp);
+        GetWindowPlacement(h, &wp);
+        WINDOWPLACEMENT* pSaved = (WINDOWPLACEMENT*)malloc(sizeof(WINDOWPLACEMENT));
+        if (pSaved) {
+            *pSaved = wp;
+            SetPropW(h, L"SPH_PREV_WP", (HANDLE)pSaved);
+        }
+        if (GetMonitorInfoW(MonitorFromWindow(h, MONITOR_DEFAULTTOPRIMARY), &mi)) {
+            SetWindowLongW(h, GWL_STYLE, dwStyle & ~WS_OVERLAPPEDWINDOW);
+            SetWindowPos(h, HWND_TOP,
+                         mi.rcMonitor.left, mi.rcMonitor.top,
+                         mi.rcMonitor.right - mi.rcMonitor.left,
+                         mi.rcMonitor.bottom - mi.rcMonitor.top,
+                         SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+        }
+    } else {
+        WINDOWPLACEMENT* pSaved = (WINDOWPLACEMENT*)GetPropW(h, L"SPH_PREV_WP");
+        SetWindowLongW(h, GWL_STYLE, dwStyle | WS_OVERLAPPEDWINDOW);
+        if (pSaved) {
+            SetWindowPlacement(h, pSaved);
+            free(pSaved);
+            RemovePropW(h, L"SPH_PREV_WP");
+        } else {
+            RECT wr = { 0, 0, 640, 480 };
+            AdjustWindowRect(&wr, WS_OVERLAPPEDWINDOW, FALSE);
+            SetWindowPos(h, NULL, 0, 0, wr.right - wr.left, wr.bottom - wr.top,
+                         SWP_NOMOVE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+        }
+        ShowWindow(h, SW_RESTORE);
+    }
+}

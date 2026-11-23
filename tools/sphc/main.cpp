@@ -127,6 +127,8 @@ void printHelp() {
               << "  --compat-php            Enable PHP compatibility mode\n"
               << "  --gui                   Compile as native GUI application (Windows GUI subsystem)\n"
               << "  --subsystem=<subsys>    Set PE subsystem (windows, console)\n"
+              << "  -l<lib>                 Link external system library (e.g. -luser32 -lgdi32)\n"
+              << "  -L<dir>                 Add directory to library search path\n"
               << "  -v, --version           Display version information\n"
               << "  -h, --help              Display this help message\n";
 }
@@ -540,7 +542,9 @@ int cmdInspect(const std::string& path, const std::string& stage, bool forceDyna
 int cmdBuild(const std::string& path, std::string outExe, bool forceDynamic = false,
              sph::OptimizationLevel optLevel = sph::OptimizationLevel::O0, bool debugInfo = false,
              const sph::Target& target = sph::Target::getHostTarget(),
-             bool isGui = false, const std::string& iconPath = "") {
+             bool isGui = false, const std::string& iconPath = "",
+             const std::vector<std::string>& extraLibs = {},
+             const std::vector<std::filesystem::path>& libSearchPaths = {}) {
     std::filesystem::path srcPath(path);
     if (outExe.empty()) {
         outExe = srcPath.stem().string() + target.getExecutableExtension();
@@ -563,7 +567,7 @@ int cmdBuild(const std::string& path, std::string outExe, bool forceDynamic = fa
     sph::Linker linker;
     std::string errorMsg;
     std::string optFlag = (optLevel != sph::OptimizationLevel::O0) ? sph::optimizationLevelToString(optLevel) : "";
-    bool linkOk = linker.linkExecutable(asmPath, outExe, runtimeLib, errorMsg, optFlag, debugInfo, target, isGui, guiLib, resObj);
+    bool linkOk = linker.linkExecutable(asmPath, outExe, runtimeLib, errorMsg, optFlag, debugInfo, target, isGui, guiLib, resObj, extraLibs, libSearchPaths);
 
     if (!resObj.empty()) {
         std::error_code ec;
@@ -595,7 +599,9 @@ int cmdBuild(const std::string& path, std::string outExe, bool forceDynamic = fa
 int cmdRun(const std::string& path, bool forceDynamic = false,
            sph::OptimizationLevel optLevel = sph::OptimizationLevel::O0, bool debugInfo = false,
            const sph::Target& target = sph::Target::getHostTarget(),
-           bool isGui = false, const std::string& iconPath = "") {
+           bool isGui = false, const std::string& iconPath = "",
+           const std::vector<std::string>& extraLibs = {},
+           const std::vector<std::filesystem::path>& libSearchPaths = {}) {
     if (target.isCrossCompileFromHost()) {
         std::cerr << "error: 'run' command cannot execute binaries cross-compiled for target '"
                   << target.getCanonicalTriple() << "' on host system '"
@@ -608,7 +614,7 @@ int cmdRun(const std::string& path, bool forceDynamic = false,
     std::string ext = target.isWindows() ? "_run.exe" : "_run";
     std::string tempExe = (std::filesystem::temp_directory_path() / (srcPath.stem().string() + ext)).string();
 
-    int buildRes = cmdBuild(path, tempExe, forceDynamic, optLevel, debugInfo, target, isGui, iconPath);
+    int buildRes = cmdBuild(path, tempExe, forceDynamic, optLevel, debugInfo, target, isGui, iconPath, extraLibs, libSearchPaths);
     if (buildRes != 0) {
         return buildRes;
     }
@@ -959,11 +965,21 @@ int main(int argc, char* argv[]) {
     bool isGui = false;
     bool subsystemExplicit = false;
     std::string iconPath;
+    std::vector<std::string> extraLibs;
+    std::vector<std::filesystem::path> libSearchPaths;
 
     for (int i = 2; i < argc; ++i) {
         std::string_view a = argv[i];
         if (a == "-o" && i + 1 < argc) {
             outPath = argv[++i];
+        } else if (a == "-l" && i + 1 < argc) {
+            extraLibs.push_back(argv[++i]);
+        } else if (a.rfind("-l", 0) == 0 && a.size() > 2) {
+            extraLibs.push_back(std::string(a.substr(2)));
+        } else if (a == "-L" && i + 1 < argc) {
+            libSearchPaths.push_back(argv[++i]);
+        } else if (a.rfind("-L", 0) == 0 && a.size() > 2) {
+            libSearchPaths.push_back(std::string(a.substr(2)));
         } else if ((a == "-t" || a == "--target") && i + 1 < argc) {
             targetStr = argv[++i];
             targetExplicit = true;
@@ -1151,7 +1167,7 @@ int main(int argc, char* argv[]) {
             std::cerr << "error: missing source file argument for 'build'\n";
             return 1;
         }
-        return cmdBuild(srcFile, outPath, forceDynamic, optLevel, debugInfo, target, isGui, iconPath);
+        return cmdBuild(srcFile, outPath, forceDynamic, optLevel, debugInfo, target, isGui, iconPath, extraLibs, libSearchPaths);
     }
 
     if (arg1 == "run") {
@@ -1160,7 +1176,7 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         sph::Target runTarget = targetExplicit ? target : sph::Target::getHostTarget();
-        return cmdRun(srcFile, forceDynamic, optLevel, debugInfo, runTarget, isGui, iconPath);
+        return cmdRun(srcFile, forceDynamic, optLevel, debugInfo, runTarget, isGui, iconPath, extraLibs, libSearchPaths);
     }
 
     if (arg1 == "test") {

@@ -147,6 +147,8 @@ public:
     [[nodiscard]] const StructAttribute& getAttribute() const noexcept { return m_attribute; }
     void setAttribute(StructAttribute attr) noexcept { m_attribute = attr; }
     [[nodiscard]] bool isPacked() const noexcept { return m_attribute.layout == StructLayout::Packed; }
+    [[nodiscard]] bool isUnion() const noexcept { return m_isUnion; }
+    void setIsUnion(bool isUnion) noexcept { m_isUnion = isUnion; }
 
     void accept(ASTVisitor& visitor) override { visitor.visit(*this); }
 
@@ -155,6 +157,7 @@ private:
     std::vector<std::string> m_typeParams;
     std::vector<StructField> m_fields;
     StructAttribute m_attribute;
+    bool m_isUnion = false;
 };
 
 class FunctionDecl : public ASTNode {

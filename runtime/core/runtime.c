@@ -6,3 +6,4 @@
 #include "core.c"
 #include "../async/async.c"
 #include "../compat/compat.c"
+#include "../net/websocket.c"

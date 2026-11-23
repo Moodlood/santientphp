@@ -1,0 +1,83 @@
+<?php
+
+// SantientPHP Standard Library: Multi-threading & Synchronization
+// Native OS threads and mutexes via libsph_runtime
+
+extern "C" fn sph_thread_spawn(fn_ptr: *u8, arg: *u8): *u8;
+extern "C" fn sph_thread_join(handle: *u8): void;
+extern "C" fn sph_thread_sleep_ms(ms: i32): void;
+
+extern "C" fn sph_mutex_create(): *u8;
+extern "C" fn sph_mutex_lock(mutex: *u8): void;
+extern "C" fn sph_mutex_unlock(mutex: *u8): void;
+extern "C" fn sph_mutex_destroy(mutex: *u8): void;
+
+fn thread_spawn(fn_ptr: *u8, arg: *u8): *u8 {
+    return sph_thread_spawn(fn_ptr, arg);
+}
+
+fn thread_join(handle: *u8): void {
+    sph_thread_join(handle);
+}
+
+fn thread_sleep(ms: i32): void {
+    sph_thread_sleep_ms(ms);
+}
+
+fn mutex_create(): *u8 {
+    return sph_mutex_create();
+}
+
+fn mutex_lock(mutex: *u8): void {
+    sph_mutex_lock(mutex);
+}
+
+fn mutex_unlock(mutex: *u8): void {
+    sph_mutex_unlock(mutex);
+}
+
+fn mutex_destroy(mutex: *u8): void {
+    sph_mutex_destroy(mutex);
+}
+
+class Thread {
+    public $handle;
+
+    public function __construct(handle: *u8) {
+        $this->handle = handle;
+    }
+
+    public static function spawn(fn_ptr: *u8, arg: *u8): Thread {
+        let h = sph_thread_spawn(fn_ptr, arg);
+        let t = new Thread(h);
+        return t;
+    }
+
+    public function join(): void {
+        sph_thread_join($this->handle);
+    }
+
+    public static function sleep(ms: i32): void {
+        sph_thread_sleep_ms(ms);
+    }
+}
+
+class Mutex {
+    public $handle;
+
+    public function __construct() {
+        $this->handle = sph_mutex_create();
+    }
+
+    public function lock(): void {
+        sph_mutex_lock($this->handle);
+    }
+
+    public function unlock(): void {
+        sph_mutex_unlock($this->handle);
+    }
+
+    public function destroy(): void {
+        sph_mutex_destroy($this->handle);
+    }
+}

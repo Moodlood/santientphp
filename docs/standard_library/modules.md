@@ -7,17 +7,19 @@ This document details the standard library modules distributed with SantientPHP 
 ## Table of Contents
 
 - [1. `std/core.sph` - Core Utilities & Diagnostics](#1-stdcoresph---core-utilities--diagnostics)
-- [2. `std/io.sph` - Formatted I/O](#2-stdiosph---formatted-io)
-- [3. `std/fs.sph` - Filesystem Operations](#3-stdfssph---filesystem-operations)
-- [4. `std/collections.sph` - Collections & Iterators](#4-stdcollectionssph---collections--iterators)
-- [5. `std/async.sph` - Concurrency & Event Loop](#5-stdasyncsph---concurrency--event-loop)
-- [6. `std/net.sph` - Networking & HTTP](#6-stdnetsph---networking--http)
-- [7. `std/crypto.sph` - Cryptography & Randomness](#7-stdcryptosph---cryptography--randomness)
-- [8. `std/json.sph` - JSON Serialization & Parsing](#8-stdjsonsph---json-serialization--parsing)
-- [9. `std/time.sph` - High-Resolution Time & Durations](#9-stdtimesph---high-resolution-time--durations)
-- [10. `std/process.sph` - Process Management & Environment](#10-stdprocesssph---process-management--environment)
-- [11. `std/web.sph` - Native Web Application Framework](#11-stdwebsph---native-web-application-framework)
-- [12. `std/gui.sph` - Native Win32 Controls & SIMD Canvas](#12-stdguisph---native-win32-controls--simd-canvas)
+- [2. `std/buffer.sph` - Binary Buffer Manipulation (`ByteBuffer`)](#2-stdbuffersph---binary-buffer-manipulation-bytebuffer)
+- [3. `std/thread.sph` - Multi-Threading & Synchronization](#3-stdthreadsph---multi-threading--synchronization)
+- [4. `std/io.sph` - Formatted I/O](#4-stdiosph---formatted-io)
+- [5. `std/fs.sph` - Filesystem Operations](#5-stdfssph---filesystem-operations)
+- [6. `std/collections.sph` - Collections & Iterators](#6-stdcollectionssph---collections--iterators)
+- [7. `std/async.sph` - Concurrency & Event Loop](#7-stdasyncsph---concurrency--event-loop)
+- [8. `std/net.sph` - Networking, HTTP & WebSockets](#8-stdnetsph---networking-http--websockets)
+- [9. `std/crypto.sph` - Cryptography & Randomness](#9-stdcryptosph---cryptography--randomness)
+- [10. `std/json.sph` - JSON Serialization & Parsing](#10-stdjsonsph---json-serialization--parsing)
+- [11. `std/time.sph` - High-Resolution Time & Durations](#11-stdtimesph---high-resolution-time--durations)
+- [12. `std/process.sph` - Process Management & Environment](#12-stdprocesssph---process-management--environment)
+- [13. `std/web.sph` - Native Web Application Framework & Embedded Server](#13-stdwebsph---native-web-application-framework--embedded-server)
+- [14. `std/gui.sph` - Native Win32 Controls & SIMD Canvas](#14-stdguisph---native-win32-controls--simd-canvas)
 
 ---
 
@@ -60,7 +62,133 @@ fn main(): i32 {
 
 ---
 
-## 2. `std/io.sph` - Formatted I/O
+## 2. `std/buffer.sph` - Binary Buffer Manipulation (`ByteBuffer`)
+
+Provides zero-overhead, null-byte safe binary buffers for systems programming, file format decoders/encoders, network packet assembly, and device drivers. Unlike strings, `ByteBuffer` handles arbitrary `0x00` null bytes without truncation.
+
+### Functions & Methods
+
+```php
+// Functional API
+fn buffer_alloc(capacity: i64): *u8
+fn buffer_from_raw(ptr: *u8, len: i64): *u8
+fn buffer_len(buf: *u8): i64
+fn buffer_cap(buf: *u8): i64
+fn buffer_ptr(buf: *u8): *u8
+fn buffer_get_u8(buf: *u8, offset: i64): u8
+fn buffer_set_u8(buf: *u8, offset: i64, val: u8): void
+fn buffer_get_u16_le(buf: *u8, offset: i64): u16
+fn buffer_set_u16_le(buf: *u8, offset: i64, val: u16): void
+fn buffer_get_u32_le(buf: *u8, offset: i64): u32
+fn buffer_set_u32_le(buf: *u8, offset: i64, val: u32): void
+fn buffer_append(buf: *u8, src: *u8, len: i64): void
+fn buffer_write(buf: *u8, offset: i64, src: *u8, count: i64): void
+fn buffer_read(buf: *u8, offset: i64, dst: *u8, count: i64): void
+fn buffer_slice(buf: *u8, start: i64, len: i64): *u8
+fn buffer_free(buf: *u8): void
+
+// Class Wrapper
+class ByteBuffer {
+    public function __construct(capacity: i64)
+    public static function alloc(capacity: i64): ByteBuffer
+    public static function from_raw(ptr: *u8, len: i64): ByteBuffer
+    public function len(): i64
+    public function cap(): i64
+    public function ptr(): *u8
+    public function get_u8(offset: i64): u8
+    public function set_u8(offset: i64, val: u8): void
+    public function get_u16_le(offset: i64): u16
+    public function set_u16_le(offset: i64, val: u16): void
+    public function get_u32_le(offset: i64): u32
+    public function set_u32_le(offset: i64, val: u32): void
+    public function append(src: *u8, len: i64): void
+    public function write(offset: i64, src: *u8, count: i64): void
+    public function slice(start: i64, len: i64): ByteBuffer
+    public function free(): void
+}
+```
+
+### Example
+
+```php
+<?php
+import "std/buffer.sph";
+import "std/io.sph";
+
+fn main(): i32 {
+    let buf = buffer_alloc(1024);
+    buffer_set_u8(buf, 0, 0x42 as u8); // 'B'
+    buffer_set_u8(buf, 1, 0x4D as u8); // 'M'
+    buffer_set_u32_le(buf, 2, 1024 as u32);
+    
+    println_i64(buffer_len(buf));
+    buffer_free(buf);
+    return 0;
+}
+```
+
+---
+
+## 3. `std/thread.sph` - Multi-Threading & Synchronization
+
+Provides native operating system threads and recursive mutual exclusion locks (`Mutex`) backed directly by Win32 (`CreateThread`, `CRITICAL_SECTION`) and POSIX (`pthread_create`, `pthread_mutex_t`).
+
+### Functions & Classes
+
+```php
+// Functional API
+fn thread_spawn(fn_ptr: *u8, arg: *u8): *u8
+fn thread_join(handle: *u8): void
+fn thread_sleep(ms: i32): void
+
+fn mutex_create(): *u8
+fn mutex_lock(mutex: *u8): void
+fn mutex_unlock(mutex: *u8): void
+fn mutex_destroy(mutex: *u8): void
+
+// Classes
+class Thread {
+    public static function spawn(fn_ptr: *u8, arg: *u8): Thread
+    public function join(): void
+    public static function sleep(ms: i32): void
+}
+
+class Mutex {
+    public function lock(): void
+    public function unlock(): void
+    public function destroy(): void
+}
+```
+
+### Example
+
+```php
+<?php
+import "std/thread.sph";
+import "std/io.sph";
+
+fn worker(arg: *u8): *u8 {
+    println_str("Worker thread executing");
+    thread_sleep(10);
+    unsafe { return 0 as *u8; }
+}
+
+fn main(): i32 {
+    let m = mutex_create();
+    mutex_lock(m);
+    unsafe {
+        let t = thread_spawn(&worker as *u8, 0 as *u8);
+        mutex_unlock(m);
+        thread_join(t);
+    }
+    mutex_destroy(m);
+    return 0;
+}
+```
+
+---
+
+## 4. `std/io.sph` - Formatted I/O
 
 Provides typed printing functions for strings, integers, floating-point numbers, and booleans.
 
@@ -102,7 +230,7 @@ fn main(): i32 {
 
 ---
 
-## 3. `std/fs.sph` - Filesystem Operations
+## 5. `std/fs.sph` - Filesystem Operations
 
 Provides synchronous filesystem operations, file existence checks, content reading/writing, and file handles.
 
@@ -147,7 +275,7 @@ fn main(): i32 {
 
 ---
 
-## 4. `std/collections.sph` - Collections & Iterators
+## 6. `std/collections.sph` - Collections & Iterators
 
 Data structures and iteration helpers.
 
@@ -187,7 +315,7 @@ fn main(): i32 {
 
 ---
 
-## 5. `std/async.sph` - Concurrency & Event Loop
+## 7. `std/async.sph` - Concurrency & Event Loop
 
 Thread sleeping, event loop execution, and cooperative task yielding.
 
@@ -214,18 +342,47 @@ fn main(): i32 {
 
 ---
 
-## 6. `std/net.sph` - Networking & HTTP
+## 8. `std/net.sph` - Networking, HTTP & WebSockets
 
-Network client operations backed by the native WinHTTP / POSIX networking runtime.
+Network operations backed by native WinHTTP, Winsock2, and POSIX networking runtimes. Includes zero-dependency RFC 6455 WebSocket client integration with automatic masking, ping/pong heartbeats, and SHA-1 Sec-WebSocket handshake.
 
-### Functions
+### Types & Functions
 
 ```php
+// HTTP Primitives
+struct HttpResponse {
+    status_code: i32,
+    headers: string,
+    body: string,
+}
+
 fn http_get(url: string): string
+fn server_listen(port: i32): i32
+fn server_close(fd: i32): void
+
+// WebSocket Functional Primitives
+fn ws_connect(host: string, port: i32, path: string): *u8
+fn ws_is_open(handle: *u8): bool
+fn ws_send_text(handle: *u8, message: string): i32
+fn ws_send_ping(handle: *u8): i32
+fn ws_recv(handle: *u8, timeout_ms: i32): i32
+fn ws_get_message(handle: *u8): string
+fn ws_close(handle: *u8): void
+
+// WebSocket Client Class
+class WebSocketClient {
+    public function __construct(host: string, port: i32, path: string)
+    public function isOpen(): bool
+    public function send(message: string): bool
+    public function ping(): bool
+    public function receive(timeout_ms: i32): string
+    public function close(): void
+}
 ```
 
-### Example
+### Examples
 
+**HTTP GET:**
 ```php
 <?php
 import "std/net.sph";
@@ -238,9 +395,30 @@ fn main(): i32 {
 }
 ```
 
+**WebSocket Client:**
+```php
+<?php
+import "std/net.sph";
+import "std/io.sph";
+
+fn main(): i32 {
+    let ws = ws_connect("127.0.0.1", 4000, "/control");
+    if (ws_is_open(ws)) {
+        ws_send_text(ws, "{\"action\":\"ping\"}");
+        let op = ws_recv(ws, 1000);
+        if (op == 1) { // 1 = Opcode Text
+            let msg = ws_get_message(ws);
+            println_str(msg);
+        }
+        ws_close(ws);
+    }
+    return 0;
+}
+```
+
 ---
 
-## 7. `std/crypto.sph` - Cryptography & Randomness
+## 9. `std/crypto.sph` - Cryptography & Randomness
 
 Cryptographic hashing algorithms and hardware entropy-backed random number generators.
 
@@ -271,7 +449,7 @@ fn main(): i32 {
 
 ---
 
-## 8. `std/json.sph` - JSON Serialization & Parsing
+## 10. `std/json.sph` - JSON Serialization & Parsing
 
 Validation and typed key-value stringifying for JSON objects and arrays.
 
@@ -308,7 +486,7 @@ fn main(): i32 {
 
 ---
 
-## 9. `std/time.sph` - High-Resolution Time & Durations
+## 11. `std/time.sph` - High-Resolution Time & Durations
 
 Nanosecond-capable microsecond clock timers and duration conversions.
 
@@ -351,7 +529,7 @@ fn main(): i32 {
 
 ---
 
-## 10. `std/process.sph` - Process Management & Environment
+## 12. `std/process.sph` - Process Management & Environment
 
 Operating system process metadata, exit codes, and environment variable manipulation.
 
@@ -384,13 +562,21 @@ fn main(): i32 {
 
 ---
 
-## 11. `std/web.sph` - Native Web Application Framework
+## 13. `std/web.sph` - Native Web Application Framework & Embedded Server
 
-High-performance native web application router, request/response models, and embedded server engine.
+High-performance native web application router, request/response models, and embedded non-blocking HTTP server engine with `WSAPoll` / POSIX `poll` multiplexing.
 
 ### Types & Functions
 
 ```php
+// Embedded Server Primitives
+fn server_accept(server_fd: i32, timeout_ms: i32): i32
+fn server_read_request(client_fd: i32, timeout_ms: i32): string
+fn server_write_response(client_fd: i32, status: i32, content_type: string, body: string): i32
+fn server_write_raw(client_fd: i32, data: *u8, len: i64): i32
+fn server_poll(fd: i32, timeout_ms: i32): bool
+
+// Request & Response Types
 struct Request {
     method: string,
     path: string,
@@ -406,28 +592,51 @@ struct Response {
 fn request_create(method: string, path: string, body: string): Request
 fn response_ok(body: string): Response
 fn response_json(json_body: string): Response
+
+// Web Application Classes
+class WebResponse {
+    public function status($code): WebResponse
+    public function json($data): WebResponse
+    public function text($text): WebResponse
+    public function send($text): WebResponse
+}
+
+class WebApp {
+    public function get($path, $handler): void
+    public function post($path, $handler): void
+    public function use($mw): void
+    public function listen($port): i32
+    public function serve_once($port, $timeout_ms): i32
+}
 ```
 
-### Example
+### Examples
 
+**Standalone Server Loop:**
 ```php
 <?php
 import "std/web.sph";
 import "std/io.sph";
 
 fn main(): i32 {
-    let req = request_create("GET", "/api/v1/health", "");
-    let res = response_json("{\"status\":\"healthy\"}");
-
-    println_str(res.content_type);
-    println_str(res.body);
+    let s = server_listen(8080);
+    if (s >= 0) {
+        println_str("Listening on port 8080...");
+        let client = server_accept(s, 5000);
+        if (client >= 0) {
+            let req = server_read_request(client, 1000);
+            server_write_response(client, 200, "application/json", "{\"status\":\"ok\"}");
+            server_close(client);
+        }
+        server_close(s);
+    }
     return 0;
 }
 ```
 
 ---
 
-## 12. `std/gui.sph` - Native Win32 Controls & SIMD Canvas
+## 14. `std/gui.sph` - Native Win32 Controls & SIMD Canvas
 
 Direct hardware-accelerated desktop GUI subsystem with Win32 controls (buttons, textboxes, progress bars, dialogs) and a 32-bit SIMD RGBA canvas.
 

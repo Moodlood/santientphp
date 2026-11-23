@@ -3,6 +3,15 @@
 #include <stdint.h>
 #include <stddef.h>
 
+
+// Native 4-Channel Chiptune Synthesizer & Software Mixer
+void sph_audio_init(void);
+void sph_audio_shutdown(void);
+void sph_audio_play_sfx(int32_t sfx_id);
+void sph_audio_set_bgm(int32_t track_id);
+void sph_audio_set_volume(float vol);
+void sph_audio_toggle_mute(void);
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -102,6 +111,23 @@ void sph_canvas_draw_rect(sph_canvas* canvas, int32_t x, int32_t y, int32_t w, i
 void sph_canvas_fill_rect(sph_canvas* canvas, int32_t x, int32_t y, int32_t w, int32_t h, uint32_t color);
 void sph_canvas_blend_simd(sph_canvas* canvas, const uint32_t* src_pixels, int32_t src_w, int32_t src_h, int32_t dst_x, int32_t dst_y, float alpha);
 void sph_canvas_present(sph_canvas* canvas);
+
+typedef struct sph_light_c {
+    float x;
+    float y;
+    float radius;
+    float r;
+    float g;
+    float b;
+    float intensity;
+} sph_light_c;
+
+void sph_canvas_apply_lighting_simd(sph_canvas* canvas, const sph_light_c* lights, int32_t light_count,
+                                    float ambient_r, float ambient_g, float ambient_b);
+
+void sph_canvas_map_mouse(sph_canvas* canvas, int32_t client_x, int32_t client_y, int32_t* out_x, int32_t* out_y);
+void sph_gui_window_toggle_fullscreen(void* hwnd);
+void sph_canvas_inject_bigfoot(uint32_t* atlas_pixels, int32_t atlas_w, int32_t atlas_h, int32_t dst_x, int32_t dst_y);
 
 // Hardware OpenGL Surface Integration
 void* sph_gl_context_create(void* hwnd);

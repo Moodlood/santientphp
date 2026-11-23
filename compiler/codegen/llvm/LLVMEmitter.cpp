@@ -18,6 +18,12 @@ std::string LLVMEmitter::mapType(const Type& type) {
         case TypeKind::Function: return "ptr";
         case TypeKind::Struct:   return "%struct." + static_cast<const StructType&>(type).getName();
         case TypeKind::Class:     return "%class." + static_cast<const StructType&>(type).getName();
+        case TypeKind::Union:     return "[" + std::to_string(type.getSize()) + " x i8]";
+        case TypeKind::U8:        return "i8";
+        case TypeKind::U16:       return "i16";
+        case TypeKind::U32:       return "i32";
+        case TypeKind::U64:       return "i64";
+        case TypeKind::Usize:     return "i64";
         case TypeKind::Slice:     return "{ ptr, i32 }";
         case TypeKind::Interface: return "{ ptr, ptr }";
         case TypeKind::Enum:      return "i32";

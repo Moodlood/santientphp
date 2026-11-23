@@ -354,6 +354,11 @@ char* sph_string_slice(const char* s, int64_t start, int64_t len) {
     return res;
 }
 
+int32_t sph_string_char_at(const char* s, int64_t index) {
+    if (!s || index < 0) return 0;
+    return (int32_t)(unsigned char)s[index];
+}
+
 // Dynamic Vector Collection (Vec<T>)
 void* sph_vec_create(int64_t elem_size, int64_t initial_cap) {
     if (elem_size <= 0) elem_size = 8;
@@ -683,6 +688,78 @@ void sph_net_close(int32_t fd) {
     }
 }
 
+int32_t sph_server_poll_read(int32_t fd, int32_t timeout_ms) {
+    if (fd < 0) return 0;
+    fd_set fds;
+    FD_ZERO(&fds);
+    FD_SET((SOCKET)fd, &fds);
+    struct timeval tv;
+    tv.tv_sec = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+    int res = select(fd + 1, &fds, NULL, NULL, (timeout_ms >= 0) ? &tv : NULL);
+    return res > 0 ? 1 : 0;
+}
+
+int32_t sph_server_accept(int32_t server_fd, int32_t timeout_ms) {
+    if (server_fd < 0) return -1;
+    if (timeout_ms >= 0) {
+        if (!sph_server_poll_read(server_fd, timeout_ms)) return -1;
+    }
+    struct sockaddr_in client_addr;
+    int addr_len = sizeof(client_addr);
+    SOCKET client_sock = accept((SOCKET)server_fd, (struct sockaddr*)&client_addr, &addr_len);
+    if (client_sock == INVALID_SOCKET) return -1;
+    return (int32_t)client_sock;
+}
+
+char* sph_server_read_request(int32_t client_fd, int32_t timeout_ms) {
+    if (client_fd < 0) return strdup("");
+    if (timeout_ms >= 0) {
+        if (!sph_server_poll_read(client_fd, timeout_ms)) return strdup("");
+    }
+    char buf[4096];
+    int total = 0;
+    while (total < (int)sizeof(buf) - 1) {
+        int r = recv((SOCKET)client_fd, buf + total, sizeof(buf) - 1 - total, 0);
+        if (r <= 0) break;
+        total += r;
+        buf[total] = '\0';
+        if (strstr(buf, "\r\n\r\n")) break;
+    }
+    return strdup(buf);
+}
+
+int32_t sph_server_write_response(int32_t client_fd, int32_t status_code, const char* content_type, const char* body) {
+    if (client_fd < 0) return -1;
+    if (!content_type) content_type = "text/plain";
+    if (!body) body = "";
+    int64_t body_len = (int64_t)strlen(body);
+    char header[512];
+    int header_len = snprintf(header, sizeof(header),
+        "HTTP/1.1 %d OK\r\n"
+        "Content-Type: %s\r\n"
+        "Content-Length: %lld\r\n"
+        "Connection: close\r\n"
+        "Access-Control-Allow-Origin: *\r\n\r\n",
+        status_code, content_type, (long long)body_len);
+    send((SOCKET)client_fd, header, header_len, 0);
+    if (body_len > 0) {
+        send((SOCKET)client_fd, body, (int)body_len, 0);
+    }
+    return 0;
+}
+
+int32_t sph_server_write_raw(int32_t client_fd, const uint8_t* data, int64_t len) {
+    if (client_fd < 0 || !data || len <= 0) return -1;
+    int64_t total = 0;
+    while (total < len) {
+        int s = send((SOCKET)client_fd, (const char*)(data + total), (int)(len - total), 0);
+        if (s <= 0) return -1;
+        total += s;
+    }
+    return 0;
+}
+
 static char* sph_http_request(const char* url, const char* post_body) {
     if (!url) return strdup("");
     if (strncmp(url, "mock://", 7) == 0 || strncmp(url, "http://mock/", 12) == 0) {
@@ -824,6 +901,76 @@ void sph_net_close(int32_t fd) {
     if (fd >= 0) {
         close(fd);
     }
+}
+
+int32_t sph_server_poll_read(int32_t fd, int32_t timeout_ms) {
+    if (fd < 0) return 0;
+    struct pollfd pfd;
+    pfd.fd = fd;
+    pfd.events = POLLIN;
+    pfd.revents = 0;
+    int res = poll(&pfd, 1, timeout_ms);
+    return res > 0 && (pfd.revents & POLLIN) ? 1 : 0;
+}
+
+int32_t sph_server_accept(int32_t server_fd, int32_t timeout_ms) {
+    if (server_fd < 0) return -1;
+    if (timeout_ms >= 0) {
+        if (!sph_server_poll_read(server_fd, timeout_ms)) return -1;
+    }
+    struct sockaddr_in client_addr;
+    socklen_t addr_len = sizeof(client_addr);
+    int client_sock = accept(server_fd, (struct sockaddr*)&client_addr, &addr_len);
+    if (client_sock < 0) return -1;
+    return client_sock;
+}
+
+char* sph_server_read_request(int32_t client_fd, int32_t timeout_ms) {
+    if (client_fd < 0) return strdup("");
+    if (timeout_ms >= 0) {
+        if (!sph_server_poll_read(client_fd, timeout_ms)) return strdup("");
+    }
+    char buf[4096];
+    int total = 0;
+    while (total < (int)sizeof(buf) - 1) {
+        int r = recv(client_fd, buf + total, sizeof(buf) - 1 - total, 0);
+        if (r <= 0) break;
+        total += r;
+        buf[total] = '\0';
+        if (strstr(buf, "\r\n\r\n")) break;
+    }
+    return strdup(buf);
+}
+
+int32_t sph_server_write_response(int32_t client_fd, int32_t status_code, const char* content_type, const char* body) {
+    if (client_fd < 0) return -1;
+    if (!content_type) content_type = "text/plain";
+    if (!body) body = "";
+    int64_t body_len = (int64_t)strlen(body);
+    char header[512];
+    int header_len = snprintf(header, sizeof(header),
+        "HTTP/1.1 %d OK\r\n"
+        "Content-Type: %s\r\n"
+        "Content-Length: %lld\r\n"
+        "Connection: close\r\n"
+        "Access-Control-Allow-Origin: *\r\n\r\n",
+        status_code, content_type, (long long)body_len);
+    send(client_fd, header, header_len, 0);
+    if (body_len > 0) {
+        send(client_fd, body, (size_t)body_len, 0);
+    }
+    return 0;
+}
+
+int32_t sph_server_write_raw(int32_t client_fd, const uint8_t* data, int64_t len) {
+    if (client_fd < 0 || !data || len <= 0) return -1;
+    int64_t total = 0;
+    while (total < len) {
+        ssize_t s = send(client_fd, (const char*)(data + total), (size_t)(len - total), 0);
+        if (s <= 0) return -1;
+        total += s;
+    }
+    return 0;
 }
 
 char* sph_http_get(const char* url) {
@@ -1514,5 +1661,140 @@ void sph_println_i64x2(const sph_i64x2* vec) {
     if (!vec) { printf("i64x2(0, 0)\n"); return; }
     printf("i64x2(%lld, %lld)\n", (long long)vec->l[0], (long long)vec->l[1]);
 }
+
+// ============================================================================
+// Binary Buffer (ByteBuffer) Implementation
+// ============================================================================
+
+sph_byte_buffer* sph_buffer_alloc(int64_t capacity) {
+    if (capacity < 0) capacity = 0;
+    sph_byte_buffer* buf = (sph_byte_buffer*)malloc(sizeof(sph_byte_buffer));
+    if (!buf) return NULL;
+    buf->len = capacity;
+    buf->cap = capacity > 16 ? capacity : 16;
+    buf->data = (uint8_t*)calloc((size_t)buf->cap, 1);
+    return buf;
+}
+
+sph_byte_buffer* sph_buffer_from_raw(const uint8_t* ptr, int64_t len) {
+    if (len < 0) len = 0;
+    sph_byte_buffer* buf = (sph_byte_buffer*)malloc(sizeof(sph_byte_buffer));
+    if (!buf) return NULL;
+    buf->len = len;
+    buf->cap = len > 16 ? len : 16;
+    buf->data = (uint8_t*)calloc((size_t)buf->cap, 1);
+    if (ptr && len > 0 && buf->data) {
+        memcpy(buf->data, ptr, (size_t)len);
+    }
+    return buf;
+}
+
+int64_t sph_buffer_len(const sph_byte_buffer* buf) {
+    return buf ? buf->len : 0;
+}
+
+int64_t sph_buffer_cap(const sph_byte_buffer* buf) {
+    return buf ? buf->cap : 0;
+}
+
+uint8_t* sph_buffer_ptr(sph_byte_buffer* buf) {
+    return buf ? buf->data : NULL;
+}
+
+uint8_t sph_buffer_get_u8(const sph_byte_buffer* buf, int64_t offset) {
+    if (!buf || !buf->data || offset < 0 || offset >= buf->len) return 0;
+    return buf->data[offset];
+}
+
+void sph_buffer_set_u8(sph_byte_buffer* buf, int64_t offset, uint8_t val) {
+    if (!buf || !buf->data || offset < 0 || offset >= buf->len) return;
+    buf->data[offset] = val;
+}
+
+uint16_t sph_buffer_get_u16_le(const sph_byte_buffer* buf, int64_t offset) {
+    if (!buf || !buf->data || offset < 0 || offset + 2 > buf->len) return 0;
+    return (uint16_t)(buf->data[offset] | ((uint16_t)buf->data[offset + 1] << 8));
+}
+
+void sph_buffer_set_u16_le(sph_byte_buffer* buf, int64_t offset, uint16_t val) {
+    if (!buf || !buf->data || offset < 0 || offset + 2 > buf->len) return;
+    buf->data[offset] = (uint8_t)(val & 0xFF);
+    buf->data[offset + 1] = (uint8_t)((val >> 8) & 0xFF);
+}
+
+uint32_t sph_buffer_get_u32_le(const sph_byte_buffer* buf, int64_t offset) {
+    if (!buf || !buf->data || offset < 0 || offset + 4 > buf->len) return 0;
+    return (uint32_t)buf->data[offset] |
+           ((uint32_t)buf->data[offset + 1] << 8) |
+           ((uint32_t)buf->data[offset + 2] << 16) |
+           ((uint32_t)buf->data[offset + 3] << 24);
+}
+
+void sph_buffer_set_u32_le(sph_byte_buffer* buf, int64_t offset, uint32_t val) {
+    if (!buf || !buf->data || offset < 0 || offset + 4 > buf->len) return;
+    buf->data[offset] = (uint8_t)(val & 0xFF);
+    buf->data[offset + 1] = (uint8_t)((val >> 8) & 0xFF);
+    buf->data[offset + 2] = (uint8_t)((val >> 16) & 0xFF);
+    buf->data[offset + 3] = (uint8_t)((val >> 24) & 0xFF);
+}
+
+void sph_buffer_append(sph_byte_buffer* buf, const uint8_t* src, int64_t len) {
+    if (!buf || !src || len <= 0) return;
+    int64_t needed = buf->len + len;
+    if (needed > buf->cap) {
+        int64_t new_cap = buf->cap * 2;
+        if (new_cap < needed) new_cap = needed;
+        uint8_t* new_data = (uint8_t*)realloc(buf->data, (size_t)new_cap);
+        if (!new_data) return;
+        buf->data = new_data;
+        buf->cap = new_cap;
+    }
+    memcpy(buf->data + buf->len, src, (size_t)len);
+    buf->len += len;
+}
+
+void sph_buffer_write(sph_byte_buffer* buf, int64_t offset, const void* src, int64_t count) {
+    if (!buf || !src || count <= 0 || offset < 0) return;
+    int64_t needed = offset + count;
+    if (needed > buf->cap) {
+        int64_t new_cap = buf->cap * 2;
+        if (new_cap < needed) new_cap = needed;
+        uint8_t* new_data = (uint8_t*)realloc(buf->data, (size_t)new_cap);
+        if (!new_data) return;
+        buf->data = new_data;
+        buf->cap = new_cap;
+    }
+    memcpy(buf->data + offset, src, (size_t)count);
+    if (needed > buf->len) {
+        buf->len = needed;
+    }
+}
+
+void sph_buffer_read(const sph_byte_buffer* buf, int64_t offset, void* dst, int64_t count) {
+    if (!buf || !buf->data || !dst || count <= 0 || offset < 0 || offset >= buf->len) return;
+    int64_t avail = buf->len - offset;
+    int64_t to_read = count < avail ? count : avail;
+    memcpy(dst, buf->data + offset, (size_t)to_read);
+}
+
+sph_byte_buffer* sph_buffer_slice(const sph_byte_buffer* buf, int64_t start, int64_t len) {
+    if (!buf || !buf->data || start < 0 || len <= 0 || start >= buf->len) {
+        return sph_buffer_alloc(0);
+    }
+    if (start + len > buf->len) {
+        len = buf->len - start;
+    }
+    return sph_buffer_from_raw(buf->data + start, len);
+}
+
+void sph_buffer_free(sph_byte_buffer* buf) {
+    if (!buf) return;
+    if (buf->data) {
+        free(buf->data);
+        buf->data = NULL;
+    }
+    free(buf);
+}
+
 
 

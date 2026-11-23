@@ -636,5 +636,18 @@ private:
     std::unique_ptr<ExprAST> m_expr;
 };
 
+class SizeofExpr : public ExprAST {
+public:
+    SizeofExpr(std::string typeName, SourceSpan span)
+        : ExprAST(span), m_typeName(std::move(typeName)) {}
+
+    [[nodiscard]] const std::string& getTypeName() const noexcept { return m_typeName; }
+
+    void accept(ASTVisitor& visitor) override { visitor.visit(*this); }
+
+private:
+    std::string m_typeName;
+};
+
 } // namespace sph
 

@@ -565,7 +565,15 @@ void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunct
             const auto& loadInst = static_cast<const LoadInst&>(inst);
             bool isAlloca = loadInst.getPointer()->isInstruction() &&
                 static_cast<const IRInstruction*>(loadInst.getPointer().get())->getOpcode() == IROpcode::Alloca;
-            if (isAlloca) {
+            if (loadInst.getType()->isStruct() &&
+                std::static_pointer_cast<StructType>(loadInst.getType())->getSize() > 8) {
+                if (isAlloca) {
+                    int32_t ptrOffset = getSlotOffset(*loadInst.getPointer());
+                    m_out << "  lea rax, [rbp - " << ptrOffset << "]\n";
+                } else {
+                    loadValueToReg(*loadInst.getPointer(), "rax");
+                }
+            } else if (isAlloca) {
                 int32_t ptrOffset = getSlotOffset(*loadInst.getPointer());
                 m_out << "  mov rax, [rbp - " << ptrOffset << "]\n";
             } else {

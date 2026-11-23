@@ -7,7 +7,7 @@
 <p align="center">
   <a href="https://github.com/Moodlood/santientphp/actions/workflows/ci.yml"><img src="https://github.com/Moodlood/santientphp/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="https://github.com/Moodlood/santientphp/releases/latest"><img src="https://img.shields.io/github/v/release/Moodlood/santientphp?logo=github&color=blue" alt="Latest Release" /></a>
-  <a href="tests/"><img src="https://img.shields.io/badge/tests-1038%20passed%20(100%25)-brightgreen.svg" alt="Tests" /></a>
+  <a href="tests/"><img src="https://img.shields.io/badge/tests-1053%20passed%20(100%25)-brightgreen.svg" alt="Tests" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
   <a href="compiler/"><img src="https://img.shields.io/badge/compiler-C%2B%2B20-00599C?logo=c%2B%2B" alt="C++20" /></a>
   <a href="docs/compiler/architecture.md"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey.svg" alt="Platform" /></a>
@@ -23,15 +23,17 @@
 
 - **Triple-Mode Programming Model**:
   - **Static Mode**: Deterministic static typing with value structs, enums, OOP classes, interfaces, and generics.
-  - **Systems Mode**: Raw pointers, memory layout controls, arenas, and direct C FFI integration.
+  - **Systems Mode & Bare-Metal FFI**: C-compatible structs (`#[repr(C)] struct`), C-compatible unions (`#[repr(C)] union`), typed raw pointers (`*T`, `ptr<T>`), compile-time `sizeof(T)`, Win64 FFI passing, native C callback function pointers (`&fn_name`), external library flags (`-l<lib>`, `-L<dir>`), and null-byte safe binary buffers (`ByteBuffer`).
   - **Dynamic PHP Compatibility Mode**: First-class `dynamic` values (`sph_value`), associative arrays (`sph_array`), loose coercions, PHP object models, WinHTTP cURL, and SQLite PDO.
 - **Native GUI & Hardware-Accelerated Rendering**:
   - **Native OS Controls**: Direct Win32 bindings (buttons, text inputs, progress bars, dialogs, ComCtl32 v6, Per-Monitor High-DPI V2) with suppressed console window (`--gui`).
   - **SIMD Framebuffer Canvas**: 32-bit RGBA pixel surface accelerated by 128-bit SIMD vectors (SSE2/AVX) and OpenGL context support.
   - **Async EventLoop Fusion**: Non-blocking message pump integrated with cooperative Fiber coroutines and thread-safe UI task queues (`sph_gui_post_to_main`).
-- **Hardware Concurrency & Async**:
-  - Native OS threading (`Thread::spawn`, `Thread::sleep_ms`) and hardware atomic primitives (`AtomicI32`, `AtomicI64`, `AtomicBool`).
+- **Hardware Concurrency & Networking**:
+  - Native OS multi-threading (`Thread::spawn`, `thread_spawn`, `thread_join`), mutual exclusion locks (`Mutex`), and hardware atomic primitives (`AtomicI32`, `AtomicI64`, `AtomicBool`).
   - Cooperative coroutines (`async fn`, `await`, `Promise<T>`) backed by an integrated event loop runtime.
+  - Built-in zero-dependency RFC 6455 WebSocket client with masking, ping/pong heartbeats, and SHA-1/Base64 handshake.
+  - Embedded non-blocking HTTP & WebSocket server engine with `WSAPoll` socket multiplexing.
 - **128-bit SIMD Acceleration**:
   - Hardware vector types (`f32x4`, `i32x4`, `f64x2`, `i64x2`) utilizing x86_64 SSE/AVX instruction sets alongside portable scalar fallbacks.
 - **Dual Native Code-Generation & Advanced Optimizations**:
@@ -199,7 +201,7 @@ sphc build hello.sph -O3 -o hello.exe
 
 | Command | Description |
 | :--- | :--- |
-| `sphc build [file.sph]` | Compiles source file to a native executable or object (`--gui` for windowed GUI) |
+| `sphc build [file.sph]` | Compiles source file to a native executable or object (`-l<lib>`, `-L<dir>`, `--gui` for windowed GUI) |
 | `sphc run [file.sph]` | Compiles and executes in one step |
 | `sphc check [file.sph]` | Validates syntax and semantic types without code generation |
 | `sphc test [file.sph]` | Executes unit tests or runs the complete test suite |
@@ -278,7 +280,68 @@ let native_count: i32 = intval($count);
 let casted: i32 = ($count as i32);
 ```
 
-### 6. Native Standard Library (`stdlib/`)
+### 6. Systems FFI, C Structs, Unions & Sizing
+```php
+<?php
+#[repr(C)]
+struct MOUSEINPUT {
+    dx: i32,
+    dy: i32,
+    mouseData: u32,
+    dwFlags: u32,
+    time: u32,
+    dwExtraInfo: usize,
+}
+
+#[repr(C)]
+union InputPayload {
+    mi: MOUSEINPUT,
+}
+
+#[repr(C)]
+struct INPUT {
+    type: u32,
+    payload: InputPayload,
+}
+
+extern "C" fn SendInput(cInputs: u32, pInputs: *INPUT, cbSize: i32): u32;
+
+fn move_mouse(x: i32, y: i32): bool {
+    let mi = MOUSEINPUT { dx: x, dy: y, mouseData: 0 as u32, dwFlags: 0x8001 as u32, time: 0 as u32, dwExtraInfo: 0 as usize };
+    let payload = InputPayload { mi: mi };
+    mut inp = INPUT { type: 0 as u32, payload: payload };
+    return SendInput(1 as u32, &inp, sizeof(INPUT) as i32) == 1 as u32;
+}
+```
+
+### 7. Binary Buffers (`ByteBuffer`) & Native Concurrency
+```php
+<?php
+import "std/buffer.sph";
+import "std/thread.sph";
+
+fn worker(arg: *u8): *u8 {
+    let buf = buffer_alloc(1024);
+    buffer_set_u8(buf, 0, 0x42 as u8);
+    buffer_set_u32_le(buf, 4, 1000 as u32);
+    buffer_free(buf);
+    unsafe { return 0 as *u8; }
+}
+
+fn main(): i32 {
+    let m = mutex_create();
+    mutex_lock(m);
+    unsafe {
+        let t = thread_spawn(&worker as *u8, 0 as *u8);
+        mutex_unlock(m);
+        thread_join(t);
+    }
+    mutex_destroy(m);
+    return 0;
+}
+```
+
+### 8. Native Standard Library (`stdlib/`)
 ```php
 <?php
 import "std/core.sph";
@@ -340,23 +403,27 @@ santientphp/
 │   ├── target/            # Target triples and platform abstractions
 │   └── types/             # Static and dynamic type system
 ├── runtime/               # Modular C runtime libraries & Platform Abstraction Layer
-│   ├── core/              # Memory allocators, arenas, Rc, strings, vectors, SIMD
+│   ├── core/              # Memory allocators, arenas, Rc, strings, vectors, SIMD, ByteBuffer
 │   ├── gui/               # Win32 native controls, SIMD RGBA canvas, event loop fusion
-│   ├── async/             # Atomics, threads, fibers, promises, and event loop
+│   ├── async/             # Atomics, OS threads, mutexes, fibers, promises, and event loop
+│   ├── net/               # Zero-dependency RFC 6455 WebSocket engine, framing, SHA-1
 │   ├── compat/            # Dynamic sph_value, PHP arrays, PDO SQLite, cURL
 │   └── pal.h              # Unified cross-platform OS abstraction (Win32 & POSIX)
 ├── stdlib/                # Normative native standard library (.sph modules)
 │   ├── core.sph           # Math utilities, assertions, process exit
+│   ├── buffer.sph         # Binary buffer manipulation (ByteBuffer)
+│   ├── thread.sph         # OS multi-threading & Mutex synchronization
 │   ├── io.sph             # Formatted console I/O
 │   ├── fs.sph             # Filesystem operations and file handles
 │   ├── collections.sph    # KeyValuePair, IntRange, range iterators
 │   ├── async.sph          # Event loop yield, sleep_ms
-│   └── net.sph            # HTTP networking primitives
+│   ├── net.sph            # HTTP & RFC 6455 WebSocket client primitives
+│   └── web.sph            # Embedded HTTP & WebSocket server engine
 ├── editors/               # IDE integrations
 │   └── vscode/            # Official VS Code extension and LSP client
 ├── docs/                  # Language specification (1.0 Freeze), architecture, tutorials
 ├── examples/              # Positive language examples and feature demonstrations
-├── tests/                 # 1,038 automated unit and integration tests (100% pass)
+├── tests/                 # 1,053 automated unit and integration tests (100% pass)
 ├── tools/                 # Compiler CLI and release packaging
 │   ├── benchmarks/        # Automated multi-language benchmark suite runner
 │   ├── sphc/              # Main compiler CLI driver

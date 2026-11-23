@@ -122,9 +122,22 @@ std::shared_ptr<Type> SemanticAnalyzer::resolveType(const std::string& name) {
         }
     }
 
-    // Check if pointer type: e.g. *i32, *Point, *void
+    // Check if pointer type: e.g. *i32, *Point, *void, ptr<Point>, Pointer<void>
     if (name.size() >= 2 && name.front() == '*') {
         std::string inner = name.substr(1);
+        while (!inner.empty() && (inner.front() == ' ' || inner.front() == '\t')) inner.erase(0, 1);
+        while (!inner.empty() && (inner.back() == ' ' || inner.back() == '\t')) inner.pop_back();
+        auto pointeeType = resolveType(inner);
+        if (pointeeType) {
+            return PointerType::get(pointeeType);
+        }
+        return nullptr;
+    }
+
+    if ((name.size() >= 5 && name.substr(0, 4) == "ptr<" && name.back() == '>') ||
+        (name.size() >= 9 && name.substr(0, 8) == "Pointer<" && name.back() == '>')) {
+        size_t prefixLen = (name.front() == 'p') ? 4 : 8;
+        std::string inner = name.substr(prefixLen, name.size() - prefixLen - 1);
         while (!inner.empty() && (inner.front() == ' ' || inner.front() == '\t')) inner.erase(0, 1);
         while (!inner.empty() && (inner.back() == ' ' || inner.back() == '\t')) inner.pop_back();
         auto pointeeType = resolveType(inner);
@@ -571,7 +584,12 @@ bool SemanticAnalyzer::analyze(ProgramAST& program) {
             members.push_back(StructMember{field.name, fType, 0});
         }
 
-        auto structType = StructType::get(st->getName(), std::move(members), st->isPacked(), st->getAttribute().explicitAlignment);
+        std::shared_ptr<StructType> structType;
+        if (st->isUnion()) {
+            structType = UnionType::get(st->getName(), std::move(members));
+        } else {
+            structType = StructType::get(st->getName(), std::move(members), st->isPacked(), st->getAttribute().explicitAlignment);
+        }
         if (auto* existingSym = m_globalScope.lookup(st->getName())) {
             existingSym->type = structType;
         } else {
@@ -710,7 +728,7 @@ bool SemanticAnalyzer::analyze(ProgramAST& program) {
             } else if (fn->isExtern() && !pType->isNumeric() && !pType->isBoolean() &&
                        !pType->isString() && !pType->isPointer()) {
                 error(param.span, "parameter '" + param.name + "' has type '" + pType->toString() +
-                      "' which is not FFI-compatible; use primitive types or raw pointers '*T'");
+                      "' which is not FFI-compatible; use primitive types, raw pointers '*T', or 'ptr<T>'");
             }
             paramTypes.push_back(pType);
         }
@@ -718,7 +736,7 @@ bool SemanticAnalyzer::analyze(ProgramAST& program) {
         if (fn->isExtern() && !retType->isNumeric() && !retType->isBoolean() &&
             !retType->isString() && !retType->isPointer() && !retType->isVoid()) {
             error(fn->getSpan(), "return type '" + retType->toString() +
-                  "' is not FFI-compatible; use primitive types, raw pointers '*T', or 'void'");
+                  "' is not FFI-compatible; use primitive types, raw pointers '*T', 'ptr<T>', or 'void'");
         }
 
         auto fnType = FunctionType::get(retType, std::move(paramTypes));
@@ -1418,14 +1436,14 @@ void SemanticAnalyzer::visit(StructInitExpr& node) {
     }
 
     auto structTypePtr = resolveType(node.getStructName());
-    if (!structTypePtr || (!structTypePtr->isStruct() && !structTypePtr->isClass())) {
+    if (!structTypePtr || (!structTypePtr->isStruct() && !structTypePtr->isClass() && !structTypePtr->isUnion())) {
         error(node.getSpan(), "unknown struct or class '" + node.getStructName() + "'");
         node.setInferredType(Type::getError());
         return;
     }
 
     auto structType = std::static_pointer_cast<StructType>(structTypePtr);
-    std::string typeLabel = structTypePtr->isClass() ? "class '" : "struct '";
+    std::string typeLabel = structTypePtr->isClass() ? "class '" : (structTypePtr->isUnion() ? "union '" : "struct '");
     std::unordered_map<std::string, const StructMember*> memberMap;
     for (const auto& member : structType->getMembers()) {
         memberMap[member.name] = &member;
@@ -1454,9 +1472,15 @@ void SemanticAnalyzer::visit(StructInitExpr& node) {
         }
     }
 
-    for (const auto& member : structType->getMembers()) {
-        if (!initializedFields.count(member.name)) {
-            error(node.getSpan(), "missing field '" + member.name + "' in initialization of " + typeLabel + node.getStructName() + "'");
+    if (!structTypePtr->isUnion()) {
+        for (const auto& member : structType->getMembers()) {
+            if (!initializedFields.count(member.name)) {
+                error(node.getSpan(), "missing field '" + member.name + "' in initialization of " + typeLabel + node.getStructName() + "'");
+            }
+        }
+    } else {
+        if (initializedFields.empty()) {
+            error(node.getSpan(), "union '" + node.getStructName() + "' requires at least one field initialized");
         }
     }
 
@@ -3511,6 +3535,16 @@ void SemanticAnalyzer::visit(MatchExpr& node) {
     }
 
     node.setInferredType(resultType ? resultType : Type::getVoid());
+}
+
+void SemanticAnalyzer::visit(SizeofExpr& node) {
+    auto t = resolveType(node.getTypeName());
+    if (!t || t->isError()) {
+        error(node.getSpan(), "unknown type '" + node.getTypeName() + "' in sizeof");
+        node.setInferredType(Type::getError());
+        return;
+    }
+    node.setInferredType(Type::getI64());
 }
 
 } // namespace sph

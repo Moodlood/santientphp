@@ -121,6 +121,8 @@ The `PassManager` executes fixed-point iterative passes over SPHIR:
 - Implements Win64 calling convention (`rcx, rdx, r8, r9`, 32-byte shadow space) on Windows and System V AMD64 ABI on Linux.
 - **Compare-Branch Fusion**: Fuses comparisons directly with conditional jumps (`cmp` + `jcc`), bypassing intermediate boolean register flags (`setcc`), zero-extensions, and stack spill cycles.
 - **Assembly Peephole Optimizer**: Second-stage pass scanning emitted basic blocks to eliminate redundant store-followed-by-load cycles (`mov [rbp - X], reg` followed by `mov reg, [rbp - X]`) and dead 64-bit self-moves.
+- **Address-Of Function Pointers**: Emits RIP-relative effective address loads (`lea reg, [rip + fn_name]`) for function pointers (`&fn_name`), allowing SantientPHP functions to be passed directly as C callbacks (e.g. Win32 `WNDPROC`, `LPTHREAD_START_ROUTINE`).
+- **C Struct & Union Layout**: Computes C-compatible alignments and offsets; unions map every member to offset 0, and `sizeof(T)` lowers to immediate constants.
 - Emits DWARF line tables (`.file`, `.loc`) and GNU CFI directives (`.cfi_startproc`, `.cfi_def_cfa_offset`, `.cfi_endproc`) for full GDB call stack backtracing.
 
 ### LLVM IR Generator (`LLVMEmitter`)
@@ -129,13 +131,17 @@ The `PassManager` executes fixed-point iterative passes over SPHIR:
 ### Linker (`Linker`)
 - Discovers host tools (`gcc`, `clang`, `ld`) and target cross-compilers (`x86_64-linux-gnu-gcc`, `aarch64-linux-gnu-gcc`).
 - In non-debug builds, passes `-s` (symbol stripping) and `-pipe` (in-memory compiler piping) to produce compact binaries (~226 KB).
+- Forwards user-specified external library link flags (`-l<lib>`, e.g. `-luser32 -lgdi32 -lws2_32`) and library directories (`-L<dir>`).
 - Links against the modular runtime library `libsph_runtime.a` with automatic retry logic for Windows file locking.
 
 ---
 
-## 6. Runtime Performance Layer (`runtime/core/`)
+## 6. Runtime Performance Layer (`runtime/core/`, `runtime/net/`, `runtime/async/`)
 
 - **Fast Slab Allocator**: Thread-local slab and freelist memory recycling for objects $\le 64$ bytes, eliminating global heap lock contention for high-frequency allocations.
 - **Amortized $O(1)$ String Appends**: Geometric buffer capacity doubling (`cap *= 2`) tracked via thread-local string caches, eliminating quadratic reallocation bottlenecks in string-heavy loops.
+- **Binary Buffer (`ByteBuffer`)**: Null-byte safe dynamic byte buffer type (`sph_byte_buffer`) for binary data manipulation without string truncation at `0x00` bytes.
+- **RFC 6455 WebSocket Engine**: Zero-dependency RFC 6455 WebSocket client, framing parser, ping/pong heartbeats, and SHA-1/Base64 handshake calculation (`runtime/net/websocket.c`).
+- **Native OS Threading & Mutexes**: Win32 (`CreateThread`, `CRITICAL_SECTION`) and POSIX (`pthread_create`, `pthread_mutex_t`) hardware concurrency.
 - **Stackful Fibers & Event Loop**: Native Windows Fiber / POSIX context switching integrated with cooperative coroutines (`async fn`, `await`).
 

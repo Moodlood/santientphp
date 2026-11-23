@@ -55,6 +55,7 @@ public:
     void visit(AwaitExpr& node) override;
     void visit(MatchExpr& node) override;
     void visit(TryPropagateExpr& node) override;
+    void visit(SizeofExpr& node) override;
 
     void visit(VarDeclStmt& node) override;
     void visit(ReturnStmt& node) override;

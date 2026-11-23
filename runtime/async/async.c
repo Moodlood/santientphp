@@ -189,6 +189,33 @@ void sph_thread_sleep_ms(int32_t ms) {
     }
 }
 
+typedef struct sph_mutex {
+    CRITICAL_SECTION cs;
+} sph_mutex;
+
+void* sph_mutex_create(void) {
+    sph_mutex* m = (sph_mutex*)malloc(sizeof(sph_mutex));
+    if (!m) return NULL;
+    InitializeCriticalSection(&m->cs);
+    return (void*)m;
+}
+
+void sph_mutex_lock(void* mutex_ptr) {
+    if (!mutex_ptr) return;
+    EnterCriticalSection(&((sph_mutex*)mutex_ptr)->cs);
+}
+
+void sph_mutex_unlock(void* mutex_ptr) {
+    if (!mutex_ptr) return;
+    LeaveCriticalSection(&((sph_mutex*)mutex_ptr)->cs);
+}
+
+void sph_mutex_destroy(void* mutex_ptr) {
+    if (!mutex_ptr) return;
+    DeleteCriticalSection(&((sph_mutex*)mutex_ptr)->cs);
+    free(mutex_ptr);
+}
+
 #else
 
 static void* sph_posix_thread_trampoline(void* param) {
@@ -237,6 +264,33 @@ void sph_thread_sleep_ms(int32_t ms) {
         ts.tv_nsec = (ms % 1000) * 1000000L;
         nanosleep(&ts, NULL);
     }
+}
+
+typedef struct sph_mutex {
+    pthread_mutex_t mtx;
+} sph_mutex;
+
+void* sph_mutex_create(void) {
+    sph_mutex* m = (sph_mutex*)malloc(sizeof(sph_mutex));
+    if (!m) return NULL;
+    pthread_mutex_init(&m->mtx, NULL);
+    return (void*)m;
+}
+
+void sph_mutex_lock(void* mutex_ptr) {
+    if (!mutex_ptr) return;
+    pthread_mutex_lock(&((sph_mutex*)mutex_ptr)->mtx);
+}
+
+void sph_mutex_unlock(void* mutex_ptr) {
+    if (!mutex_ptr) return;
+    pthread_mutex_unlock(&((sph_mutex*)mutex_ptr)->mtx);
+}
+
+void sph_mutex_destroy(void* mutex_ptr) {
+    if (!mutex_ptr) return;
+    pthread_mutex_destroy(&((sph_mutex*)mutex_ptr)->mtx);
+    free(mutex_ptr);
 }
 
 #endif
