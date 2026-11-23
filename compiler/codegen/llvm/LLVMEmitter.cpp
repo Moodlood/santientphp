@@ -323,6 +323,18 @@ void LLVMEmitter::emitInstruction(const IRInstruction& inst) {
                   << formatValue(*addrInst.getTarget()) << ", i32 0";
             break;
         }
+        case IROpcode::Phi: {
+            const auto& phi = static_cast<const PhiInst&>(inst);
+            m_out << formatValue(phi) << " = phi " << mapType(*phi.getType()) << " ";
+            const auto& incoming = phi.getIncoming();
+            for (size_t i = 0; i < incoming.size(); ++i) {
+                if (i > 0) m_out << ", ";
+                std::string bbName = incoming[i].first ? incoming[i].first->getName() : "entry";
+                m_out << "[ " << (incoming[i].second ? formatValue(*incoming[i].second) : "0")
+                      << ", %" << bbName << " ]";
+            }
+            break;
+        }
         case IROpcode::Add:
         case IROpcode::Sub:
         case IROpcode::Mul:

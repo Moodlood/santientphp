@@ -1,7 +1,8 @@
 # SantientPHP (SPH) 1.0 Formal Language Specification & ABI Freeze
 
 **Document Status:** Normative Reference Specification (Milestone 4.3 Baseline)  
-**Specification Version:** 1.0.0-rc1  
+**Specification Version:** 1.0.0-rc1 (Language Specification 1.0 Freeze)  
+**Compiler Implementation:** `sphc` v0.1.0  
 **Target Architectures:** Windows x86_64 (`x86_64-pc-windows-gnu`), Linux x86_64 (`x86_64-unknown-linux-gnu`), macOS ARM64 (`aarch64-apple-darwin`)  
 **Standard Library Version:** 1.0.0  
 **Compiler:** `sphc`  
@@ -12,6 +13,9 @@
 ## 1. Introduction & Conformance Targets
 
 SantientPHP (SPH) is a dual-nature systems and application programming language designed to unite the ergonomic expressiveness of PHP with the deterministic safety, low overhead, and direct compilation of modern systems languages (C++, Rust, Zig).
+
+> [!NOTE]
+> **Specification Freeze vs. Implementation Release Version**: The SantientPHP grammar, syntax rules, and type system are frozen at **Language Specification 1.0** to guarantee semantic stability and code portability. The reference compiler implementation (`sphc`) and accompanying toolchain are versioned at release **v0.1.0**, reflecting ongoing development on backend optimization passes, platform backends, and developer tooling.
 
 ### 1.1 Conformance Classes
 A conforming SantientPHP implementation consists of:

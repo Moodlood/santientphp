@@ -24,6 +24,8 @@ def get_binary_size_kb(path):
     return 0
 
 def measure_command(cmd, stdin_data=None, iterations=3):
+    # Warmup run to allow OS page-in and bypass cold-start executable scanning jitter
+    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     total_time = 0.0
     for _ in range(iterations):
         start = time.perf_counter()
@@ -225,11 +227,11 @@ def run_benchmarks():
     with open(results_file, "w") as f:
         json.dump(results, f, indent=2)
 
-    print("\n" + "=" * 98)
+    print("\n" + "=" * 115)
     print(" SUMMARY TABLE (Execution Time in milliseconds, lower is faster)")
-    print("=" * 98)
-    print(f"{'Benchmark':<24} | {'SantientPHP':<12} | {'C (GCC -O3)':<12} | {'Rust (-O3)':<12} | {'Go':<10} | {'PHP 8.2':<10} | {'SPH vs PHP'}")
-    print("-" * 98)
+    print("=" * 115)
+    print(f"{'Benchmark':<24} | {'SantientPHP':<12} | {'C (GCC -O3)':<12} | {'Rust (-O3)':<12} | {'Go':<10} | {'PHP 8.2':<10} | {'SPH vs PHP':<12} | {'SPH vs Rust'}")
+    print("-" * 115)
 
     for r in results:
         sph_time = r["sphc"].get("exec_ms", "N/A")
@@ -238,14 +240,23 @@ def run_benchmarks():
         go_time = r["go"].get("exec_ms", "N/A")
         php_time = r["php"].get("exec_ms", "N/A")
 
-        speedup = ""
+        speedup_php = ""
         if isinstance(sph_time, (int, float)) and isinstance(php_time, (int, float)) and sph_time > 0:
             ratio = round(php_time / sph_time, 1)
-            speedup = f"{ratio}x faster"
-        elif isinstance(sph_time, (int, float)) and isinstance(php_time, (int, float)):
-            speedup = "Equal"
+            speedup_php = f"{ratio}x faster" if ratio >= 1.0 else f"{round(sph_time / php_time, 1)}x slower"
         else:
-            speedup = "-"
+            speedup_php = "-"
+
+        speedup_rust = ""
+        if isinstance(sph_time, (int, float)) and isinstance(rs_time, (int, float)) and sph_time > 0 and rs_time > 0:
+            if rs_time >= sph_time:
+                ratio = round(rs_time / sph_time, 1)
+                speedup_rust = f"{ratio}x faster"
+            else:
+                ratio = round(sph_time / rs_time, 1)
+                speedup_rust = f"{ratio}x slower"
+        else:
+            speedup_rust = "-"
 
         sph_str = f"{sph_time} ms" if isinstance(sph_time, (int, float)) else str(sph_time)
         c_str = f"{c_time} ms" if isinstance(c_time, (int, float)) else str(c_time)
@@ -253,9 +264,9 @@ def run_benchmarks():
         go_str = f"{go_time} ms" if isinstance(go_time, (int, float)) else str(go_time)
         php_str = f"{php_time} ms" if isinstance(php_time, (int, float)) else str(php_time)
 
-        print(f"{r['name']:<24} | {sph_str:<12} | {c_str:<12} | {rs_str:<12} | {go_str:<10} | {php_str:<10} | {speedup}")
+        print(f"{r['name']:<24} | {sph_str:<12} | {c_str:<12} | {rs_str:<12} | {go_str:<10} | {php_str:<10} | {speedup_php:<12} | {speedup_rust}")
 
-    print("=" * 98)
+    print("=" * 115)
     print(f"Reproducible results saved to: {results_file}")
 
 if __name__ == "__main__":

@@ -48,6 +48,7 @@ bool IRVerifier::verify(const IRBasicBlock& bb, const IRFunction& fn, std::vecto
         ok = false;
     }
 
+    bool seenNonPhi = false;
     for (size_t i = 0; i < instructions.size(); ++i) {
         const auto& inst = instructions[i];
 
@@ -55,6 +56,15 @@ bool IRVerifier::verify(const IRBasicBlock& bb, const IRFunction& fn, std::vecto
         if (inst->isTerminator() && i != instructions.size() - 1) {
             errors.push_back("terminator instruction appears before the end of block '" + bb.getName() + "'");
             ok = false;
+        }
+
+        if (inst->getOpcode() == IROpcode::Phi) {
+            if (seenNonPhi) {
+                errors.push_back("phi instruction appears after non-phi instruction in block '" + bb.getName() + "'");
+                ok = false;
+            }
+        } else {
+            seenNonPhi = true;
         }
 
         // Validate specific instructions

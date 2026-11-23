@@ -3,27 +3,27 @@
     "name": "Fibonacci (N=35)",
     "category": "CPU / Recursion",
     "sphc": {
-      "compile_ms": 1738.72,
-      "exec_ms": 356.88,
-      "bin_size_kb": 238.6
+      "compile_ms": 1649.97,
+      "exec_ms": 278.51,
+      "bin_size_kb": 276.3
     },
     "gcc": {
-      "compile_ms": 1307.87,
-      "exec_ms": 130.18,
+      "compile_ms": 1608.9,
+      "exec_ms": 77.78,
       "bin_size_kb": 58.0
     },
     "rust": {
-      "compile_ms": 12798.18,
-      "exec_ms": 325.99,
+      "compile_ms": 1783.46,
+      "exec_ms": 113.09,
       "bin_size_kb": 4946.0
     },
     "go": {
-      "compile_ms": 18876.24,
-      "exec_ms": 271.63,
+      "compile_ms": 2522.72,
+      "exec_ms": 120.65,
       "bin_size_kb": 2436.0
     },
     "php": {
-      "exec_ms": 9488.43,
+      "exec_ms": 9392.49,
       "type": "interpreted / JIT"
     }
   },
@@ -31,27 +31,27 @@
     "name": "Matrix Multi (200x200)",
     "category": "Arithmetic / Loops",
     "sphc": {
-      "compile_ms": 2149.71,
-      "exec_ms": 245.45,
-      "bin_size_kb": 239.4
+      "compile_ms": 2387.07,
+      "exec_ms": 185.61,
+      "bin_size_kb": 277.2
     },
     "gcc": {
-      "compile_ms": 1486.27,
-      "exec_ms": 63.69,
+      "compile_ms": 1745.63,
+      "exec_ms": 27.72,
       "bin_size_kb": 57.5
     },
     "rust": {
-      "compile_ms": 2272.96,
-      "exec_ms": 254.65,
+      "compile_ms": 2131.97,
+      "exec_ms": 49.57,
       "bin_size_kb": 4946.0
     },
     "go": {
-      "compile_ms": 2339.81,
-      "exec_ms": 48.49,
+      "compile_ms": 2957.68,
+      "exec_ms": 96.79,
       "bin_size_kb": 2435.5
     },
     "php": {
-      "exec_ms": 1737.84,
+      "exec_ms": 2225.66,
       "type": "interpreted / JIT"
     }
   },
@@ -59,27 +59,27 @@
     "name": "String Concat (50k)",
     "category": "String Manipulation",
     "sphc": {
-      "compile_ms": 1837.9,
-      "exec_ms": 132.17,
-      "bin_size_kb": 238.6
+      "compile_ms": 2347.48,
+      "exec_ms": 151.73,
+      "bin_size_kb": 276.3
     },
     "gcc": {
-      "compile_ms": 1266.68,
-      "exec_ms": 61.98,
+      "compile_ms": 1596.61,
+      "exec_ms": 49.06,
       "bin_size_kb": 57.6
     },
     "rust": {
-      "compile_ms": 2524.06,
-      "exec_ms": 232.92,
+      "compile_ms": 2269.05,
+      "exec_ms": 32.03,
       "bin_size_kb": 4946.8
     },
     "go": {
-      "compile_ms": 2211.11,
-      "exec_ms": 37.12,
+      "compile_ms": 2915.78,
+      "exec_ms": 34.5,
       "bin_size_kb": 2437.5
     },
     "php": {
-      "exec_ms": 232.7,
+      "exec_ms": 216.32,
       "type": "interpreted / JIT"
     }
   },
@@ -87,27 +87,27 @@
     "name": "Heap Alloc (1M items)",
     "category": "Memory / Allocator",
     "sphc": {
-      "compile_ms": 2513.85,
-      "exec_ms": 428.57,
-      "bin_size_kb": 239.1
+      "compile_ms": 1811.68,
+      "exec_ms": 61.47,
+      "bin_size_kb": 276.3
     },
     "gcc": {
-      "compile_ms": 1115.69,
-      "exec_ms": 61.17,
+      "compile_ms": 1325.26,
+      "exec_ms": 83.65,
       "bin_size_kb": 57.4
     },
     "rust": {
-      "compile_ms": 2330.57,
-      "exec_ms": 303.91,
+      "compile_ms": 2667.09,
+      "exec_ms": 22.19,
       "bin_size_kb": 4946.0
     },
     "go": {
-      "compile_ms": 1972.94,
-      "exec_ms": 34.51,
+      "compile_ms": 1210.28,
+      "exec_ms": 20.9,
       "bin_size_kb": 2436.0
     },
     "php": {
-      "exec_ms": 1046.3,
+      "exec_ms": 1050.8,
       "type": "interpreted / JIT"
     }
   }

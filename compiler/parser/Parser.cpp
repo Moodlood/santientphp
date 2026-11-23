@@ -1359,17 +1359,23 @@ std::unique_ptr<ExprAST> Parser::parseUnary() {
         match(TokenKind::Amp) || match(TokenKind::Star)) {
         UnaryOp op;
         TokenKind k = previous().kind;
+        bool isMut = false;
         if (k == TokenKind::Minus) op = UnaryOp::Negate;
         else if (k == TokenKind::Exclaim) op = UnaryOp::LogicalNot;
         else if (k == TokenKind::Tilde) op = UnaryOp::BitwiseNot;
-        else if (k == TokenKind::Amp) op = UnaryOp::AddressOf;
+        else if (k == TokenKind::Amp) {
+            op = UnaryOp::AddressOf;
+            if (match(TokenKind::KwMut)) {
+                isMut = true;
+            }
+        }
         else op = UnaryOp::Deref;
 
         SourceLocation startLoc = previous().span.start;
         auto operand = parseUnary();
         if (!operand) return nullptr;
         SourceSpan span(startLoc, operand->getSpan().end);
-        return std::make_unique<UnaryExpr>(op, std::move(operand), span);
+        return std::make_unique<UnaryExpr>(op, std::move(operand), span, isMut);
     }
 
     return parsePostfix();

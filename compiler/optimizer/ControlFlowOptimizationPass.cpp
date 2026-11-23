@@ -16,8 +16,19 @@ bool ControlFlowOptimizationPass::simplifyConditionalBranches(IRFunction& fn) {
         if (lastInst->getOpcode() == IROpcode::CondBr) {
             auto condBr = std::static_pointer_cast<CondBranchInst>(lastInst);
             if (condBr->getTrueTarget() == condBr->getFalseTarget()) {
-                insts.back() = std::make_shared<BranchInst>(condBr->getTrueTarget());
-                changed = true;
+                bool targetHasPhis = false;
+                if (condBr->getTrueTarget()) {
+                    for (const auto& ti : condBr->getTrueTarget()->getInstructions()) {
+                        if (ti && ti->getOpcode() == IROpcode::Phi) {
+                            targetHasPhis = true;
+                            break;
+                        }
+                    }
+                }
+                if (!targetHasPhis) {
+                    insts.back() = std::make_shared<BranchInst>(condBr->getTrueTarget());
+                    changed = true;
+                }
             }
         }
     }
@@ -38,7 +49,16 @@ bool ControlFlowOptimizationPass::bypassTrampolineBlocks(IRFunction& fn) {
         if (insts.size() == 1 && insts[0] && insts[0]->getOpcode() == IROpcode::Br) {
             auto br = std::static_pointer_cast<BranchInst>(insts[0]);
             if (br->getTarget() && br->getTarget() != bb.get()) {
-                trampolines[bb.get()] = br->getTarget();
+                bool targetHasPhis = false;
+                for (const auto& ti : br->getTarget()->getInstructions()) {
+                    if (ti && ti->getOpcode() == IROpcode::Phi) {
+                        targetHasPhis = true;
+                        break;
+                    }
+                }
+                if (!targetHasPhis) {
+                    trampolines[bb.get()] = br->getTarget();
+                }
             }
         }
     }

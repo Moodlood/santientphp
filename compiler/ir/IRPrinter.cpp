@@ -111,6 +111,17 @@ void IRPrinter::print(const IRInstruction& inst) {
                   << " : " << addrInst.getType()->toString();
             break;
         }
+        case IROpcode::Phi: {
+            const auto& phi = static_cast<const PhiInst&>(inst);
+            m_out << formatValue(phi) << " = phi " << phi.getType()->toString() << " ";
+            const auto& incoming = phi.getIncoming();
+            for (size_t i = 0; i < incoming.size(); ++i) {
+                if (i > 0) m_out << ", ";
+                m_out << "[ %" << (incoming[i].first ? incoming[i].first->getName() : "<null>")
+                      << ", " << (incoming[i].second ? formatValue(*incoming[i].second) : "<null>") << " ]";
+            }
+            break;
+        }
         case IROpcode::Add:
         case IROpcode::Sub:
         case IROpcode::Mul:

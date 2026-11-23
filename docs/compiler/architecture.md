@@ -145,3 +145,25 @@ The `PassManager` executes fixed-point iterative passes over SPHIR:
 - **Native OS Threading & Mutexes**: Win32 (`CreateThread`, `CRITICAL_SECTION`) and POSIX (`pthread_create`, `pthread_mutex_t`) hardware concurrency.
 - **Stackful Fibers & Event Loop**: Native Windows Fiber / POSIX context switching integrated with cooperative coroutines (`async fn`, `await`).
 
+---
+
+## 7. Platform Support & Compatibility Matrix
+
+SantientPHP is engineered with a modular Platform Abstraction Layer (`runtime/pal.h`) ensuring consistent behavior across host operating systems while exploiting native OS primitives where available:
+
+| Subsystem / Feature | Windows (`x86_64-pc-windows-gnu`) | Linux (`x86_64-unknown-linux-gnu`) | macOS (`aarch64-apple-darwin`) | Implementation Details |
+| :--- | :--- | :--- | :--- | :--- |
+| **Core Compiler (`sphc`)** | **Tier 1 (Full)** | **Tier 1 (Full)** | Experimental | Direct `X86_64CodeGen` & `LLVMEmitter`; Win64 & SysV AMD64 ABIs |
+| **Systems Mode & Bare-Metal FFI** | **Tier 1 (Full)** | **Tier 1 (Full)** | Experimental | `#[repr(C)]`, typed raw pointers (`*T`), compile-time `sizeof`, DWARF & CFI |
+| **Threading & Mutexes** | **Tier 1 (Full)** | **Tier 1 (Full)** | Experimental | Win32 (`CreateThread`) / POSIX (`pthread_create`) via `runtime/pal.h` |
+| **Hardware Atomics & SIMD** | **Tier 1 (Full)** | **Tier 1 (Full)** | Experimental | `AtomicI32`/`AtomicI64`, 128-bit SSE2/AVX vectors (`f32x4`, `i32x4`) |
+| **Fibers & Cooperative Coroutines** | **Tier 1 (Full)** | **Tier 1 (Full)** | Planned | Windows Fibers / POSIX `ucontext` + Event Loop runtime |
+| **Networking & WebSockets** | **Tier 1 (Full)** | **Tier 1 (Full)** | Experimental | Zero-dependency RFC 6455; `WSAPoll` on Win32, POSIX `poll` on Linux |
+| **Dynamic PHP Subsystem** | **Tier 1 (Full)** | **Tier 1 (Full)** | Experimental | `sph_value`, dynamic associative arrays, PDO SQLite, WinHTTP/cURL |
+| **Native GUI Controls (`--gui`)** | **Tier 1 (Full)** | Headless / Planned | Headless / Planned | Win32 controls (`user32`, `comctl32` v6, Per-Monitor DPI v2); Linux GUI (X11/Wayland) on roadmap |
+| **SIMD Framebuffer Canvas** | **Tier 1 (Full)** | **Tier 1 (Full)** | Experimental | 32-bit RGBA pixel surface, alpha blending, OpenGL context integration |
+| **Toolchain Health (`sphc doctor`)** | **Tier 1 (Full)** | **Tier 1 (Full)** | Experimental | Verifies host GCC/Clang, `ld`, `gdb`, `git`, and platform-specific system runtime libraries |
+
+> [!NOTE]
+> On Linux, console applications, server engines, async fibers, high-performance SIMD, and Systems FFI are fully supported for production deployment. Compiling with `--gui` on Linux runs in headless/framebuffer canvas mode until the native X11/Wayland backend milestone lands.
+

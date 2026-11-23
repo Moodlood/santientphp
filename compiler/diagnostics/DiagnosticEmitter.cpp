@@ -64,6 +64,33 @@ std::string DiagnosticEmitter::format(const Diagnostic& diagnostic) const {
         }
     }
 
+    for (const auto& rel : diagnostic.relatedSpans) {
+        const SourceFile* relFile = m_sourceManager.getFile(rel.span.start.fileId);
+        uint32_t rLine = rel.span.start.line;
+        uint32_t rCol = rel.span.start.column;
+        if (relFile && rLine > 0) {
+            std::string_view rLineContent = relFile->getLineContent(rLine);
+            if (!rLineContent.empty()) {
+                ss << "\n    " << rLineContent << "\n    ";
+                uint32_t prefixSpaces = (rCol > 0) ? (rCol - 1) : 0;
+                for (uint32_t i = 0; i < prefixSpaces && i < rLineContent.size(); ++i) {
+                    ss << (rLineContent[i] == '\t' ? '\t' : ' ');
+                }
+                uint32_t caretCount = 1;
+                if (rel.span.end.line == rLine && rel.span.end.column >= rCol) {
+                    caretCount = (rel.span.end.column - rCol);
+                    if (caretCount == 0) caretCount = 1;
+                }
+                for (uint32_t i = 0; i < caretCount; ++i) {
+                    ss << '-';
+                }
+                if (!rel.label.empty()) {
+                    ss << " " << rel.label;
+                }
+            }
+        }
+    }
+
     if (!diagnostic.hint.empty()) {
         ss << "\n    = help: " << diagnostic.hint;
     }

@@ -19,6 +19,9 @@ enum class IROpcode {
     GetElementPtr,
     AddressOf,
 
+    // SSA Phi
+    Phi,
+
     // Binary Arithmetic & Logic
     Add,
     Sub,
@@ -185,6 +188,57 @@ private:
     size_t m_elementSize = 0;
 };
 
+// SSA Phi Instruction
+class PhiInst : public IRInstruction {
+public:
+    PhiInst(std::shared_ptr<Type> type, std::string name)
+        : IRInstruction(IROpcode::Phi, std::move(type), std::move(name)) {}
+
+    void addIncoming(IRBasicBlock* block, std::shared_ptr<IRValue> val) {
+        m_incoming.emplace_back(block, std::move(val));
+    }
+
+    [[nodiscard]] const std::vector<std::pair<IRBasicBlock*, std::shared_ptr<IRValue>>>& getIncoming() const noexcept {
+        return m_incoming;
+    }
+
+    [[nodiscard]] std::vector<std::pair<IRBasicBlock*, std::shared_ptr<IRValue>>>& getIncomingMutable() noexcept {
+        return m_incoming;
+    }
+
+    [[nodiscard]] std::shared_ptr<IRValue> getIncomingValue(const IRBasicBlock* block) const noexcept {
+        for (const auto& [bb, val] : m_incoming) {
+            if (bb == block) return val;
+        }
+        return nullptr;
+    }
+
+    void setIncomingValue(size_t index, std::shared_ptr<IRValue> val) noexcept {
+        if (index < m_incoming.size()) {
+            m_incoming[index].second = std::move(val);
+        }
+    }
+
+    void setIncomingBlock(size_t index, IRBasicBlock* bb) noexcept {
+        if (index < m_incoming.size()) {
+            m_incoming[index].first = bb;
+        }
+    }
+
+    void removeIncoming(const IRBasicBlock* block) {
+        for (auto it = m_incoming.begin(); it != m_incoming.end(); ) {
+            if (it->first == block) {
+                it = m_incoming.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+private:
+    std::vector<std::pair<IRBasicBlock*, std::shared_ptr<IRValue>>> m_incoming;
+};
+
 // Binary Instruction
 class BinaryInst : public IRInstruction {
 public:
@@ -290,10 +344,14 @@ public:
         if (index < m_args.size()) m_args[index] = std::move(arg);
     }
 
+    [[nodiscard]] bool isTailCall() const noexcept { return m_isTailCall; }
+    void setTailCall(bool tail) noexcept { m_isTailCall = tail; }
+
 private:
     std::string m_callee;
     std::shared_ptr<IRValue> m_calleeVal;
     std::vector<std::shared_ptr<IRValue>> m_args;
+    bool m_isTailCall = false;
 };
 
 // Cast Instruction

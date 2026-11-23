@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 project(SantientPHP
-    VERSION 0.1.0
+    VERSION 0.2.0
     DESCRIPTION "SantientPHP Compiler"
     LANGUAGES C CXX
 )
@@ -131,6 +131,8 @@ add_library(sphc_core STATIC
     compiler/ir/IRVerifier.cpp
     compiler/ir/IRGenerator.hpp
     compiler/ir/IRGenerator.cpp
+    compiler/codegen/x86_64/LinearScanAllocator.hpp
+    compiler/codegen/x86_64/LinearScanAllocator.cpp
     compiler/codegen/x86_64/X86_64CodeGen.hpp
     compiler/codegen/x86_64/X86_64CodeGen.cpp
     compiler/codegen/llvm/LLVMEmitter.hpp
@@ -138,6 +140,14 @@ add_library(sphc_core STATIC
     compiler/codegen/Linker.hpp
     compiler/codegen/Linker.cpp
     compiler/optimizer/Pass.hpp
+    compiler/optimizer/Dominance.hpp
+    compiler/optimizer/Dominance.cpp
+    compiler/optimizer/Mem2RegPass.hpp
+    compiler/optimizer/Mem2RegPass.cpp
+    compiler/optimizer/EscapeAnalysisPass.hpp
+    compiler/optimizer/EscapeAnalysisPass.cpp
+    compiler/optimizer/TailCallPass.hpp
+    compiler/optimizer/TailCallPass.cpp
     compiler/optimizer/ConstantFoldingPass.hpp
     compiler/optimizer/ConstantFoldingPass.cpp
     compiler/optimizer/AlgebraicSimplificationPass.hpp
@@ -239,6 +249,15 @@ add_executable(sph_tests
     tests/optimizer/test_optimizer_exhaustive.cpp
     tests/stdlib/test_stdlib_exhaustive.cpp
     tests/codegen/test_codegen_exhaustive.cpp
+    tests/optimizer/test_dominance_exhaustive.cpp
+    tests/optimizer/test_mem2reg_exhaustive.cpp
+    tests/codegen/test_lsra_exhaustive.cpp
+    tests/optimizer/test_escape_analysis_exhaustive.cpp
+    tests/runtime/test_slab_exhaustive.cpp
+    tests/codegen/test_tco_exhaustive.cpp
+    tests/semantic/test_borrow_checker_nll_exhaustive.cpp
+    tests/runtime/test_net_exhaustive.cpp
+    tests/codegen/test_v02_stress_integration.cpp
 )
 
 target_link_libraries(sph_tests PRIVATE sphc_core sph_runtime sph_runtime_gui)

@@ -178,18 +178,21 @@ private:
 
 class UnaryExpr : public ExprAST {
 public:
-    UnaryExpr(UnaryOp op, std::unique_ptr<ExprAST> operand, SourceSpan span)
-        : ExprAST(span), m_op(op), m_operand(std::move(operand)) {}
+    UnaryExpr(UnaryOp op, std::unique_ptr<ExprAST> operand, SourceSpan span, bool isMut = false)
+        : ExprAST(span), m_op(op), m_operand(std::move(operand)), m_isMut(isMut) {}
 
     [[nodiscard]] UnaryOp getOp() const noexcept { return m_op; }
     [[nodiscard]] const ExprAST& getOperand() const noexcept { return *m_operand; }
     [[nodiscard]] ExprAST& getOperand() noexcept { return *m_operand; }
+    [[nodiscard]] bool isMut() const noexcept { return m_isMut; }
+    void setMut(bool m) noexcept { m_isMut = m; }
 
     void accept(ASTVisitor& visitor) override { visitor.visit(*this); }
 
 private:
     UnaryOp m_op;
     std::unique_ptr<ExprAST> m_operand;
+    bool m_isMut = false;
 };
 
 class CallExpr : public ExprAST {

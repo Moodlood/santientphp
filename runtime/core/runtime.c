@@ -7,3 +7,4 @@
 #include "../async/async.c"
 #include "../compat/compat.c"
 #include "../net/websocket.c"
+#include "../net/epoll_engine.c"

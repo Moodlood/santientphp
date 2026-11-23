@@ -2,6 +2,7 @@
 #include "compiler/ir/IRBasicBlock.hpp"
 #include "compiler/ir/IRFunction.hpp"
 #include "compiler/ir/IRInstruction.hpp"
+#include "compiler/optimizer/Dominance.hpp"
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -16,45 +17,60 @@ struct LoopInfo {
     std::unordered_set<IRBasicBlock*> blocks;
 };
 
-// Find simple natural loops: blocks that jump backwards to a header
-std::vector<LoopInfo> findLoops(IRFunction& fn) {
+// Find natural loops using DominatorTree
+std::vector<LoopInfo> findLoops(IRFunction& fn, const DominatorTree& dt) {
     std::vector<LoopInfo> loops;
     const auto& bbs = fn.getBlocks();
     if (bbs.size() < 2) return loops;
 
-    std::unordered_map<IRBasicBlock*, size_t> blockIndices;
-    for (size_t i = 0; i < bbs.size(); ++i) {
-        blockIndices[bbs[i].get()] = i;
-    }
-
-    for (size_t i = 0; i < bbs.size(); ++i) {
-        auto* bb = bbs[i].get();
-        auto* term = bb->getTerminator();
-        if (!term) continue;
-
-        std::vector<IRBasicBlock*> targets;
-        if (auto* br = dynamic_cast<BranchInst*>(term)) {
-            targets.push_back(br->getTarget());
-        } else if (auto* cbr = dynamic_cast<CondBranchInst*>(term)) {
-            targets.push_back(cbr->getTrueTarget());
-            targets.push_back(cbr->getFalseTarget());
-        }
-
-        for (auto* target : targets) {
-            auto it = blockIndices.find(target);
-            if (it != blockIndices.end() && it->second <= i) {
-                // Back-edge from bbs[i] to bbs[it->second]
-                size_t headerIdx = it->second;
+    for (const auto& bbPtr : bbs) {
+        if (!bbPtr) continue;
+        IRBasicBlock* bb = bbPtr.get();
+        for (IRBasicBlock* succ : getSuccessors(*bb)) {
+            // A back-edge is an edge bb -> succ where succ dominates bb
+            if (dt.dominates(succ, bb)) {
                 LoopInfo loop;
-                loop.header = bbs[headerIdx].get();
-                if (headerIdx > 0) {
-                    loop.preheader = bbs[headerIdx - 1].get();
+                loop.header = succ;
+                loop.blocks.insert(succ);
+
+                // Natural loop blocks: walk predecessors backwards from bb until reaching succ
+                if (bb != succ) {
+                    loop.blocks.insert(bb);
+                    std::vector<IRBasicBlock*> worklist;
+                    worklist.push_back(bb);
+                    while (!worklist.empty()) {
+                        IRBasicBlock* cur = worklist.back();
+                        worklist.pop_back();
+                        for (IRBasicBlock* pred : getPredecessors(*cur, fn)) {
+                            if (loop.blocks.insert(pred).second) {
+                                worklist.push_back(pred);
+                            }
+                        }
+                    }
                 }
 
-                for (size_t b = headerIdx; b <= i; ++b) {
-                    loop.blocks.insert(bbs[b].get());
+                // Determine preheader:
+                // Predecessors of loop.header that are NOT in loop.blocks
+                std::vector<IRBasicBlock*> outsidePreds;
+                for (IRBasicBlock* pred : getPredecessors(*loop.header, fn)) {
+                    if (loop.blocks.find(pred) == loop.blocks.end()) {
+                        outsidePreds.push_back(pred);
+                    }
                 }
-                loops.push_back(loop);
+
+                // A valid dedicated preheader must be unique and branch directly to the header
+                if (outsidePreds.size() == 1) {
+                    IRBasicBlock* p = outsidePreds[0];
+                    if (auto* term = p->getTerminator()) {
+                        if (auto* br = dynamic_cast<BranchInst*>(term)) {
+                            if (br->getTarget() == loop.header) {
+                                loop.preheader = p;
+                            }
+                        }
+                    }
+                }
+
+                loops.push_back(std::move(loop));
             }
         }
     }
@@ -77,7 +93,8 @@ bool isValueDefinedOutsideLoop(const IRValue* val, const std::unordered_set<IRBa
 } // namespace
 
 bool LoopInvariantCodeMotionPass::runOnFunction(IRFunction& fn) {
-    auto loops = findLoops(fn);
+    DominatorTree dt(fn);
+    auto loops = findLoops(fn, dt);
     if (loops.empty()) return false;
 
     bool anyChanged = false;
@@ -101,7 +118,8 @@ bool LoopInvariantCodeMotionPass::runOnFunction(IRFunction& fn) {
                     continue;
                 }
                 auto op = inst->getOpcode();
-                if (op == IROpcode::Call || op == IROpcode::Store || op == IROpcode::Alloca || op == IROpcode::Load) {
+                if (op == IROpcode::Call || op == IROpcode::Store || op == IROpcode::Alloca ||
+                    op == IROpcode::Load || op == IROpcode::Phi) {
                     remaining.push_back(inst);
                     continue;
                 }

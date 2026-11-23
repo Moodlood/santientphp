@@ -111,15 +111,18 @@ Hardware-accelerated vector types utilizing x86_64 SSE/AVX instructions:
 
 ### 6.1 Core Statements & Functions
 - `echo <expr>, ...;`: PHP-compatible printing
-- `print(val)`: Prints value followed by return code 1
+- `print(val)`: Prints value followed by return code 1 (matching standard PHP language behavior)
 - `var_dump(val)`: Detailed type and value debugging dump
 - `count($arr)`: Returns element count of dynamic array
 
-### 6.2 Array Functions
+### 6.2 Array Functions & Semantics
 - `array_push(&$arr, val)`: Appends element to dynamic array
 - `array_pop(&$arr)`: Removes and returns last element
 - `array_keys($arr)`: Returns list of keys
 - `array_values($arr)`: Returns list of values
+
+> [!NOTE]
+> **Dynamic Array Memory Semantics (`$arr`)**: In PHP compatibility mode, dynamic arrays (`sph_array` / `$arr`) are heap-allocated reference structures (`SPH_TYPE_ARRAY`). Variable assignments and function parameters pass a reference pointer to the underlying array (shared reference semantics), unlike PHP's engine-level Copy-on-Write (COW). To create an independent copy, use explicit duplication. In Static Mode, arrays and slices follow deterministic compile-time borrow checking and value semantics.
 
 ### 6.3 String Functions
 - `strlen(str)`: Length in bytes

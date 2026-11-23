@@ -12,7 +12,7 @@ namespace sph {
 class IRFunction {
 public:
     IRFunction(std::string name, std::shared_ptr<Type> returnType,
-               std::vector<std::shared_ptr<IRParameter>> params)
+               std::vector<std::shared_ptr<IRParameter>> params = {})
         : m_name(std::move(name)), m_returnType(std::move(returnType)),
           m_parameters(std::move(params)) {}
 
@@ -36,6 +36,9 @@ public:
     [[nodiscard]] IRBasicBlock* getEntryBlock() const noexcept;
     [[nodiscard]] bool isDeclaration() const noexcept { return m_blocks.empty(); }
 
+    [[nodiscard]] bool isInternal() const noexcept { return m_isInternal; }
+    void setInternal(bool internal) noexcept { m_isInternal = internal; }
+
 private:
     std::string m_name;
     std::shared_ptr<Type> m_returnType;
@@ -43,6 +46,7 @@ private:
     std::vector<std::unique_ptr<IRBasicBlock>> m_blocks;
     size_t m_blockCounter = 0;
     SourceLocation m_loc;
+    bool m_isInternal = false;
 };
 
 } // namespace sph

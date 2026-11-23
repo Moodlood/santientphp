@@ -48,6 +48,8 @@ void sph_println_string(const char* val) {
 
 #define SPH_SLAB_MAGIC 0x53504853 // "SPHS"
 #define SPH_SLAB_PAYLOAD 64
+#define SPH_SLAB_BLOCK_SIZE (sizeof(sph_slab_block) + SPH_SLAB_PAYLOAD)
+#define SPH_SLAB_CHUNK_CAPACITY 65536
 
 typedef struct sph_slab_block {
     uint32_t magic;
@@ -55,25 +57,62 @@ typedef struct sph_slab_block {
     struct sph_slab_block* next;
 } sph_slab_block;
 
+typedef struct sph_slab_chunk {
+    struct sph_slab_chunk* next;
+    uint8_t* bump;
+    uint8_t* limit;
+    uint64_t _pad;
+    uint8_t memory[SPH_SLAB_CHUNK_CAPACITY - sizeof(void*) - 2 * sizeof(uint8_t*) - sizeof(uint64_t)];
+} sph_slab_chunk;
+
+typedef struct sph_slab_thread_cache {
+    sph_slab_block* free_pool;
+    uint8_t* bump;
+    uint8_t* limit;
+    sph_slab_chunk* chunk_head;
+} sph_slab_thread_cache;
+
 #if defined(_MSC_VER)
-static __declspec(thread) sph_slab_block* g_sph_slab_pool = NULL;
+static __declspec(thread) sph_slab_thread_cache g_slab = {0};
 #elif defined(__GNUC__) || defined(__clang__) || defined(__MINGW32__)
-static __thread sph_slab_block* g_sph_slab_pool = NULL;
+static __thread sph_slab_thread_cache g_slab = {0};
 #else
-static sph_slab_block* g_sph_slab_pool = NULL;
+static sph_slab_thread_cache g_slab = {0};
 #endif
 
 void* sph_alloc(int64_t size) {
     if (size <= 0) size = 1;
     if (size <= SPH_SLAB_PAYLOAD) {
-        if (g_sph_slab_pool) {
-            sph_slab_block* blk = g_sph_slab_pool;
-            g_sph_slab_pool = blk->next;
+        if (g_slab.free_pool) {
+            sph_slab_block* blk = g_slab.free_pool;
+            g_slab.free_pool = blk->next;
             blk->magic = SPH_SLAB_MAGIC;
             blk->size = (uint32_t)size;
             return (void*)(blk + 1);
         }
-        sph_slab_block* blk = (sph_slab_block*)malloc(sizeof(sph_slab_block) + SPH_SLAB_PAYLOAD);
+        if (g_slab.bump && (g_slab.bump + SPH_SLAB_BLOCK_SIZE <= g_slab.limit)) {
+            sph_slab_block* blk = (sph_slab_block*)g_slab.bump;
+            g_slab.bump += SPH_SLAB_BLOCK_SIZE;
+            blk->magic = SPH_SLAB_MAGIC;
+            blk->size = (uint32_t)size;
+            return (void*)(blk + 1);
+        }
+        // Allocate a new 64KB chunk
+        sph_slab_chunk* new_chunk = (sph_slab_chunk*)malloc(sizeof(sph_slab_chunk));
+        if (new_chunk) {
+            new_chunk->next = g_slab.chunk_head;
+            g_slab.chunk_head = new_chunk;
+            g_slab.bump = new_chunk->memory;
+            g_slab.limit = new_chunk->memory + sizeof(new_chunk->memory);
+
+            sph_slab_block* blk = (sph_slab_block*)g_slab.bump;
+            g_slab.bump += SPH_SLAB_BLOCK_SIZE;
+            blk->magic = SPH_SLAB_MAGIC;
+            blk->size = (uint32_t)size;
+            return (void*)(blk + 1);
+        }
+        // Fallback
+        sph_slab_block* blk = (sph_slab_block*)malloc(SPH_SLAB_BLOCK_SIZE);
         if (!blk) return NULL;
         blk->magic = SPH_SLAB_MAGIC;
         blk->size = (uint32_t)size;
@@ -87,8 +126,8 @@ void sph_free(void* ptr) {
     sph_slab_block* blk = ((sph_slab_block*)ptr) - 1;
     if (blk->magic == SPH_SLAB_MAGIC) {
         blk->magic = 0;
-        blk->next = g_sph_slab_pool;
-        g_sph_slab_pool = blk;
+        blk->next = g_slab.free_pool;
+        g_slab.free_pool = blk;
         return;
     }
     free(ptr);
@@ -781,13 +820,13 @@ static char* sph_http_request(const char* url, const char* post_body) {
         typedef BOOL (*pfn_WinHttpReadData)(void*, LPVOID, DWORD, LPDWORD);
         typedef BOOL (*pfn_WinHttpCloseHandle)(void*);
 
-        pfn_WinHttpOpen fn_Open = (pfn_WinHttpOpen)GetProcAddress(hWinHttp, "WinHttpOpen");
-        pfn_WinHttpConnect fn_Connect = (pfn_WinHttpConnect)GetProcAddress(hWinHttp, "WinHttpConnect");
-        pfn_WinHttpOpenRequest fn_OpenRequest = (pfn_WinHttpOpenRequest)GetProcAddress(hWinHttp, "WinHttpOpenRequest");
-        pfn_WinHttpSendRequest fn_SendRequest = (pfn_WinHttpSendRequest)GetProcAddress(hWinHttp, "WinHttpSendRequest");
-        pfn_WinHttpReceiveResponse fn_ReceiveResponse = (pfn_WinHttpReceiveResponse)GetProcAddress(hWinHttp, "WinHttpReceiveResponse");
-        pfn_WinHttpReadData fn_ReadData = (pfn_WinHttpReadData)GetProcAddress(hWinHttp, "WinHttpReadData");
-        pfn_WinHttpCloseHandle fn_CloseHandle = (pfn_WinHttpCloseHandle)GetProcAddress(hWinHttp, "WinHttpCloseHandle");
+        pfn_WinHttpOpen fn_Open = (pfn_WinHttpOpen)(void*)GetProcAddress(hWinHttp, "WinHttpOpen");
+        pfn_WinHttpConnect fn_Connect = (pfn_WinHttpConnect)(void*)GetProcAddress(hWinHttp, "WinHttpConnect");
+        pfn_WinHttpOpenRequest fn_OpenRequest = (pfn_WinHttpOpenRequest)(void*)GetProcAddress(hWinHttp, "WinHttpOpenRequest");
+        pfn_WinHttpSendRequest fn_SendRequest = (pfn_WinHttpSendRequest)(void*)GetProcAddress(hWinHttp, "WinHttpSendRequest");
+        pfn_WinHttpReceiveResponse fn_ReceiveResponse = (pfn_WinHttpReceiveResponse)(void*)GetProcAddress(hWinHttp, "WinHttpReceiveResponse");
+        pfn_WinHttpReadData fn_ReadData = (pfn_WinHttpReadData)(void*)GetProcAddress(hWinHttp, "WinHttpReadData");
+        pfn_WinHttpCloseHandle fn_CloseHandle = (pfn_WinHttpCloseHandle)(void*)GetProcAddress(hWinHttp, "WinHttpCloseHandle");
 
         if (fn_Open && fn_Connect && fn_OpenRequest && fn_SendRequest && fn_ReceiveResponse && fn_ReadData && fn_CloseHandle) {
             int is_https = (strncmp(url, "https://", 8) == 0);

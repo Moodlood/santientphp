@@ -10,6 +10,7 @@ const char* opcodeToString(IROpcode op) noexcept {
         case IROpcode::GetFieldPtr:   return "getfieldptr";
         case IROpcode::GetElementPtr: return "getelementptr";
         case IROpcode::AddressOf:    return "addressof";
+        case IROpcode::Phi:          return "phi";
         case IROpcode::Add:          return "add";
         case IROpcode::Sub:          return "sub";
         case IROpcode::Mul:          return "mul";
@@ -94,6 +95,16 @@ bool replaceOperandInInstruction(IRInstruction& inst, const IRValue* oldVal, std
             if (gep.getIndex().get() == oldVal) {
                 gep.setIndex(newVal);
                 replaced = true;
+            }
+            break;
+        }
+        case IROpcode::Phi: {
+            auto& phi = static_cast<PhiInst&>(inst);
+            for (size_t i = 0; i < phi.getIncoming().size(); ++i) {
+                if (phi.getIncoming()[i].second.get() == oldVal) {
+                    phi.setIncomingValue(i, newVal);
+                    replaced = true;
+                }
             }
             break;
         }
@@ -234,6 +245,13 @@ std::vector<const IRValue*> getInstructionOperands(const IRInstruction& inst) {
             const auto& gep = static_cast<const GetElementPtrInst&>(inst);
             if (gep.getBasePtr()) operands.push_back(gep.getBasePtr().get());
             if (gep.getIndex()) operands.push_back(gep.getIndex().get());
+            break;
+        }
+        case IROpcode::Phi: {
+            const auto& phi = static_cast<const PhiInst&>(inst);
+            for (const auto& [bb, val] : phi.getIncoming()) {
+                if (val) operands.push_back(val.get());
+            }
             break;
         }
         case IROpcode::Add:
