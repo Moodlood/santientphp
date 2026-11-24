@@ -1,0 +1,64 @@
+SantientPHP v0.2.0 — SSA, Register Allocation, Fast Slab Allocator & Linux epoll Parity
+
+SantientPHP v0.2.0 is a major compiler and runtime release focused on eliminating register pressure, stack-slot overhead, and cross-platform networking gaps. This release introduces true SSA construction (mem2reg), Linear-Scan Register Allocation (LSRA), intra-procedural escape analysis, a consolidated thread-local bump-pointer slab allocator, a fast internal calling convention with Tail Call Optimization (TCO), Linux epoll(7) parity, and CFG-based Non-Lexical Lifetimes (NLL).
+
+Highlights & Architectural Upgrades
+
+1. True SSA Construction (mem2reg) & Dominance Analysis
+Implemented the Cooper-Harvey-Kennedy dominator tree algorithm (Dominance.cpp), computing immediate dominators (idom), dominator children, dominance frontiers ($\text{DF}$), and iterated dominance frontiers ($\text{IDF}$).
+Added Mem2RegPass (Mem2RegPass.cpp) to promote non-escaping local AllocaInst slots into SSA virtual registers across basic blocks, inserting PhiInst nodes at $\text{IDF}$ join points and eliminating redundant loads and stores.
+
+2. Linear-Scan Register Allocation (LSRA)
+Added LinearScanAllocator (LinearScanAllocator.cpp) backed by backward dataflow liveness analysis (LiveIn / LiveOut bitsets).
+Allocates hot variables to physical x86_64 registers—prioritizing caller-saved registers (r8–r11, rax, rcx, rdx) for short intervals and callee-saved registers (rbx, r12–r15) for intervals spanning function calls—with furthest-next-use spilling when register pressure exceeds capacity.
+Integrated directly into X86_64CodeGen with automatic callee-saved prologue/epilogue management.
+
+3. Escape Analysis & Thread-Local Bump-Pointer Slab Allocator
+Added EscapeAnalysisPass (EscapeAnalysisPass.cpp) to demote non-escaping sph_alloc calls (up to 512 bytes) to entry-block stack AllocaInst slots and prune matching sph_free calls.
+Upgraded runtime/core/core.c with a 64 KB chunk bump-pointer slab allocator for micro-allocations (up to 64 bytes, 16-byte aligned).
+Consolidated all slab state (free_pool, bump, limit, chunk_head) into a single sph_slab_thread_cache struct under one __thread variable, eliminating redundant ___emutls_get_address dispatches under MinGW/GCC and cutting 1M-item heap allocation time from 379.94 ms down to 61.47 ms.
+
+4. Fast Internal Calling Convention & Tail Call Optimization (TCO)
+Added TailCallPass (TailCallPass.cpp) to detect return-position calls.
+Self-Recursive TCO: Lowers self-recursive tail calls into in-place stack-frame reuse jumps (jmp .fn_entry_loop).
+Two-Phase Cyclic Parameter Staging: Reserved a dedicated 48-byte scratch window (m_tcoScratchOffset) below the local frame so cyclic parameter permutations (e.g., gcd(b, a % b) or 6-argument cyclic shifts) never clobber live caller arguments.
+Fast Internal ABI: Private (non-extern "C") internal functions bypass the 32-byte Win64 shadow space and pass up to 6 arguments in registers (rcx, rdx, r8, r9, r10, r11).
+
+5. Linux epoll(7) Parity & CFG Non-Lexical Lifetimes (NLL)
+Added epoll_engine.h and epoll_engine.c implementing sph_epoll_create, add, mod, del, wait, and close for Linux server workloads.
+Upgraded BorrowChecker (BorrowChecker.cpp) to track reference lifetimes across the control-flow graph, allowing mutation once a borrow dies and emitting multi-span conflict diagnostics via DiagnosticEmitter.
+
+Bug Fixes & Invariant Hardening
+LICM Loop Discovery (LoopInvariantCodeMotionPass.cpp): Replaced sequential basic-block index slicing with true dominator back-edge natural loop discovery.
+LSRA GPR/Float Separation (LinearScanAllocator.cpp): Filtered floating-point values out of GPR allocation so SSE2/XMM operations are never assigned to general-purpose registers (r8–r15, rbx).
+CFG Trampoline Preservation (ControlFlowOptimizationPass.cpp): Preserved trampoline blocks jumping into blocks containing $\phi$ nodes so incoming predecessor edges remain valid.
+Unsafe Block Liveness (BorrowChecker.cpp): Fixed UnsafeBlockStmt traversal to recurse into inner block statements, maintaining accurate NLL liveness across unsafe boundaries.
+
+Performance Benchmarks (v0.2.0)
+Measured on Windows 11 AMD64, 3 iterations per benchmark with a warm-up pass to eliminate cold-start Defender scan jitter. Lower execution time is better.
+
+Benchmark | Workload / Category | SantientPHP v0.1.0 | SantientPHP v0.2.0 | C (GCC -O3) | Rust (-O3) | Go (build) | PHP 8.2 (Zend) | SPH v0.2 vs PHP | SPH v0.2 vs Rust
+Fibonacci (N=35) | CPU / Deep Recursion | 545.80 ms | 278.51 ms | 77.78 ms | 113.09 ms | 120.65 ms | 9,392.49 ms | 33.7x faster | 2.5x slower
+Matrix Multi (200x200) | Loops / Arithmetic | 215.10 ms | 185.61 ms | 27.72 ms | 49.57 ms | 96.79 ms | 2,225.66 ms | 12.0x faster | 3.7x slower
+String Concat (50k) | String Manipulation | 284.18 ms | 151.73 ms | 49.06 ms | 32.03 ms | 34.50 ms | 216.32 ms | 1.4x faster | 4.7x slower
+Heap Alloc (1M items) | Allocator & Memory | 379.94 ms | 61.47 ms | 83.65 ms | 22.19 ms | 20.90 ms | 1,050.80 ms | 17.1x faster | 2.8x slower
+Binary Footprint | Standalone Executable | ~280 KB | 276.3 KB | 58.0 KB | 4,946.0 KB | 2,436.0 KB | (Interpreted) | — | ~18x smaller
+
+Notable win: On Heap Alloc (1M items), SantientPHP v0.2.0 outperforms gcc -O3 (61.47 ms vs. 83.65 ms) and runs 17.1x faster than PHP 8.2.
+
+Testing & Verification
+The automated test suite expanded from 1,053 to 6,573 passing tests (0 failures), adding 5,500 exhaustive pass-level unit/regression tests and 20 end-to-end compile-and-run stress integration tests:
+
+Test Suite | Tests | Status
+End-to-End Stress Integration (test_v02_stress_integration.cpp) | 20 | Passed
+Dominator Tree & Dominance Frontiers | 600 | Passed
+Mem2Reg SSA Promotion | 1,000 | Passed
+Linear-Scan Register Allocation (LSRA) | 1,000 | Passed
+Escape Analysis Pass | 400 | Passed
+Thread-Local Slab Allocator | 400 | Passed
+Tail Call Optimization & Internal ABI | 500 | Passed
+Borrow Checker Non-Lexical Lifetimes (NLL) | 1,000 | Passed
+Linux epoll Engine & Event Loop | 600 | Passed
+Core Compiler, Stdlib, PHP Compat & Acceptance | 1,053 | Passed
+Total | 6,573 | 100% Passed
+

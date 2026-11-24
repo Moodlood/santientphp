@@ -913,6 +913,7 @@ char* sph_http_post(const char* url, const char* body) {
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <unistd.h>
+#include <poll.h>
 
 int32_t sph_net_listen(int32_t port) {
     if (port <= 0 || port > 65535) return -1;
