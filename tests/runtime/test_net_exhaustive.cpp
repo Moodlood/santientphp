@@ -2,6 +2,11 @@
 #include "runtime/net/epoll_engine.h"
 #include <string>
 
+#if !defined(_WIN32)
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
+
 namespace sph {
 
 namespace {
@@ -34,18 +39,33 @@ struct NetExhaustiveRegistrar {
                 int epfd = sph_epoll_create();
                 CHECK(epfd >= 0);
 
-                int mockFd = 100 + (j % 50);
+#if !defined(_WIN32)
+                int testFd = socket(AF_INET, SOCK_STREAM, 0);
+                if (testFd < 0) {
+                    int pfd[2];
+                    if (pipe(pfd) == 0) {
+                        testFd = pfd[0];
+                        close(pfd[1]);
+                    }
+                }
+                CHECK(testFd >= 0);
+#else
+                int testFd = 100 + (j % 50);
+#endif
                 uint32_t events = SPH_EPOLLIN | SPH_EPOLLOUT;
 
-                int addRes = sph_epoll_add(epfd, mockFd, events);
+                int addRes = sph_epoll_add(epfd, testFd, events);
                 CHECK_EQ(addRes, 0);
 
-                int modRes = sph_epoll_mod(epfd, mockFd, SPH_EPOLLIN);
+                int modRes = sph_epoll_mod(epfd, testFd, SPH_EPOLLIN);
                 CHECK_EQ(modRes, 0);
 
-                int delRes = sph_epoll_del(epfd, mockFd);
+                int delRes = sph_epoll_del(epfd, testFd);
                 CHECK_EQ(delRes, 0);
 
+#if !defined(_WIN32)
+                close(testFd);
+#endif
                 sph_epoll_close(epfd);
             });
         }

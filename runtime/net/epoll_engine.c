@@ -7,6 +7,17 @@
 #include <unistd.h>
 #include <errno.h>
 
+static inline uint32_t sph_map_epoll_events(uint32_t events) {
+    uint32_t ev = 0;
+    if (events & SPH_EPOLLIN)  ev |= EPOLLIN;
+    if (events & SPH_EPOLLPRI) ev |= EPOLLPRI;
+    if (events & SPH_EPOLLOUT) ev |= EPOLLOUT;
+    if (events & SPH_EPOLLERR) ev |= EPOLLERR;
+    if (events & SPH_EPOLLHUP) ev |= EPOLLHUP;
+    if (events & SPH_EPOLLET)  ev |= EPOLLET;
+    return ev;
+}
+
 int32_t sph_epoll_create(void) {
     return epoll_create1(0);
 }
@@ -15,7 +26,7 @@ int32_t sph_epoll_add(int32_t epfd, int32_t fd, uint32_t events) {
     if (epfd < 0 || fd < 0) return -1;
     struct epoll_event ev;
     memset(&ev, 0, sizeof(ev));
-    ev.events = events;
+    ev.events = sph_map_epoll_events(events);
     ev.data.fd = fd;
     return epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &ev);
 }
@@ -24,7 +35,7 @@ int32_t sph_epoll_mod(int32_t epfd, int32_t fd, uint32_t events) {
     if (epfd < 0 || fd < 0) return -1;
     struct epoll_event ev;
     memset(&ev, 0, sizeof(ev));
-    ev.events = events;
+    ev.events = sph_map_epoll_events(events);
     ev.data.fd = fd;
     return epoll_ctl(epfd, EPOLL_CTL_MOD, fd, &ev);
 }
