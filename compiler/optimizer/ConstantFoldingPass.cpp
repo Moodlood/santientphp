@@ -169,13 +169,13 @@ bool ConstantFoldingPass::runOnFunction(IRFunction& fn) {
                 auto condBr = std::static_pointer_cast<CondBranchInst>(inst);
                 if (auto cBool = dynamic_cast<const ConstantBool*>(condBr->getCondition().get())) {
                     IRBasicBlock* target = cBool->getValue() ? condBr->getTrueTarget() : condBr->getFalseTarget();
-                    instructions[i] = std::make_shared<BranchInst>(target);
+                    bb->replaceInstruction(i, std::make_shared<BranchInst>(target));
                     changed = true;
                     continue;
                 }
                 if (auto cInt = dynamic_cast<const ConstantInt*>(condBr->getCondition().get())) {
                     IRBasicBlock* target = (cInt->getValue() != 0) ? condBr->getTrueTarget() : condBr->getFalseTarget();
-                    instructions[i] = std::make_shared<BranchInst>(target);
+                    bb->replaceInstruction(i, std::make_shared<BranchInst>(target));
                     changed = true;
                     continue;
                 }

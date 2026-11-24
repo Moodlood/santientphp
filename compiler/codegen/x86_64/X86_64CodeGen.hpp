@@ -49,6 +49,8 @@ private:
     void loadValueToReg(const IRValue& val, const std::string& reg);
     void storeRegToSlot(const std::string& reg, int32_t offset);
     void storeRegToValue(const std::string& reg, const IRValue& val);
+    bool tryDirectRegisterBinaryOp(const BinaryInst& binInst);
+    void emitParallelPhiCopies(const IRBasicBlock& target, const IRBasicBlock& fromBlock);
     std::string getLabel(const IRBasicBlock& bb, const IRFunction& fn) const;
     void emitEpilogue(const IRFunction& fn);
 

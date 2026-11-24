@@ -67,8 +67,8 @@ static std::filesystem::path getExecutableDir() {
 }
 
 void printVersion() {
-    std::cout << "sphc 0.1.0 (SantientPHP)\n"
-              << "Baseline: SPH 0.1\n"
+    std::cout << "sphc 0.2.1 (SantientPHP - Compiler Reliability & Runtime Hardening)\n"
+              << "Baseline: SPH 0.2.1\n"
               << "Default Host Target: " << sph::Target::getHostTarget().getCanonicalTriple() << "\n";
 }
 

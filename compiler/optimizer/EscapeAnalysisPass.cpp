@@ -1,4 +1,5 @@
 #include "EscapeAnalysisPass.hpp"
+#include "Dominance.hpp"
 #include "compiler/ir/IRBasicBlock.hpp"
 #include "compiler/ir/IRInstruction.hpp"
 #include "compiler/ir/IRValue.hpp"
@@ -8,10 +9,34 @@
 
 namespace sph {
 
+namespace {
+
+bool canBasicBlockReachSelf(const IRBasicBlock* targetBB) {
+    if (!targetBB) return false;
+    std::unordered_set<const IRBasicBlock*> visited;
+    std::vector<const IRBasicBlock*> worklist;
+    for (const auto* succ : getSuccessors(*targetBB)) {
+        if (succ) worklist.push_back(succ);
+    }
+    while (!worklist.empty()) {
+        const auto* curr = worklist.back();
+        worklist.pop_back();
+        if (curr == targetBB) return true;
+        if (visited.insert(curr).second) {
+            for (const auto* succ : getSuccessors(*curr)) {
+                if (succ) worklist.push_back(succ);
+            }
+        }
+    }
+    return false;
+}
+
+} // namespace
+
 bool EscapeAnalysisPass::runOnFunction(IRFunction& function) {
     bool changed = false;
 
-    std::vector<std::shared_ptr<CallInst>> allocCandidates;
+    std::vector<std::pair<std::shared_ptr<CallInst>, const IRBasicBlock*>> allocCandidates;
 
     // Step 1: Find all CallInst to "sph_alloc"
     for (const auto& bb : function.getBlocks()) {
@@ -20,7 +45,7 @@ bool EscapeAnalysisPass::runOnFunction(IRFunction& function) {
             if (inst->getOpcode() == IROpcode::Call) {
                 auto call = std::static_pointer_cast<CallInst>(inst);
                 if (call->getCallee() == "sph_alloc" && !call->getArgs().empty()) {
-                    allocCandidates.push_back(call);
+                    allocCandidates.push_back({call, bb.get()});
                 }
             }
         }
@@ -28,7 +53,7 @@ bool EscapeAnalysisPass::runOnFunction(IRFunction& function) {
 
     if (allocCandidates.empty()) return false;
 
-    for (const auto& call : allocCandidates) {
+    for (const auto& [call, allocBB] : allocCandidates) {
         const auto* allocVal = call.get();
         auto allocInst = call;
 
@@ -41,42 +66,68 @@ bool EscapeAnalysisPass::runOnFunction(IRFunction& function) {
         }
         if (allocSize <= 0 || allocSize > 512) continue;
 
-        // Check whether allocVal escapes:
-        // A pointer escapes if it is:
-        // - Returned via RetInst
-        // - Stored into memory as a value (store allocVal, otherPtr)
-        // - Passed as an argument to any CallInst other than "sph_free"
+        // Reject if basic block is inside a loop (can reach itself) to prevent unsafe stack demotion
+        if (canBasicBlockReachSelf(allocBB)) {
+            continue;
+        }
+
+        // Transitive alias analysis: collect all instructions derived from allocVal
+        std::unordered_set<const IRValue*> aliases;
+        aliases.insert(allocVal);
+
+        bool newAliasFound = true;
+        while (newAliasFound) {
+            newAliasFound = false;
+            for (const auto& bb : function.getBlocks()) {
+                if (!bb) continue;
+                for (const auto& inst : bb->getInstructions()) {
+                    if (aliases.count(inst.get())) continue;
+                    if (inst->getOpcode() == IROpcode::Cast ||
+                        inst->getOpcode() == IROpcode::GetElementPtr ||
+                        inst->getOpcode() == IROpcode::GetFieldPtr ||
+                        inst->getOpcode() == IROpcode::Phi) {
+                        for (const auto* op : getInstructionOperands(*inst)) {
+                            if (op && aliases.count(op)) {
+                                aliases.insert(inst.get());
+                                newAliasFound = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Check whether allocVal or any of its aliases escape
         bool escapes = false;
         std::vector<std::shared_ptr<IRInstruction>> freesToRemove;
 
-        for (size_t bbIdx = 0; bbIdx < function.getBlocks().size(); ++bbIdx) {
-            const auto& bb = function.getBlocks()[bbIdx];
-            for (size_t instIdx = 0; instIdx < bb->getInstructions().size(); ++instIdx) {
-                const auto& inst = bb->getInstructions()[instIdx];
-
+        for (const auto& bb : function.getBlocks()) {
+            if (!bb) continue;
+            for (const auto& inst : bb->getInstructions()) {
                 if (inst.get() == allocVal) continue;
 
                 if (inst->getOpcode() == IROpcode::Ret) {
                     const auto& ret = static_cast<const RetInst&>(*inst);
-                    if (ret.hasValue() && ret.getValue().get() == allocVal) {
+                    if (ret.hasValue() && aliases.count(ret.getValue().get())) {
                         escapes = true;
                         break;
                     }
                 } else if (inst->getOpcode() == IROpcode::Store) {
                     const auto& store = static_cast<const StoreInst&>(*inst);
-                    if (store.getValue().get() == allocVal) {
+                    if (store.getValue() && aliases.count(store.getValue().get())) {
                         escapes = true;
                         break;
                     }
                 } else if (inst->getOpcode() == IROpcode::Call) {
                     const auto& c = static_cast<const CallInst&>(*inst);
                     if (c.getCallee() == "sph_free") {
-                        if (!c.getArgs().empty() && c.getArgs()[0].get() == allocVal) {
+                        if (!c.getArgs().empty() && aliases.count(c.getArgs()[0].get())) {
                             freesToRemove.push_back(inst);
                         }
                     } else {
                         for (const auto& arg : c.getArgs()) {
-                            if (arg.get() == allocVal) {
+                            if (arg && aliases.count(arg.get())) {
                                 escapes = true;
                                 break;
                             }
@@ -90,7 +141,7 @@ bool EscapeAnalysisPass::runOnFunction(IRFunction& function) {
         }
 
         if (!escapes) {
-            // Demote sph_alloc to AllocaInst in the entry block!
+            // Demote sph_alloc to AllocaInst in the entry block
             std::shared_ptr<Type> innerType = nullptr;
             if (allocInst->getType()->isBox()) {
                 auto bt = std::static_pointer_cast<BoxType>(allocInst->getType());
@@ -104,15 +155,16 @@ bool EscapeAnalysisPass::runOnFunction(IRFunction& function) {
 
             auto* entryBlock = function.getBlocks().front().get();
             auto allocaInst = std::make_shared<AllocaInst>(innerType, call->getName());
-            auto& entryInsts = entryBlock->getInstructions();
-            auto insertPos = entryInsts.begin();
-            while (insertPos != entryInsts.end() && (*insertPos)->getOpcode() == IROpcode::Alloca) {
+            size_t insertPos = 0;
+            const auto& entryInsts = entryBlock->getInstructions();
+            while (insertPos < entryInsts.size() && entryInsts[insertPos]->getOpcode() == IROpcode::Alloca) {
                 ++insertPos;
             }
-            entryInsts.insert(insertPos, allocaInst);
+            entryBlock->insertInstruction(insertPos, allocaInst);
 
             // Replace all uses of the CallInst with allocaInst
             for (auto& bb : function.getBlocks()) {
+                if (!bb) continue;
                 for (auto& otherInst : bb->getInstructions()) {
                     if (otherInst.get() != call.get()) {
                         replaceOperandInInstruction(*otherInst, call.get(), allocaInst);
@@ -120,8 +172,9 @@ bool EscapeAnalysisPass::runOnFunction(IRFunction& function) {
                 }
             }
 
-            // Remove call and corresponding sph_free calls safely by pointer comparison
+            // Remove call and corresponding sph_free calls safely
             for (auto& bb : function.getBlocks()) {
+                if (!bb) continue;
                 auto& insts = bb->getInstructions();
                 insts.erase(std::remove_if(insts.begin(), insts.end(), [&](const std::shared_ptr<IRInstruction>& inst) {
                     if (inst == allocInst) return true;
@@ -140,4 +193,5 @@ bool EscapeAnalysisPass::runOnFunction(IRFunction& function) {
 }
 
 } // namespace sph
+
 

@@ -169,7 +169,11 @@ void LinearScanAllocator::runLinearScan() {
     });
 
     // Callee-saved registers (safe across calls):
-    const std::vector<std::string> calleeSavedRegs = {"rbx", "r12", "r13", "r14", "r15"};
+    std::vector<std::string> calleeSavedRegs = {"rbx", "r12", "r13", "r14", "r15"};
+    if (!m_isSysV) {
+        calleeSavedRegs.push_back("rsi");
+        calleeSavedRegs.push_back("rdi");
+    }
 
     // Caller-saved registers (scratch, only for intervals not spanning calls):
     const std::vector<std::string> callerSavedRegs = {"r8", "r9", "r10", "r11"};
@@ -248,9 +252,40 @@ void LinearScanAllocator::runLinearScan() {
                 }
             }
         } else {
-            // Spill
-            current->isSpilled = true;
-            m_spilled.insert(current->value);
+            // Spilling with Furthest-Next-Use heuristic
+            auto furthestIt = std::max_element(active.begin(), active.end(),
+                [](const LiveInterval* a, const LiveInterval* b) {
+                    return a->end < b->end;
+                });
+
+            if (furthestIt != active.end() && (*furthestIt)->end > current->end &&
+                (!crossesCall || std::find(calleeSavedRegs.begin(), calleeSavedRegs.end(), (*furthestIt)->assignedReg) != calleeSavedRegs.end())) {
+
+                LiveInterval* toSpill = *furthestIt;
+                std::string stolenReg = toSpill->assignedReg;
+
+                // Evict toSpill to stack
+                toSpill->assignedReg.clear();
+                toSpill->isSpilled = true;
+                m_physRegs.erase(toSpill->value);
+                m_spilled.insert(toSpill->value);
+                active.erase(furthestIt);
+
+                // Assign stolen register to current
+                current->assignedReg = stolenReg;
+                m_physRegs[current->value] = stolenReg;
+                active.push_back(current);
+
+                if (std::find(calleeSavedRegs.begin(), calleeSavedRegs.end(), stolenReg) != calleeSavedRegs.end()) {
+                    if (std::find(m_usedCalleeSaved.begin(), m_usedCalleeSaved.end(), stolenReg) == m_usedCalleeSaved.end()) {
+                        m_usedCalleeSaved.push_back(stolenReg);
+                    }
+                }
+            } else {
+                // Spill current
+                current->isSpilled = true;
+                m_spilled.insert(current->value);
+            }
         }
     }
 }

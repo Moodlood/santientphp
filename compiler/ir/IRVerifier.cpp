@@ -1,4 +1,8 @@
 #include "IRVerifier.hpp"
+#include "compiler/ir/IRInstruction.hpp"
+#include "compiler/optimizer/Dominance.hpp"
+#include <unordered_map>
+#include <unordered_set>
 
 namespace sph {
 
@@ -24,10 +28,26 @@ bool IRVerifier::verify(const IRFunction& fn, std::vector<std::string>& errors) 
         return false;
     }
 
+    // Step 1: Verify all basic blocks structurally
     for (const auto& bb : fn.getBlocks()) {
+        if (!bb) {
+            errors.push_back("function '@" + fn.getName() + "' contains a null basic block");
+            ok = false;
+            continue;
+        }
+        if (bb->getParent() != &fn) {
+            errors.push_back("basic block '" + bb->getName() + "' parent pointer does not match function '@" + fn.getName() + "'");
+            ok = false;
+        }
         if (!verify(*bb, fn, errors)) {
             ok = false;
         }
+    }
+
+    // Step 2: Verify SSA invariants, dominance, and phi nodes
+    DominatorTree domTree(fn);
+    if (!verifySSA(fn, domTree, errors)) {
+        ok = false;
     }
 
     return ok;
@@ -51,6 +71,20 @@ bool IRVerifier::verify(const IRBasicBlock& bb, const IRFunction& fn, std::vecto
     bool seenNonPhi = false;
     for (size_t i = 0; i < instructions.size(); ++i) {
         const auto& inst = instructions[i];
+
+        if (!inst) {
+            errors.push_back("null instruction in basic block '" + bb.getName() + "' of function '@" + fn.getName() + "'");
+            ok = false;
+            continue;
+        }
+
+        if (!inst->getParent()) {
+            errors.push_back("instruction in block '" + bb.getName() + "' of function '@" + fn.getName() + "' has null parent basic block pointer");
+            ok = false;
+        } else if (inst->getParent() != &bb) {
+            errors.push_back("instruction in block '" + bb.getName() + "' has mismatched parent pointer pointing to block '" + inst->getParent()->getName() + "'");
+            ok = false;
+        }
 
         // Ensure terminator only at the end
         if (inst->isTerminator() && i != instructions.size() - 1) {
@@ -80,7 +114,7 @@ bool IRVerifier::verify(const IRBasicBlock& bb, const IRFunction& fn, std::vecto
                     if (!retInst.hasValue()) {
                         errors.push_back("non-void function '@" + fn.getName() + "' returns void");
                         ok = false;
-                    } else if (!retInst.getValue()->getType()->isEqual(*fn.getReturnType())) {
+                    } else if (retInst.getValue() && !retInst.getValue()->getType()->isEqual(*fn.getReturnType())) {
                         errors.push_back("return type mismatch in function '@" + fn.getName() +
                                          "': expected '" + fn.getReturnType()->toString() +
                                          "', got '" + retInst.getValue()->getType()->toString() + "'");
@@ -164,6 +198,26 @@ bool IRVerifier::verify(const IRBasicBlock& bb, const IRFunction& fn, std::vecto
                 }
                 break;
             }
+            case IROpcode::Load: {
+                const auto& loadInst = static_cast<const LoadInst&>(*inst);
+                if (!loadInst.getPointer()) {
+                    errors.push_back("load instruction has null pointer");
+                    ok = false;
+                }
+                break;
+            }
+            case IROpcode::Store: {
+                const auto& storeInst = static_cast<const StoreInst&>(*inst);
+                if (!storeInst.getPointer()) {
+                    errors.push_back("store instruction has null pointer");
+                    ok = false;
+                }
+                if (!storeInst.getValue()) {
+                    errors.push_back("store instruction has null value");
+                    ok = false;
+                }
+                break;
+            }
             case IROpcode::GetFieldPtr: {
                 const auto& gfp = static_cast<const GetFieldPtrInst&>(*inst);
                 if (!gfp.getBasePtr()) {
@@ -227,5 +281,137 @@ bool IRVerifier::verify(const IRBasicBlock& bb, const IRFunction& fn, std::vecto
     return ok;
 }
 
-} // namespace sph
+bool IRVerifier::verifySSA(const IRFunction& fn, const DominatorTree& domTree, std::vector<std::string>& errors) const {
+    bool ok = true;
 
+    // Collect all valid parameters for fast lookup
+    std::unordered_set<const IRValue*> validParams;
+    for (const auto& param : fn.getParameters()) {
+        validParams.insert(param.get());
+    }
+
+    for (const auto& bb : fn.getBlocks()) {
+        auto preds = getPredecessors(*bb, fn);
+        std::unordered_set<const IRBasicBlock*> predSet(preds.begin(), preds.end());
+
+        // Map instruction order within the block for local dominance checking
+        std::unordered_map<const IRInstruction*, size_t> instOrder;
+        for (size_t i = 0; i < bb->getInstructions().size(); ++i) {
+            instOrder[bb->getInstructions()[i].get()] = i;
+        }
+
+        for (const auto& inst : bb->getInstructions()) {
+            if (inst->getOpcode() == IROpcode::Phi) {
+                const auto& phi = static_cast<const PhiInst&>(*inst);
+                const auto& incoming = phi.getIncoming();
+
+                // Check 1: Every predecessor must have an entry in incoming
+                std::unordered_set<const IRBasicBlock*> seenPreds;
+                for (const auto& [inBb, inVal] : incoming) {
+                    if (!inBb) {
+                        errors.push_back("phi instruction has null incoming basic block in block '" + bb->getName() + "'");
+                        ok = false;
+                        continue;
+                    }
+                    if (seenPreds.count(inBb)) {
+                        errors.push_back("duplicate incoming predecessor block '" + inBb->getName() +
+                                         "' in phi instruction of block '" + bb->getName() + "'");
+                        ok = false;
+                    }
+                    seenPreds.insert(inBb);
+
+                    if (!predSet.count(inBb)) {
+                        errors.push_back("incoming block '" + inBb->getName() +
+                                         "' is not a predecessor of block '" + bb->getName() + "'");
+                        ok = false;
+                    }
+
+                    if (!inVal) {
+                        errors.push_back("phi instruction has null incoming value for predecessor '" +
+                                         inBb->getName() + "' in block '" + bb->getName() + "'");
+                        ok = false;
+                    } else {
+                        // Check type match
+                        if (!inVal->getType()->isEqual(*phi.getType())) {
+                            errors.push_back("phi incoming type mismatch for block '" + inBb->getName() +
+                                             "': expected '" + phi.getType()->toString() +
+                                             "', got '" + inVal->getType()->toString() + "'");
+                            ok = false;
+                        }
+
+                        // Check cross-function and dominance along the predecessor edge
+                        if (inVal->isInstruction()) {
+                            const auto* defInst = static_cast<const IRInstruction*>(inVal.get());
+                            if (!defInst->getParent() || defInst->getParent()->getParent() != &fn) {
+                                errors.push_back("cross-function value reference in phi instruction of function '@" +
+                                                 fn.getName() + "'");
+                                ok = false;
+                            } else if (domTree.isReachable(inBb)) {
+                                if (defInst->getParent() != inBb && !domTree.dominates(defInst->getParent(), inBb)) {
+                                    errors.push_back("phi incoming value defined in block '" + defInst->getParent()->getName() +
+                                                     "' does not dominate predecessor block '" + inBb->getName() + "'");
+                                    ok = false;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Check for missing predecessors
+                for (const auto* pred : preds) {
+                    if (!seenPreds.count(pred)) {
+                        errors.push_back("phi instruction in block '" + bb->getName() +
+                                         "' is missing incoming value for predecessor '" + pred->getName() + "'");
+                        ok = false;
+                    }
+                }
+            } else {
+                // Non-Phi instruction: check operands and dominance
+                auto operands = getInstructionOperands(*inst);
+                for (const auto* op : operands) {
+                    if (!op) {
+                        errors.push_back("instruction has null operand in block '" + bb->getName() + "'");
+                        ok = false;
+                        continue;
+                    }
+
+                    if (op->isInstruction()) {
+                        const auto* defInst = static_cast<const IRInstruction*>(op);
+                        if (!defInst->getParent() || defInst->getParent()->getParent() != &fn) {
+                            errors.push_back("cross-function operand reference in function '@" + fn.getName() + "'");
+                            ok = false;
+                        } else if (domTree.isReachable(bb.get())) {
+                            if (defInst->getParent() == bb.get()) {
+                                // Must be defined earlier in the same block
+                                auto itDef = instOrder.find(defInst);
+                                auto itUse = instOrder.find(inst.get());
+                                if (itDef == instOrder.end() || itUse == instOrder.end() || itDef->second >= itUse->second) {
+                                    errors.push_back("instruction use precedes or self-references definition in block '" +
+                                                     bb->getName() + "' of function '@" + fn.getName() + "'");
+                                    ok = false;
+                                }
+                            } else {
+                                // Must strictly dominate the use block
+                                if (!domTree.strictlyDominates(defInst->getParent(), bb.get())) {
+                                    errors.push_back("definition in block '" + defInst->getParent()->getName() +
+                                                     "' does not dominate use in block '" + bb->getName() +
+                                                     "' in function '@" + fn.getName() + "'");
+                                    ok = false;
+                                }
+                            }
+                        }
+                    } else if (op->isParameter()) {
+                        if (!validParams.count(op)) {
+                            errors.push_back("parameter operand does not belong to function '@" + fn.getName() + "'");
+                            ok = false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return ok;
+}
+
+} // namespace sph

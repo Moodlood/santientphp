@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 project(SantientPHP
-    VERSION 0.2.0
+    VERSION 0.2.1
     DESCRIPTION "SantientPHP Compiler"
     LANGUAGES C CXX
 )
@@ -144,6 +144,8 @@ add_library(sphc_core STATIC
     compiler/optimizer/Dominance.cpp
     compiler/optimizer/Mem2RegPass.hpp
     compiler/optimizer/Mem2RegPass.cpp
+    compiler/optimizer/CriticalEdgeSplittingPass.hpp
+    compiler/optimizer/CriticalEdgeSplittingPass.cpp
     compiler/optimizer/EscapeAnalysisPass.hpp
     compiler/optimizer/EscapeAnalysisPass.cpp
     compiler/optimizer/TailCallPass.hpp
@@ -258,6 +260,12 @@ add_executable(sph_tests
     tests/semantic/test_borrow_checker_nll_exhaustive.cpp
     tests/runtime/test_net_exhaustive.cpp
     tests/codegen/test_v02_stress_integration.cpp
+    tests/ir/test_sphir_verifier_exhaustive.cpp
+    tests/codegen/test_parallel_copy_exhaustive.cpp
+    tests/runtime/test_memory_safety_exhaustive.cpp
+    tests/codegen/test_backend_parity.cpp
+    tests/runtime/test_concurrency_stress_exhaustive.cpp
+    tests/optimizer/test_property_based_exhaustive.cpp
 )
 
 target_link_libraries(sph_tests PRIVATE sphc_core sph_runtime sph_runtime_gui)

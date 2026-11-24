@@ -100,3 +100,46 @@ TEST_CASE("Formatter: File formatting and checking on disk") {
     std::filesystem::remove(tempFile, ec);
 }
 
+TEST_CASE("Formatter: Idempotency across complex classes, interfaces, and nested control flow") {
+    Formatter fmt;
+    std::string code =
+        "<?php\n"
+        "interface Printable {\n"
+        "    fn display(): void;\n"
+        "}\n"
+        "\n"
+        "class Node implements Printable {\n"
+        "    public val: i32;\n"
+        "\n"
+        "    public fn __construct(val: i32) {\n"
+        "        this.val = val;\n"
+        "    }\n"
+        "\n"
+        "    public fn display(): void {\n"
+        "        println(this.val);\n"
+        "    }\n"
+        "}\n"
+        "\n"
+        "fn process(nodes: Vec<Node>): i32 {\n"
+        "    let mut sum: i32 = 0;\n"
+        "    let mut i: i32 = 0;\n"
+        "    while (i < 10) {\n"
+        "        if (i % 2 == 0) {\n"
+        "            sum = sum + i;\n"
+        "        } else {\n"
+        "            sum = sum - 1;\n"
+        "        }\n"
+        "        i = i + 1;\n"
+        "    }\n"
+        "    return sum;\n"
+        "}\n";
+
+    auto pass1 = fmt.format(code);
+    CHECK(pass1.success);
+
+    auto pass2 = fmt.format(pass1.formattedCode);
+    CHECK(pass2.success);
+    CHECK_EQ(pass1.formattedCode, pass2.formattedCode);
+    CHECK(!pass2.changed);
+}
+

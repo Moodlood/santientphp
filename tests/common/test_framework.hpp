@@ -72,17 +72,27 @@ struct AutoTestRegisterer {
     }
 };
 
-inline int runAllTests() {
+inline int runAllTests(const std::string& filter = "") {
     auto& tests = TestRegistry::instance().getTests();
     int testsPassed = 0;
     int testsFailed = 0;
     std::vector<std::pair<std::string, std::vector<std::string>>> failedTests;
 
+    size_t activeCount = 0;
+    for (const auto& test : tests) {
+        if (filter.empty() || test.name.find(filter) != std::string::npos) {
+            activeCount++;
+        }
+    }
+
     std::cout << "========================================\n";
-    std::cout << " Running " << tests.size() << " test case(s)...\n";
+    std::cout << " Running " << activeCount << " test case(s)...\n";
     std::cout << "========================================\n\n";
 
     for (const auto& test : tests) {
+        if (!filter.empty() && test.name.find(filter) == std::string::npos) {
+            continue;
+        }
         auto& ctx = TestContext::current();
         ctx.reset();
 

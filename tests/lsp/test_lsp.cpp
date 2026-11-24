@@ -255,3 +255,46 @@ TEST_CASE("LSP: textDocument/definition and textDocument/documentSymbol") {
     CHECK_EQ(syms[1]["name"].asString(), "Point");
 }
 
+TEST_CASE("LSP: Document Symbol recovery and Hover on partially malformed syntax") {
+    LspServer server;
+
+    // Open partially broken document (syntax error inside one function)
+    std::string brokenCode =
+        "<?php\n"
+        "struct Record {\n"
+        "    id: i32,\n"
+        "}\n"
+        "fn brokenFunction(): void {\n"
+        "    let x = ; // syntax error\n"
+        "}\n"
+        "fn healthyFunction(r: Record): i32 {\n"
+        "    return r.id;\n"
+        "}\n";
+
+    std::string didOpen =
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{"
+        "\"textDocument\":{\"uri\":\"file:///broken.sph\",\"languageId\":\"sph\",\"version\":1,"
+        "\"text\":\"" + JsonValue(brokenCode).asString() + "\"}}}";
+
+    server.handleMessage(didOpen);
+
+    // 1. Hover on 'Record' at line 1, char 7
+    std::string hoverReq =
+        "{\"jsonrpc\":\"2.0\",\"id\":40,\"method\":\"textDocument/hover\",\"params\":{"
+        "\"textDocument\":{\"uri\":\"file:///broken.sph\"},"
+        "\"position\":{\"line\":1,\"character\":8}}}";
+
+    std::string hoverResp = server.handleMessage(hoverReq);
+    CHECK(!hoverResp.empty());
+
+    // 2. Document Symbol outline: must still recover symbols gracefully without crashing
+    std::string symReq =
+        "{\"jsonrpc\":\"2.0\",\"id\":41,\"method\":\"textDocument/documentSymbol\",\"params\":{"
+        "\"textDocument\":{\"uri\":\"file:///broken.sph\"}}}";
+
+    std::string symResp = server.handleMessage(symReq);
+    CHECK(!symResp.empty());
+    JsonValue symObj = JsonValue::parse(symResp);
+    CHECK(symObj["result"].isArray());
+}
+

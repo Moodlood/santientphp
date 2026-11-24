@@ -19,6 +19,11 @@ public:
     void setParent(IRFunction* parent) noexcept { m_parent = parent; }
 
     void addInstruction(std::shared_ptr<IRInstruction> inst);
+    void appendInstruction(std::shared_ptr<IRInstruction> inst);
+    void insertInstruction(size_t index, std::shared_ptr<IRInstruction> inst);
+    void replaceInstruction(size_t index, std::shared_ptr<IRInstruction> inst);
+    void removeInstruction(size_t index);
+    void moveInstructionTo(IRBasicBlock& targetBlock, size_t fromIdx, size_t toIdx);
 
     [[nodiscard]] const std::vector<std::shared_ptr<IRInstruction>>& getInstructions() const noexcept {
         return m_instructions;

@@ -2,6 +2,7 @@
 #include "compiler/diagnostics/DiagnosticEmitter.hpp"
 #include "compiler/ir/IRGenerator.hpp"
 #include "compiler/ir/IRPrinter.hpp"
+#include "compiler/ir/IRVerifier.hpp"
 #include "compiler/optimizer/AlgebraicSimplificationPass.hpp"
 #include "compiler/optimizer/CommonSubexpressionEliminationPass.hpp"
 #include "compiler/optimizer/ConstantFoldingPass.hpp"
@@ -236,6 +237,76 @@ TEST_CASE("Optimizer: FunctionInliningPass inlines leaf functions returning stru
     }
     CHECK_EQ(callCount, 0);
     CHECK(getFieldCount >= 2);
+}
+
+TEST_CASE("Optimizer: FunctionInliningPass handles multiple parameters and local variables") {
+    std::string code =
+        "<?php\n"
+        "fn poly(a: i32, b: i32, c: i32, x: i32): i32 {\n"
+        "    let term1 = a * x;\n"
+        "    let term2 = b * x;\n"
+        "    return term1 + term2 + c;\n"
+        "}\n"
+        "fn eval_poly(): i32 {\n"
+        "    return poly(2, 3, 4, 5);\n"
+        "}\n";
+
+    auto irModule = parseAndGenerateIR(code);
+    CHECK(irModule != nullptr);
+    if (!irModule) return;
+
+    sph::FunctionInliningPass inlinePass(60);
+    bool changed = inlinePass.runOnModule(*irModule);
+    CHECK(changed);
+
+    auto* evalFn = irModule->getFunction("eval_poly");
+    CHECK(evalFn != nullptr);
+    if (!evalFn) return;
+
+    int callCount = 0;
+    for (const auto& bb : evalFn->getBlocks()) {
+        for (const auto& inst : bb->getInstructions()) {
+            if (inst->getOpcode() == IROpcode::Call) callCount++;
+        }
+    }
+    CHECK_EQ(callCount, 0);
+
+    // Verify IR validity after inlining
+    std::vector<std::string> verifierErrors;
+    sph::IRVerifier verifier;
+    CHECK(verifier.verify(*evalFn, verifierErrors));
+}
+
+TEST_CASE("Optimizer: FunctionInliningPass safely rejects recursive and multi-block functions") {
+    std::string code =
+        "<?php\n"
+        "fn factorial(n: i32): i32 {\n"
+        "    if (n <= 1) { return 1; }\n"
+        "    return n * factorial(n - 1);\n"
+        "}\n"
+        "fn test_rec(): i32 {\n"
+        "    return factorial(5);\n"
+        "}\n";
+
+    auto irModule = parseAndGenerateIR(code);
+    CHECK(irModule != nullptr);
+    if (!irModule) return;
+
+    sph::FunctionInliningPass inlinePass(25);
+    bool changed = inlinePass.runOnModule(*irModule);
+    CHECK(!changed); // Recursive and multi-block function must NOT be inlined
+
+    auto* testFn = irModule->getFunction("test_rec");
+    CHECK(testFn != nullptr);
+    if (!testFn) return;
+
+    int callCount = 0;
+    for (const auto& bb : testFn->getBlocks()) {
+        for (const auto& inst : bb->getInstructions()) {
+            if (inst->getOpcode() == IROpcode::Call) callCount++;
+        }
+    }
+    CHECK_EQ(callCount, 1);
 }
 
 TEST_CASE("Optimizer: PassManager O2 pipeline optimizes complex computation to constant") {

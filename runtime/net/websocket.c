@@ -351,8 +351,10 @@ int32_t sph_ws_is_open(const sph_ws_client* ws) {
 
 void sph_ws_close(sph_ws_client* ws) {
     if (!ws) return;
-    if (ws->is_open && ws->fd != INVALID_SOCKET) {
-        sph_ws_send_frame(ws, 0x8, !ws->is_server, NULL, 0); // Close frame
+    if (ws->fd != INVALID_SOCKET) {
+        if (ws->is_open) {
+            sph_ws_send_frame(ws, 0x8, !ws->is_server, NULL, 0); // Close frame
+        }
         closesocket(ws->fd);
         ws->fd = INVALID_SOCKET;
         ws->is_open = 0;
@@ -369,19 +371,22 @@ void sph_ws_close(sph_ws_client* ws) {
 }
 
 int32_t sph_ws_send_text(sph_ws_client* ws, const char* text) {
-    if (!text) return -1;
+    if (!ws || !text) return -1;
     return sph_ws_send_frame(ws, 0x1, !ws->is_server, (const uint8_t*)text, (int64_t)strlen(text));
 }
 
 int32_t sph_ws_send_binary(sph_ws_client* ws, const uint8_t* data, int64_t len) {
+    if (!ws || !data) return -1;
     return sph_ws_send_frame(ws, 0x2, !ws->is_server, data, len);
 }
 
 int32_t sph_ws_send_ping(sph_ws_client* ws) {
+    if (!ws) return -1;
     return sph_ws_send_frame(ws, 0x9, !ws->is_server, NULL, 0);
 }
 
 int32_t sph_ws_send_pong(sph_ws_client* ws, const uint8_t* payload, int64_t len) {
+    if (!ws) return -1;
     return sph_ws_send_frame(ws, 0xA, !ws->is_server, payload, len);
 }
 

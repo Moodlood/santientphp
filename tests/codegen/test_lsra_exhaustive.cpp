@@ -127,7 +127,7 @@ struct LsraExhaustiveRegistrar {
 
                 if (lsra.hasRegister(valBefore.get())) {
                     const std::string& reg = lsra.getRegister(valBefore.get());
-                    bool isCalleeSaved = (reg == "rbx" || reg == "r12" || reg == "r13" || reg == "r14" || reg == "r15");
+                    bool isCalleeSaved = (reg == "rbx" || reg == "r12" || reg == "r13" || reg == "r14" || reg == "r15" || reg == "rsi" || reg == "rdi");
                     CHECK(isCalleeSaved);
                 } else {
                     CHECK(lsra.isSpilled(valBefore.get()));

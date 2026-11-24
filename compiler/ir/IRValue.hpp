@@ -17,6 +17,7 @@ public:
 
     [[nodiscard]] virtual bool isConstant() const noexcept { return false; }
     [[nodiscard]] virtual bool isInstruction() const noexcept { return false; }
+    [[nodiscard]] virtual bool isParameter() const noexcept { return false; }
 
 protected:
     IRValue(std::shared_ptr<Type> type, std::string name)
@@ -113,6 +114,7 @@ public:
         : IRValue(std::move(type), std::move(name)), m_index(index) {}
 
     [[nodiscard]] size_t getIndex() const noexcept { return m_index; }
+    [[nodiscard]] bool isParameter() const noexcept override { return true; }
 
 private:
     size_t m_index;

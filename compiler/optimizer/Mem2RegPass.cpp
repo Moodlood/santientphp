@@ -103,12 +103,12 @@ bool Mem2RegPass::runOnFunction(IRFunction& function) {
             placedPhis[alloca][bb] = phi;
 
             // Insert phi at the beginning of the block (before non-phi instructions)
-            auto& insts = bb->getInstructions();
-            auto insertIt = insts.begin();
-            while (insertIt != insts.end() && (*insertIt)->getOpcode() == IROpcode::Phi) {
-                ++insertIt;
+            const auto& insts = bb->getInstructions();
+            size_t insertIdx = 0;
+            while (insertIdx < insts.size() && insts[insertIdx]->getOpcode() == IROpcode::Phi) {
+                ++insertIdx;
             }
-            insts.insert(insertIt, phi);
+            bb->insertInstruction(insertIdx, phi);
         }
     }
 

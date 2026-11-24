@@ -1,4 +1,5 @@
 #include "X86_64CodeGen.hpp"
+#include <algorithm>
 #include <cstring>
 #include <iostream>
 #include <sstream>
@@ -574,6 +575,150 @@ void X86_64CodeGen::generateBasicBlock(const IRBasicBlock& bb, const IRFunction&
     }
 }
 
+void X86_64CodeGen::emitParallelPhiCopies(const IRBasicBlock& target, const IRBasicBlock& fromBlock) {
+    struct CopyItem {
+        const PhiInst* dst;
+        const IRValue* src;
+    };
+    std::vector<CopyItem> pending;
+
+    for (const auto& inst : target.getInstructions()) {
+        if (inst->getOpcode() == IROpcode::Phi) {
+            const auto& phi = static_cast<const PhiInst&>(*inst);
+            auto val = phi.getIncomingValue(&fromBlock);
+            if (val && val.get() != &phi) {
+                pending.push_back({&phi, val.get()});
+            }
+        } else {
+            break;
+        }
+    }
+
+    if (pending.empty()) return;
+
+    if (pending.size() == 1) {
+        loadValueToReg(*pending[0].src, "rax");
+        storeRegToValue("rax", *pending[0].dst);
+        return;
+    }
+
+    // Parallel copy resolution with cycle breaking
+    std::unordered_map<const IRValue*, int32_t> scratchMap;
+    int32_t scratchCounter = 0;
+
+    while (!pending.empty()) {
+        // Find a copy whose dst is not needed as src by any other pending copy
+        auto it = std::find_if(pending.begin(), pending.end(), [&](const CopyItem& item) {
+            for (const auto& other : pending) {
+                if (other.src == item.dst) {
+                    return false;
+                }
+            }
+            return true;
+        });
+
+        if (it != pending.end()) {
+            const auto* srcVal = it->src;
+            auto scIt = scratchMap.find(srcVal);
+            if (scIt != scratchMap.end()) {
+                m_out << "  mov rax, [rbp - " << scIt->second << "]\n";
+            } else {
+                loadValueToReg(*srcVal, "rax");
+            }
+            storeRegToValue("rax", *it->dst);
+            pending.erase(it);
+        } else {
+            // Cycle detected! Break cycle by staging destination's current value to scratch
+            const auto* cycleDst = pending[0].dst;
+            int32_t scratchSlot = m_tcoScratchOffset + (scratchCounter % 6) * 8;
+            scratchCounter++;
+
+            // Save the value that is about to be overwritten into scratch
+            loadValueToReg(*cycleDst, "rax");
+            m_out << "  mov [rbp - " << scratchSlot << "], rax\n";
+            scratchMap[cycleDst] = scratchSlot;
+
+            // Now perform the copy dst = src
+            const auto* cycleSrc = pending[0].src;
+            auto scIt = scratchMap.find(cycleSrc);
+            if (scIt != scratchMap.end()) {
+                m_out << "  mov rax, [rbp - " << scIt->second << "]\n";
+            } else {
+                loadValueToReg(*cycleSrc, "rax");
+            }
+            storeRegToValue("rax", *cycleDst);
+            pending.erase(pending.begin());
+        }
+    }
+}
+
+bool X86_64CodeGen::tryDirectRegisterBinaryOp(const BinaryInst& binInst) {
+    if (binInst.getType()->isFloatingPoint()) return false;
+    if (!m_lsra || !m_lsra->hasRegister(&binInst)) return false;
+
+    auto op = binInst.getOpcode();
+    if (op != IROpcode::Add && op != IROpcode::Sub && op != IROpcode::Mul &&
+        op != IROpcode::BitwiseAnd && op != IROpcode::BitwiseOr && op != IROpcode::BitwiseXor) {
+        return false;
+    }
+
+    std::string dstReg = m_lsra->getRegister(&binInst);
+    const auto* lhs = binInst.getLhs().get();
+    const auto* rhs = binInst.getRhs().get();
+
+    bool rhsInDst = (m_lsra->hasRegister(rhs) && m_lsra->getRegister(rhs) == dstReg);
+    bool lhsInDst = (m_lsra->hasRegister(lhs) && m_lsra->getRegister(lhs) == dstReg);
+
+    if (rhsInDst && !lhsInDst) {
+        if (op == IROpcode::Add || op == IROpcode::Mul ||
+            op == IROpcode::BitwiseAnd || op == IROpcode::BitwiseOr || op == IROpcode::BitwiseXor) {
+            std::swap(lhs, rhs);
+            lhsInDst = true;
+        } else {
+            return false;
+        }
+    }
+
+    if (!lhsInDst) {
+        loadValueToReg(*lhs, dstReg);
+    }
+
+    std::string opName;
+    switch (op) {
+        case IROpcode::Add: opName = "add"; break;
+        case IROpcode::Sub: opName = "sub"; break;
+        case IROpcode::Mul: opName = "imul"; break;
+        case IROpcode::BitwiseAnd: opName = "and"; break;
+        case IROpcode::BitwiseOr: opName = "or"; break;
+        case IROpcode::BitwiseXor: opName = "xor"; break;
+        default: return false;
+    }
+
+    if (rhs->isConstant()) {
+        if (auto ci = dynamic_cast<const ConstantInt*>(rhs)) {
+            int64_t val = ci->getValue();
+            if (val >= -2147483648LL && val <= 2147483647LL) {
+                if (op == IROpcode::Mul) {
+                    m_out << "  imul " << dstReg << ", " << dstReg << ", " << val << "\n";
+                } else {
+                    m_out << "  " << opName << " " << dstReg << ", " << val << "\n";
+                }
+                return true;
+            }
+        }
+    }
+
+    if (m_lsra->hasRegister(rhs)) {
+        std::string rhsReg = m_lsra->getRegister(rhs);
+        m_out << "  " << opName << " " << dstReg << ", " << rhsReg << "\n";
+        return true;
+    }
+
+    int32_t offset = getSlotOffset(*rhs);
+    m_out << "  " << opName << " " << dstReg << ", [rbp - " << offset << "]\n";
+    return true;
+}
+
 void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunction& fn) {
     if (m_debugInfo && inst.getLocation().isValid()) {
         if (inst.getLocation() != m_lastEmittedLoc) {
@@ -721,6 +866,9 @@ void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunct
         case IROpcode::Div:
         case IROpcode::Mod: {
             const auto& binInst = static_cast<const BinaryInst&>(inst);
+            if (tryDirectRegisterBinaryOp(binInst)) {
+                break;
+            }
             loadValueToReg(*binInst.getLhs(), "rax");
             loadValueToReg(*binInst.getRhs(), "rcx");
 
@@ -852,6 +1000,9 @@ void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunct
         case IROpcode::BitwiseOr:
         case IROpcode::BitwiseXor: {
             const auto& binInst = static_cast<const BinaryInst&>(inst);
+            if (tryDirectRegisterBinaryOp(binInst)) {
+                break;
+            }
             loadValueToReg(*binInst.getLhs(), "rax");
             loadValueToReg(*binInst.getRhs(), "rcx");
 
@@ -944,13 +1095,12 @@ void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunct
             if (retInst.hasValue()) {
                 loadValueToReg(*retInst.getValue(), "rax");
                 if (m_currentFnReturnsSret) {
-                    m_out << "  mov rdi, [rbp - " << m_currentFnSretSlot << "]\n";
-                    m_out << "  mov rsi, rax\n";
+                    m_out << "  mov r11, [rbp - " << m_currentFnSretSlot << "]\n";
                     for (int32_t off = 0; off < m_currentFnSretSize; off += 8) {
-                        m_out << "  mov r10, [rsi + " << off << "]\n";
-                        m_out << "  mov [rdi + " << off << "], r10\n";
+                        m_out << "  mov r10, [rax + " << off << "]\n";
+                        m_out << "  mov [r11 + " << off << "], r10\n";
                     }
-                    m_out << "  mov rax, rdi\n";
+                    m_out << "  mov rax, r11\n";
                 } else if (retInst.getValue()->getType()->isFloatingPoint()) {
                     if (retInst.getValue()->getType()->isF32()) {
                         m_out << "  movd xmm0, eax\n";
@@ -965,18 +1115,7 @@ void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunct
         case IROpcode::Br: {
             const auto& brInst = static_cast<const BranchInst&>(inst);
             if (brInst.getTarget()) {
-                for (const auto& targetInst : brInst.getTarget()->getInstructions()) {
-                    if (targetInst->getOpcode() == IROpcode::Phi) {
-                        const auto& phi = static_cast<const PhiInst&>(*targetInst);
-                        auto val = phi.getIncomingValue(inst.getParent());
-                        if (val) {
-                            loadValueToReg(*val, "rax");
-                            storeRegToValue("rax", phi);
-                        }
-                    } else {
-                        break;
-                    }
-                }
+                emitParallelPhiCopies(*brInst.getTarget(), *inst.getParent());
             }
             m_out << "  jmp " << getLabel(*brInst.getTarget(), fn) << "\n";
             break;
@@ -1006,30 +1145,12 @@ void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunct
                 std::string falseEdge = ".L_edge_f_" + std::to_string(condEdgeCounter++);
                 m_out << "  je " << falseEdge << "\n";
                 if (condBr.getTrueTarget()) {
-                    for (const auto& tInst : condBr.getTrueTarget()->getInstructions()) {
-                        if (tInst->getOpcode() == IROpcode::Phi) {
-                            const auto& phi = static_cast<const PhiInst&>(*tInst);
-                            auto val = phi.getIncomingValue(inst.getParent());
-                            if (val) {
-                                loadValueToReg(*val, "rax");
-                                storeRegToValue("rax", phi);
-                            }
-                        } else break;
-                    }
+                    emitParallelPhiCopies(*condBr.getTrueTarget(), *inst.getParent());
                 }
                 m_out << "  jmp " << getLabel(*condBr.getTrueTarget(), fn) << "\n";
                 m_out << falseEdge << ":\n";
                 if (condBr.getFalseTarget()) {
-                    for (const auto& fInst : condBr.getFalseTarget()->getInstructions()) {
-                        if (fInst->getOpcode() == IROpcode::Phi) {
-                            const auto& phi = static_cast<const PhiInst&>(*fInst);
-                            auto val = phi.getIncomingValue(inst.getParent());
-                            if (val) {
-                                loadValueToReg(*val, "rax");
-                                storeRegToValue("rax", phi);
-                            }
-                        } else break;
-                    }
+                    emitParallelPhiCopies(*condBr.getFalseTarget(), *inst.getParent());
                 }
                 m_out << "  jmp " << getLabel(*condBr.getFalseTarget(), fn) << "\n";
             }

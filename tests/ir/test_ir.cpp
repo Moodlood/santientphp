@@ -46,6 +46,9 @@ TEST_CASE("IRGenerator generates verified IR for SPH 0.1 acceptance program") {
     sph::IRVerifier verifier;
     std::vector<std::string> errors;
     bool irOk = verifier.verify(*irModule, errors);
+    for (const auto& err : errors) {
+        std::cout << "VERIFIER ERROR: " << err << "\n";
+    }
     CHECK(irOk);
     CHECK_EQ(errors.size(), 0u);
 
@@ -106,6 +109,9 @@ TEST_CASE("IRGenerator generates verified IR for if-else control flow") {
     sph::IRVerifier verifier;
     std::vector<std::string> errors;
     bool irOk = verifier.verify(*irModule, errors);
+    for (const auto& err : errors) {
+        std::cout << "VERIFIER ERROR: " << err << "\n";
+    }
     CHECK(irOk);
     CHECK_EQ(errors.size(), 0u);
 
@@ -149,6 +155,9 @@ TEST_CASE("IRGenerator generates verified IR for while loop") {
     sph::IRVerifier verifier;
     std::vector<std::string> errors;
     bool irOk = verifier.verify(*irModule, errors);
+    for (const auto& err : errors) {
+        std::cout << "VERIFIER ERROR: " << err << "\n";
+    }
     CHECK(irOk);
     CHECK_EQ(errors.size(), 0u);
 
@@ -231,6 +240,9 @@ TEST_CASE("IRGenerator generates verified IR for struct operations") {
     sph::IRVerifier verifier;
     std::vector<std::string> errors;
     bool irOk = verifier.verify(*irModule, errors);
+    for (const auto& err : errors) {
+        std::cout << "VERIFIER ERROR: " << err << "\n";
+    }
     CHECK(irOk);
     CHECK_EQ(errors.size(), 0u);
 
@@ -274,6 +286,9 @@ TEST_CASE("IRGenerator generates verified IR for array operations") {
     sph::IRVerifier verifier;
     std::vector<std::string> errors;
     bool irOk = verifier.verify(*irModule, errors);
+    for (const auto& err : errors) {
+        std::cout << "VERIFIER ERROR: " << err << "\n";
+    }
     CHECK(irOk);
     CHECK_EQ(errors.size(), 0u);
 
@@ -319,6 +334,9 @@ TEST_CASE("IRGenerator generates verified IR for enum operations") {
     sph::IRVerifier verifier;
     std::vector<std::string> errors;
     bool irOk = verifier.verify(*irModule, errors);
+    for (const auto& err : errors) {
+        std::cout << "VERIFIER ERROR: " << err << "\n";
+    }
     CHECK(irOk);
     CHECK_EQ(errors.size(), 0u);
 
@@ -365,6 +383,9 @@ TEST_CASE("IRGenerator generates verified IR for slice operations") {
     sph::IRVerifier verifier;
     std::vector<std::string> errors;
     bool irOk = verifier.verify(*irModule, errors);
+    for (const auto& err : errors) {
+        std::cout << "VERIFIER ERROR: " << err << "\n";
+    }
     CHECK(irOk);
     CHECK_EQ(errors.size(), 0u);
 
@@ -418,6 +439,9 @@ TEST_CASE("IRGenerator generates verified IR for class methods and calls") {
     sph::IRVerifier verifier;
     std::vector<std::string> errors;
     bool irOk = verifier.verify(*irModule, errors);
+    for (const auto& err : errors) {
+        std::cout << "VERIFIER ERROR: " << err << "\n";
+    }
     CHECK(irOk);
     CHECK_EQ(errors.size(), 0u);
 
@@ -476,6 +500,9 @@ TEST_CASE("IRGenerator generates verified IR for interfaces and dynamic dispatch
     sph::IRVerifier verifier;
     std::vector<std::string> errors;
     bool irOk = verifier.verify(*irModule, errors);
+    for (const auto& err : errors) {
+        std::cout << "VERIFIER ERROR: " << err << "\n";
+    }
     CHECK(irOk);
     CHECK_EQ(errors.size(), 0u);
 
@@ -535,6 +562,9 @@ TEST_CASE("IRGenerator generates verified IR for monomorphized generic functions
     sph::IRVerifier verifier;
     std::vector<std::string> errors;
     bool irOk = verifier.verify(*irModule, errors);
+    for (const auto& err : errors) {
+        std::cout << "VERIFIER ERROR: " << err << "\n";
+    }
     CHECK(irOk);
     CHECK_EQ(errors.size(), 0u);
 

@@ -26,7 +26,7 @@ bool ControlFlowOptimizationPass::simplifyConditionalBranches(IRFunction& fn) {
                     }
                 }
                 if (!targetHasPhis) {
-                    insts.back() = std::make_shared<BranchInst>(condBr->getTrueTarget());
+                    bb->replaceInstruction(insts.size() - 1, std::make_shared<BranchInst>(condBr->getTrueTarget()));
                     changed = true;
                 }
             }

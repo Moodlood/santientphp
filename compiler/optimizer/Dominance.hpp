@@ -27,6 +27,7 @@ public:
 
     [[nodiscard]] const std::vector<IRBasicBlock*>& getChildren(const IRBasicBlock* bb) const;
     [[nodiscard]] const std::vector<IRBasicBlock*>& getRPOBlocks() const noexcept { return m_rpoBlocks; }
+    [[nodiscard]] bool isReachable(const IRBasicBlock* bb) const noexcept { return m_rpoIndex.count(bb) > 0; }
 
 private:
     void computeRPO(const IRFunction& fn);

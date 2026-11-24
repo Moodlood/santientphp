@@ -46,7 +46,10 @@ void sph_println_string(const char* val) {
 // High-Performance Thread-Local Slab Allocator (<= 64 bytes)
 // ============================================================================
 
-#define SPH_SLAB_MAGIC 0x53504853 // "SPHS"
+#define SPH_SLAB_MAGIC       0x53504853 // "SPHS"
+#define SPH_SLAB_FREED_MAGIC 0x44454144 // "DEAD"
+#define SPH_LARGE_MAGIC      0x4C415247 // "LARG"
+#define SPH_LARGE_FREED_MAGIC 0x4C444541 // "LDEA"
 #define SPH_SLAB_PAYLOAD 64
 #define SPH_SLAB_BLOCK_SIZE (sizeof(sph_slab_block) + SPH_SLAB_PAYLOAD)
 #define SPH_SLAB_CHUNK_CAPACITY 65536
@@ -56,6 +59,12 @@ typedef struct sph_slab_block {
     uint32_t size;
     struct sph_slab_block* next;
 } sph_slab_block;
+
+typedef struct sph_large_block {
+    uint32_t magic;
+    uint32_t size;
+    uint64_t _pad; // 16-byte alignment padding
+} sph_large_block;
 
 typedef struct sph_slab_chunk {
     struct sph_slab_chunk* next;
@@ -80,6 +89,104 @@ static __thread sph_slab_thread_cache g_slab = {0};
 static sph_slab_thread_cache g_slab = {0};
 #endif
 
+static int64_t g_alloc_count = 0;
+static int64_t g_free_count = 0;
+static int64_t g_current_bytes = 0;
+static int64_t g_peak_bytes = 0;
+
+#define SPH_FREED_HISTORY_SIZE 512
+#define SPH_FREED_HISTORY_MASK (SPH_FREED_HISTORY_SIZE - 1)
+#if defined(_MSC_VER)
+static __declspec(thread) void* g_freed_history[SPH_FREED_HISTORY_SIZE] = {0};
+#elif defined(__GNUC__) || defined(__clang__) || defined(__MINGW32__)
+static __thread void* g_freed_history[SPH_FREED_HISTORY_SIZE] = {0};
+#else
+static void* g_freed_history[SPH_FREED_HISTORY_SIZE] = {0};
+#endif
+
+static inline size_t hash_freed_ptr(void* ptr) {
+    uintptr_t v = (uintptr_t)ptr;
+    v ^= v >> 16;
+    v ^= v >> 8;
+    return (size_t)(v & SPH_FREED_HISTORY_MASK);
+}
+
+static inline int is_in_freed_history(void* ptr) {
+    if (!ptr) return 0;
+    return g_freed_history[hash_freed_ptr(ptr)] == ptr;
+}
+
+static inline void add_to_freed_history(void* ptr) {
+    if (!ptr) return;
+    g_freed_history[hash_freed_ptr(ptr)] = ptr;
+}
+
+int64_t sph_alloc_count(void) {
+    return __atomic_load_n(&g_alloc_count, __ATOMIC_RELAXED);
+}
+
+int64_t sph_free_count(void) {
+    return __atomic_load_n(&g_free_count, __ATOMIC_RELAXED);
+}
+
+int64_t sph_current_bytes(void) {
+    return __atomic_load_n(&g_current_bytes, __ATOMIC_RELAXED);
+}
+
+int64_t sph_peak_bytes(void) {
+    return __atomic_load_n(&g_peak_bytes, __ATOMIC_RELAXED);
+}
+
+void sph_mem_reset_stats(void) {
+    __atomic_store_n(&g_alloc_count, 0, __ATOMIC_RELAXED);
+    __atomic_store_n(&g_free_count, 0, __ATOMIC_RELAXED);
+    __atomic_store_n(&g_current_bytes, 0, __ATOMIC_RELAXED);
+    __atomic_store_n(&g_peak_bytes, 0, __ATOMIC_RELAXED);
+    for (size_t i = 0; i < SPH_FREED_HISTORY_SIZE; ++i) {
+        g_freed_history[i] = NULL;
+    }
+}
+
+void sph_mem_dump_leaks(void) {
+    int64_t allocs = sph_alloc_count();
+    int64_t frees = sph_free_count();
+    int64_t cur = sph_current_bytes();
+    int64_t peak = sph_peak_bytes();
+    if (allocs > frees || cur > 0) {
+        printf("[SantientPHP Memory Leak Report]\n");
+        printf("  Allocations: %lld, Frees: %lld, Leaked: %lld blocks (%lld bytes)\n",
+               (long long)allocs, (long long)frees, (long long)(allocs - frees), (long long)cur);
+        printf("  Peak Memory: %lld bytes\n", (long long)peak);
+    }
+}
+
+int32_t sph_mem_validate_ptr(void* ptr) {
+    if (!ptr || is_in_freed_history(ptr)) return 0;
+    if (((uintptr_t)ptr & 0x7) != 0) return 0;
+    sph_slab_block* blk = ((sph_slab_block*)ptr) - 1;
+    if (blk->magic == SPH_SLAB_MAGIC) return 1;
+    sph_large_block* lhdr = ((sph_large_block*)ptr) - 1;
+    if (lhdr->magic == SPH_LARGE_MAGIC) return 1;
+    return 0;
+}
+
+static inline void remove_from_freed_history(void* ptr) {
+    if (!ptr) return;
+    size_t idx = hash_freed_ptr(ptr);
+    if (g_freed_history[idx] == ptr) {
+        g_freed_history[idx] = NULL;
+    }
+}
+
+static inline void record_alloc_stats(void* ptr, int64_t size) {
+    remove_from_freed_history(ptr);
+    __atomic_fetch_add(&g_alloc_count, 1, __ATOMIC_RELAXED);
+    __atomic_fetch_add(&g_current_bytes, size, __ATOMIC_RELAXED);
+    int64_t cur = sph_current_bytes();
+    int64_t peak = sph_peak_bytes();
+    while (cur > peak && !__atomic_compare_exchange_n(&g_peak_bytes, &peak, cur, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {}
+}
+
 void* sph_alloc(int64_t size) {
     if (size <= 0) size = 1;
     if (size <= SPH_SLAB_PAYLOAD) {
@@ -88,14 +195,18 @@ void* sph_alloc(int64_t size) {
             g_slab.free_pool = blk->next;
             blk->magic = SPH_SLAB_MAGIC;
             blk->size = (uint32_t)size;
-            return (void*)(blk + 1);
+            void* res = (void*)(blk + 1);
+            record_alloc_stats(res, size);
+            return res;
         }
         if (g_slab.bump && (g_slab.bump + SPH_SLAB_BLOCK_SIZE <= g_slab.limit)) {
             sph_slab_block* blk = (sph_slab_block*)g_slab.bump;
             g_slab.bump += SPH_SLAB_BLOCK_SIZE;
             blk->magic = SPH_SLAB_MAGIC;
             blk->size = (uint32_t)size;
-            return (void*)(blk + 1);
+            void* res = (void*)(blk + 1);
+            record_alloc_stats(res, size);
+            return res;
         }
         // Allocate a new 64KB chunk
         sph_slab_chunk* new_chunk = (sph_slab_chunk*)malloc(sizeof(sph_slab_chunk));
@@ -109,27 +220,74 @@ void* sph_alloc(int64_t size) {
             g_slab.bump += SPH_SLAB_BLOCK_SIZE;
             blk->magic = SPH_SLAB_MAGIC;
             blk->size = (uint32_t)size;
-            return (void*)(blk + 1);
+            void* res = (void*)(blk + 1);
+            record_alloc_stats(res, size);
+            return res;
         }
         // Fallback
         sph_slab_block* blk = (sph_slab_block*)malloc(SPH_SLAB_BLOCK_SIZE);
         if (!blk) return NULL;
         blk->magic = SPH_SLAB_MAGIC;
         blk->size = (uint32_t)size;
-        return (void*)(blk + 1);
+        void* res = (void*)(blk + 1);
+        record_alloc_stats(res, size);
+        return res;
     }
-    return malloc((size_t)size);
+
+    size_t total = sizeof(sph_large_block) + (size_t)size;
+    sph_large_block* lhdr = (sph_large_block*)malloc(total);
+    if (!lhdr) return NULL;
+    lhdr->magic = SPH_LARGE_MAGIC;
+    lhdr->size = (uint32_t)size;
+    lhdr->_pad = 0;
+    void* res = (void*)(lhdr + 1);
+    record_alloc_stats(res, size);
+    return res;
 }
 
 void sph_free(void* ptr) {
     if (!ptr) return;
+
+    // Pointer provenance & alignment validation: managed blocks are at least 8-byte aligned
+    if (((uintptr_t)ptr & 0x7) != 0 || (uintptr_t)ptr < 4096) {
+        return;
+    }
+
+    // Fast path: Check slab block magic first without history scan
     sph_slab_block* blk = ((sph_slab_block*)ptr) - 1;
     if (blk->magic == SPH_SLAB_MAGIC) {
-        blk->magic = 0;
+        blk->magic = SPH_SLAB_FREED_MAGIC;
+        __atomic_fetch_add(&g_free_count, 1, __ATOMIC_RELAXED);
+        __atomic_fetch_sub(&g_current_bytes, (int64_t)blk->size, __ATOMIC_RELAXED);
         blk->next = g_slab.free_pool;
         g_slab.free_pool = blk;
         return;
     }
+    if (blk->magic == SPH_SLAB_FREED_MAGIC) {
+        // Double free on slab block detected: record and ignore safely
+        return;
+    }
+
+    if (is_in_freed_history(ptr)) return;
+
+    // Check large block magic
+    sph_large_block* lhdr = ((sph_large_block*)ptr) - 1;
+    if (lhdr->magic == SPH_LARGE_MAGIC) {
+        lhdr->magic = SPH_LARGE_FREED_MAGIC;
+        add_to_freed_history(ptr);
+        __atomic_fetch_add(&g_free_count, 1, __ATOMIC_RELAXED);
+        __atomic_fetch_sub(&g_current_bytes, (int64_t)lhdr->size, __ATOMIC_RELAXED);
+        free(lhdr);
+        return;
+    }
+    if (lhdr->magic == SPH_LARGE_FREED_MAGIC) {
+        // Double free on large block detected: record and ignore safely
+        add_to_freed_history(ptr);
+        return;
+    }
+
+    // Fallback for unmanaged or external pointers
+    add_to_freed_history(ptr);
     free(ptr);
 }
 

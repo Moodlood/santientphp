@@ -18,11 +18,19 @@ void sph_println_bool(int32_t val);
 void sph_println_string(const char* val);
 
 // ============================================================================
-// Raw Memory Allocator
+// Raw Memory Allocator & Memory Tracking
 // ============================================================================
 
 void* sph_alloc(int64_t size);
 void sph_free(void* ptr);
+
+int64_t sph_alloc_count(void);
+int64_t sph_free_count(void);
+int64_t sph_current_bytes(void);
+int64_t sph_peak_bytes(void);
+void sph_mem_reset_stats(void);
+void sph_mem_dump_leaks(void);
+int32_t sph_mem_validate_ptr(void* ptr);
 
 // ============================================================================
 // Reference Counted Smart Pointers (Rc<T>)

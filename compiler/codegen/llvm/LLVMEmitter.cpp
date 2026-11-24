@@ -90,6 +90,10 @@ void LLVMEmitter::emit(const IRModule& module) {
     m_out << "declare void @sph_println_i32x4(ptr)\n";
     m_out << "declare void @sph_println_f64x2(ptr)\n";
     m_out << "declare void @sph_println_i64x2(ptr)\n";
+    m_out << "declare ptr @sph_alloc(i64)\n";
+    m_out << "declare void @sph_free(ptr)\n";
+    m_out << "declare void @sph_mem_dump_leaks()\n";
+    m_out << "declare i32 @sph_mem_validate_ptr(ptr)\n";
     m_out << "declare ptr @sph_rc_alloc(i64)\n";
     m_out << "declare void @sph_rc_retain(ptr)\n";
     m_out << "declare void @sph_rc_release(ptr)\n";

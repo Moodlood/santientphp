@@ -3,6 +3,45 @@
 
 namespace sph {
 
+static bool isCloneableInstruction(const IRInstruction& inst) noexcept {
+    switch (inst.getOpcode()) {
+        case IROpcode::Alloca:
+        case IROpcode::Load:
+        case IROpcode::Store:
+        case IROpcode::Add:
+        case IROpcode::Sub:
+        case IROpcode::Mul:
+        case IROpcode::Div:
+        case IROpcode::Mod:
+        case IROpcode::Equal:
+        case IROpcode::NotEqual:
+        case IROpcode::Less:
+        case IROpcode::LessEqual:
+        case IROpcode::Greater:
+        case IROpcode::GreaterEqual:
+        case IROpcode::LogicalAnd:
+        case IROpcode::LogicalOr:
+        case IROpcode::BitwiseAnd:
+        case IROpcode::BitwiseOr:
+        case IROpcode::BitwiseXor:
+        case IROpcode::ShiftLeft:
+        case IROpcode::ShiftRight:
+        case IROpcode::Negate:
+        case IROpcode::LogicalNot:
+        case IROpcode::BitwiseNot:
+        case IROpcode::Cast:
+        case IROpcode::GetFieldPtr:
+        case IROpcode::GetElementPtr:
+        case IROpcode::AddressOf:
+        case IROpcode::Ret:
+        case IROpcode::RcRetain:
+        case IROpcode::RcAlloc:
+            return true;
+        default:
+            return false;
+    }
+}
+
 bool FunctionInliningPass::isInlineCandidate(const IRFunction& fn) const noexcept {
     if (fn.getName() == "main" || fn.isDeclaration()) {
         return false;
@@ -17,15 +56,10 @@ bool FunctionInliningPass::isInlineCandidate(const IRFunction& fn) const noexcep
         return false;
     }
 
-    // Check that it doesn't call itself or other functions, or perform complex control flow / resource cleanup
+    // Check that it doesn't call itself or other functions, or perform complex control flow / resource cleanup,
+    // and every instruction can be faithfully cloned into the caller.
     for (const auto& inst : insts) {
-        if (inst->getOpcode() == IROpcode::Call) {
-            return false;
-        }
-        if (inst->getOpcode() == IROpcode::SetJmp) {
-            return false;
-        }
-        if (inst->getOpcode() == IROpcode::RcRelease) {
+        if (!isCloneableInstruction(*inst)) {
             return false;
         }
     }
@@ -42,9 +76,13 @@ bool FunctionInliningPass::inlineFunctionCall(IRFunction& caller, size_t blockId
     const auto& calleeInsts = calleeBlock->getInstructions();
 
     // Map parameters to caller arguments
-    std::unordered_map<const IRValue*, std::shared_ptr<IRValue>> valueMap;
     const auto& params = callee.getParameters();
-    for (size_t i = 0; i < params.size() && i < callInst->getArgs().size(); ++i) {
+    if (params.size() != callInst->getArgs().size()) {
+        return false;
+    }
+
+    std::unordered_map<const IRValue*, std::shared_ptr<IRValue>> valueMap;
+    for (size_t i = 0; i < params.size(); ++i) {
         valueMap[params[i].get()] = callInst->getArgs()[i];
     }
 
@@ -155,11 +193,24 @@ bool FunctionInliningPass::inlineFunctionCall(IRFunction& caller, size_t blockId
                 cloned = std::make_shared<AddressOfInst>(target, orig.getType(), newName);
                 break;
             }
+            case IROpcode::RcRetain: {
+                const auto& orig = static_cast<const RcRetainInst&>(*cInst);
+                auto ptr = orig.getPtr();
+                if (valueMap.count(ptr.get())) ptr = valueMap[ptr.get()];
+                cloned = std::make_shared<RcRetainInst>(ptr);
+                break;
+            }
+            case IROpcode::RcAlloc: {
+                const auto& orig = static_cast<const RcAllocInst&>(*cInst);
+                cloned = std::make_shared<RcAllocInst>(orig.getInnerType(), orig.getAllocSize(), newName);
+                break;
+            }
             default:
                 break;
         }
 
         if (cloned) {
+            cloned->setParent(callerBlock.get());
             valueMap[cInst.get()] = cloned;
             inlinedInsts.push_back(cloned);
         }
@@ -178,8 +229,10 @@ bool FunctionInliningPass::inlineFunctionCall(IRFunction& caller, size_t blockId
     }
 
     // Replace callInst with inlined instructions
-    callerInsts.erase(callerInsts.begin() + instIdx);
-    callerInsts.insert(callerInsts.begin() + instIdx, inlinedInsts.begin(), inlinedInsts.end());
+    callerBlock->removeInstruction(instIdx);
+    for (size_t k = 0; k < inlinedInsts.size(); ++k) {
+        callerBlock->insertInstruction(instIdx + k, inlinedInsts[k]);
+    }
 
     return true;
 }

@@ -154,18 +154,9 @@ bool LoopInvariantCodeMotionPass::runOnFunction(IRFunction& fn) {
 
         // Hoist invariant instructions to preheader right before its terminator
         if (!invariantInsts.empty()) {
-            auto& preInsts = loop.preheader->getInstructions();
-            if (!preInsts.empty() && preInsts.back()->isTerminator()) {
-                auto term = preInsts.back();
-                preInsts.pop_back();
-                for (const auto& inv : invariantInsts) {
-                    preInsts.push_back(inv);
-                }
-                preInsts.push_back(term);
-            } else {
-                for (const auto& inv : invariantInsts) {
-                    preInsts.push_back(inv);
-                }
+            size_t insertPos = loop.preheader->hasTerminator() ? (loop.preheader->getInstructions().size() - 1) : loop.preheader->getInstructions().size();
+            for (const auto& inv : invariantInsts) {
+                loop.preheader->insertInstruction(insertPos++, inv);
             }
             anyChanged = true;
         }

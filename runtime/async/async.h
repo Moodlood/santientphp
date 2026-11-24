@@ -83,6 +83,7 @@ void sph_promise_reject(void* promise_ptr, void* error);
 int32_t sph_promise_is_ready(void* promise_ptr);
 void* sph_promise_get_value(void* promise_ptr);
 void* sph_promise_await(void* promise_ptr);
+void sph_promise_destroy(void* promise_ptr);
 
 void sph_event_loop_init(void);
 void* sph_event_loop_spawn(void* fn_ptr, void* arg);

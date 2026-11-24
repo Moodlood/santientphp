@@ -13,6 +13,9 @@
 #include "StrengthReductionPass.hpp"
 #include "TailCallPass.hpp"
 
+#include "compiler/ir/IRVerifier.hpp"
+#include <iostream>
+
 namespace sph {
 
 void PassManager::addFunctionPass(std::unique_ptr<FunctionPass> pass) {
@@ -98,6 +101,19 @@ bool PassManager::run(IRModule& module) {
         return false;
     }
 
+    auto verifyPass = [&](std::string_view passName, const std::string& context) {
+        if (!m_verifyEachPass) return;
+        std::vector<std::string> verifierErrors;
+        IRVerifier verifier;
+        if (!verifier.verify(module, verifierErrors)) {
+            std::cerr << "[PassManager Error] IR verification failed after " << passName
+                      << " on " << context << " (" << verifierErrors.size() << " errors):\n";
+            for (const auto& err : verifierErrors) {
+                std::cerr << "  - " << err << "\n";
+            }
+        }
+    };
+
     bool anyChanged = false;
 
     // Run module passes
@@ -105,6 +121,7 @@ bool PassManager::run(IRModule& module) {
         if (mp->runOnModule(module)) {
             anyChanged = true;
         }
+        verifyPass(mp->getName(), "module");
     }
 
     // Run function passes iteratively until fixed point or max iterations
@@ -119,9 +136,23 @@ bool PassManager::run(IRModule& module) {
                     iterChanged = true;
                     anyChanged = true;
                 }
+                verifyPass(fp->getName(), "function '@" + fn->getName() + "'");
             }
         }
         if (!iterChanged) break;
+    }
+
+    // Synchronize parent basic block pointers on all instructions across all functions
+    for (auto& fn : module.getFunctions()) {
+        if (fn->isDeclaration()) continue;
+        for (auto& bb : fn->getBlocks()) {
+            if (!bb) continue;
+            for (auto& inst : bb->getInstructions()) {
+                if (inst) {
+                    inst->setParent(bb.get());
+                }
+            }
+        }
     }
 
     return anyChanged;
