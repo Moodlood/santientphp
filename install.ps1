@@ -12,6 +12,7 @@ param(
     [switch]$NoPathUpdate,
     [switch]$NoAssociation,
     [switch]$NoRegistry,
+    [switch]$SkipResourceCheck,
     [switch]$Quiet
 )
 
@@ -45,34 +46,190 @@ function Write-Err {
 # 1. Administrator Privilege Check & Auto-Elevation
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
-    Write-Warn "Administrator privileges are required to install to '$InstallDir' and update System PATH."
-    Write-Step "Requesting elevation via Windows UAC prompt..."
+    Write-Warn "Administrator privileges are recommended to install to '$InstallDir' and update System PATH."
+    Write-Step "Attempting elevation via Windows UAC prompt..."
     
     $argList = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
-    if ($SkipBuild)     { $argList += " -SkipBuild" }
-    if ($NoJunction)     { $argList += " -NoJunction" }
-    if ($NoPathUpdate)   { $argList += " -NoPathUpdate" }
-    if ($NoAssociation)  { $argList += " -NoAssociation" }
-    if ($NoRegistry)     { $argList += " -NoRegistry" }
-    if ($Quiet)          { $argList += " -Quiet" }
+    if ($SkipBuild)         { $argList += " -SkipBuild" }
+    if ($NoJunction)         { $argList += " -NoJunction" }
+    if ($NoPathUpdate)       { $argList += " -NoPathUpdate" }
+    if ($NoAssociation)      { $argList += " -NoAssociation" }
+    if ($NoRegistry)         { $argList += " -NoRegistry" }
+    if ($SkipResourceCheck)  { $argList += " -SkipResourceCheck" }
+    if ($Quiet)              { $argList += " -Quiet" }
     
     try {
         $proc = Start-Process powershell.exe -Verb RunAs -ArgumentList $argList -PassThru -Wait
         exit $proc.ExitCode
     } catch {
-        Write-Err "UAC elevation failed or was declined by user: $_"
-        exit 1
+        Write-Warn "UAC elevation not available or declined in this console. Continuing with current user privileges..."
     }
 }
 
-# Banner
+# 1b. OS & Hardware Architecture Detection
+function Get-OSDetails {
+    $osObj = [PSCustomObject]@{
+        Caption = [System.Environment]::OSVersion.VersionString
+        BuildNumber = [System.Environment]::OSVersion.Version.Build
+        Architecture = [System.Environment]::GetEnvironmentVariable("PROCESSOR_ARCHITECTURE")
+        Cores = [System.Environment]::ProcessorCount
+        SystemDrive = [System.Environment]::GetEnvironmentVariable("SystemDrive")
+    }
+
+    try {
+        $wmi = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
+        if ($wmi) {
+            $osObj.Caption = $wmi.Caption
+            $osObj.BuildNumber = $wmi.BuildNumber
+            if ($wmi.OSArchitecture) {
+                $osObj.Architecture = $wmi.OSArchitecture
+            }
+        }
+    } catch {}
+
+    return $osObj
+}
+
+function Get-PackageManagerCmd {
+    $w = Get-Command winget -ErrorAction SilentlyContinue
+    if ($w) { return "winget" }
+
+    $localWinget = "$env:LOCALAPPDATA\Microsoft\WindowsApps\winget.exe"
+    if (Test-Path $localWinget) { return $localWinget }
+
+    $c = Get-Command choco -ErrorAction SilentlyContinue
+    if ($c) { return "choco" }
+
+    $s = Get-Command scoop -ErrorAction SilentlyContinue
+    if ($s) { return "scoop" }
+
+    return $null
+}
+
+function Test-DeveloperToolchain {
+    $checks = @()
+
+    # C/C++ Compiler
+    $gcc = Get-Command gcc -ErrorAction SilentlyContinue
+    $clang = Get-Command clang -ErrorAction SilentlyContinue
+    if ($gcc) {
+        $ver = (& gcc --version 2>&1 | Select-Object -First 1)
+        $checks += [PSCustomObject]@{ Category="Compiler"; Name="Host C/C++ Compiler (gcc)"; Found=$true; Details=$ver; Pkg="BrechtSanders.WinLibs.POSIX.UCRT" }
+    } elseif ($clang) {
+        $ver = (& clang --version 2>&1 | Select-Object -First 1)
+        $checks += [PSCustomObject]@{ Category="Compiler"; Name="Host C/C++ Compiler (clang)"; Found=$true; Details=$ver; Pkg="LLVM.LLVM" }
+    } else {
+        $checks += [PSCustomObject]@{ Category="Compiler"; Name="Host C/C++ Compiler (GCC/Clang)"; Found=$false; Details="Not found in PATH (C++20 required)"; Pkg="BrechtSanders.WinLibs.POSIX.UCRT" }
+    }
+
+    # CMake
+    $cmake = Get-Command cmake -ErrorAction SilentlyContinue
+    if ($cmake) {
+        $ver = (& cmake --version 2>&1 | Select-Object -First 1)
+        $checks += [PSCustomObject]@{ Category="Build System"; Name="CMake (>=3.20)"; Found=$true; Details=$ver; Pkg="Kitware.CMake" }
+    } else {
+        $checks += [PSCustomObject]@{ Category="Build System"; Name="CMake (>=3.20)"; Found=$false; Details="Not found in PATH"; Pkg="Kitware.CMake" }
+    }
+
+    # Ninja
+    $ninja = Get-Command ninja -ErrorAction SilentlyContinue
+    if ($ninja) {
+        $ver = (& ninja --version 2>&1 | Select-Object -First 1)
+        $checks += [PSCustomObject]@{ Category="Build System"; Name="Ninja Build System"; Found=$true; Details="ninja $ver"; Pkg="Ninja-build.Ninja" }
+    } else {
+        $checks += [PSCustomObject]@{ Category="Build System"; Name="Ninja Build System"; Found=$false; Details="Not found in PATH"; Pkg="Ninja-build.Ninja" }
+    }
+
+    # Git
+    $git = Get-Command git -ErrorAction SilentlyContinue
+    if ($git) {
+        $ver = (& git --version 2>&1 | Select-Object -First 1)
+        $checks += [PSCustomObject]@{ Category="VCS"; Name="Version Control (git)"; Found=$true; Details=$ver; Pkg="Git.Git" }
+    } else {
+        $checks += [PSCustomObject]@{ Category="VCS"; Name="Version Control (git)"; Found=$false; Details="Not found in PATH"; Pkg="Git.Git" }
+    }
+
+    return $checks
+}
+
+function Install-MissingResources {
+    Write-Step "Auditing required development prerequisites..."
+    $pm = Get-PackageManagerCmd
+    $checks = Test-DeveloperToolchain
+    $missing = $checks | Where-Object { -not $_.Found -and $_.Pkg -ne "" }
+
+    if ($missing.Count -eq 0) {
+        Write-Success "All required developer resources (Compiler, CMake, Ninja, Git) are verified."
+        return $true
+    }
+
+    Write-Warn "Missing required developer resources detected:"
+    foreach ($m in $missing) {
+        Write-Host "  - [$($m.Category)] $($m.Name) (Package: $($m.Pkg))" -ForegroundColor Yellow
+    }
+
+    if (-not $pm) {
+        Write-Err "No supported Windows package manager (winget, choco, scoop) was found."
+        Write-Host "Please install missing tools manually:" -ForegroundColor Cyan
+        Write-Host "  1. MinGW-w64 GCC (C++20): https://winlibs.com/" -ForegroundColor Gray
+        Write-Host "  2. CMake (>=3.20):        https://cmake.org/download/" -ForegroundColor Gray
+        Write-Host "  3. Ninja:                 https://github.com/ninja-build/ninja/releases" -ForegroundColor Gray
+        Write-Host "  4. Git for Windows:       https://git-scm.com/download/win" -ForegroundColor Gray
+        return $false
+    }
+
+    Write-Step "Automatically installing missing prerequisites using $pm..."
+    foreach ($m in $missing) {
+        Write-Step "Installing $($m.Name) [ID: $($m.Pkg)]..."
+        try {
+            if ($pm -like "*winget*") {
+                & $pm install --id $m.Pkg -e --silent --accept-source-agreements --accept-package-agreements
+            } elseif ($pm -eq "choco") {
+                $chocoPkg = switch ($m.Pkg) {
+                    "BrechtSanders.WinLibs.POSIX.UCRT" { "mingw" }
+                    "Kitware.CMake" { "cmake" }
+                    "Ninja-build.Ninja" { "ninja" }
+                    "Git.Git" { "git" }
+                    default { $m.Pkg }
+                }
+                & choco install $chocoPkg -y
+            } elseif ($pm -eq "scoop") {
+                $scoopPkg = switch ($m.Pkg) {
+                    "BrechtSanders.WinLibs.POSIX.UCRT" { "gcc" }
+                    "Kitware.CMake" { "cmake" }
+                    "Ninja-build.Ninja" { "ninja" }
+                    "Git.Git" { "git" }
+                    default { $m.Pkg }
+                }
+                & scoop install $scoopPkg
+            }
+            Write-Success "Installed $($m.Name)."
+        } catch {
+            Write-Warn "Could not auto-install $($m.Pkg): $_"
+        }
+    }
+
+    # Refresh PATH in current session
+    Write-Step "Refreshing PATH in current session..."
+    $machinePath = [Environment]::GetEnvironmentVariable("PATH", [EnvironmentVariableTarget]::Machine)
+    $userPath = [Environment]::GetEnvironmentVariable("PATH", [EnvironmentVariableTarget]::User)
+    $env:PATH = "$machinePath;$userPath"
+
+    return $true
+}
+
+$OS = Get-OSDetails
 if (-not $Quiet) {
-    Write-Host ""
+    Write-Host "  Operating System: $($OS.Caption) ($($OS.Architecture))" -ForegroundColor Gray
+    Write-Host "  OS Build Number:  $($OS.BuildNumber)" -ForegroundColor Gray
+    Write-Host "  Logical Cores:    $($OS.Cores)" -ForegroundColor Gray
     Write-Host "============================================================" -ForegroundColor Cyan
-    Write-Host "             SantientPHP Windows Installer                  " -ForegroundColor White
-    Write-Host "       Native Compiled PHP for Drive C & Program Files      " -ForegroundColor DarkCyan
-    Write-Host "============================================================" -ForegroundColor Cyan
     Write-Host ""
+}
+
+# Auto-check and auto-install missing resources if not skipped
+if (-not $SkipResourceCheck) {
+    Install-MissingResources | Out-Null
 }
 
 # Locate repository root (script directory)

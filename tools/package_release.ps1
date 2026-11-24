@@ -5,7 +5,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$Version = "0.1.0",
+    [string]$Version = "0.2.1",
     [string]$OutputDir = "dist"
 )
 
@@ -63,7 +63,7 @@ Copy-Item (Join-Path $RepoRoot "examples\*") (Join-Path $DistDir "examples") -Re
 Copy-Item (Join-Path $RepoRoot "docs\*") (Join-Path $DistDir "docs") -Recurse -Force
 
 Write-Host "==> Staging configs & scripts..." -ForegroundColor Cyan
-@("sph.ini", "sph.ini-development", "sph.ini-production", "sph.toml", "install.bat", "install.ps1", "uninstall.bat", "uninstall.ps1", "LICENSE", "README.md", "main.sph", "hello.sph") | ForEach-Object {
+@("sph.ini", "sph.ini-development", "sph.ini-production", "sph.toml", "install.bat", "install.ps1", "install.sh", "uninstall.bat", "uninstall.ps1", "uninstall.sh", "LICENSE", "README.md", "main.sph", "hello.sph") | ForEach-Object {
     $src = Join-Path $RepoRoot $_
     if (Test-Path $src) {
         Copy-Item $src (Join-Path $DistDir $_) -Force

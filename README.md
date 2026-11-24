@@ -145,24 +145,28 @@ ninja -C build
 .\build\bin\sph_tests.exe
 ```
 
-### 3. Install to Windows (Drive C & Program Files)
+### 3. Install to System (Windows, Linux, macOS)
 
-Install SantientPHP as a system-wide compiler just like standard PHP:
+SantientPHP provides OS-aware installer and environment manager scripts that automatically audit your developer toolchain (C++20 compiler, CMake, Ninja, Git) and auto-install any missing prerequisites so developers never face missing dependencies:
 
-- **Option A (One-Click Batch)**: Double-click or run `install.bat` (prompts for UAC Administrator elevation automatically).
-- **Option B (PowerShell)**: Run `powershell -ExecutionPolicy Bypass -File .\install.ps1` in an elevated terminal.
+- **Windows (One-Click Batch)**: Double-click or run `install.bat` (checks OS, auto-provisions missing resources via `winget`, and prompts for UAC elevation).
+- **Windows (PowerShell)**: Run `powershell -ExecutionPolicy Bypass -File .\install.ps1` in an elevated terminal.
+- **Linux & macOS (Bash)**: Run `chmod +x install.sh && ./install.sh` (detects Linux distro/Homebrew, auto-installs prerequisites via `apt`/`dnf`/`pacman`/`brew`, builds and installs to `/usr/local/bin`).
 
-This installs:
-- Primary location: `C:\Program Files\SantientPHP\`
-- Drive C alias: `C:\SantientPHP\` (NTFS directory junction)
-- Executables & wrappers in `bin/`: `sphc.exe`, `sph.exe`, `santientphp.exe`
+This configures:
+- Primary location: `C:\Program Files\SantientPHP\` (Windows) or `/usr/local/` (Linux/macOS)
+- Drive C alias: `C:\SantientPHP\` (NTFS directory junction on Windows)
+- Executables & wrappers in `bin/`: `sphc`, `sph`, `santientphp`
 - Precompiled runtime in `lib/`: `libsph_runtime.a`
-- PHP-like configuration in root: `sph.ini` (`sph.ini-development`, `sph.ini-production`)
+- Standard library modules, documentation, and examples
+- PHP-like configuration: `sph.ini` (`sph.ini-development`, `sph.ini-production`)
 - System `PATH` and `SPH_HOME` / `SANTIENTPHP_HOME` environment variables
 - Windows Explorer `.sph` file association and context menu actions
 - Registered in Windows **Installed Apps / Programs and Features**
 
-To uninstall at any time, run `uninstall.bat` or `uninstall.ps1` (or uninstall from Windows Settings / Control Panel).
+To manage resources, repair, or uninstall at any time:
+- On Windows: Run `uninstall.bat` or `uninstall.ps1` (OS-aware manager offering clean uninstallation, developer resource auto-installation, or repair).
+- On Linux & macOS: Run `./uninstall.sh`.
 
 ### 4. Verify Your Toolchain
 
