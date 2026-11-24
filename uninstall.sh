@@ -60,3 +60,4 @@ echo -e "${GREEN}============================================================${R
 echo -e "${BOLD}    SantientPHP has been successfully uninstalled.          ${RESET}"
 echo -e "${GREEN}============================================================${RESET}"
 echo ""
+

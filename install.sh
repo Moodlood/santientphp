@@ -209,3 +209,4 @@ echo -e "  * ${CYAN}${INSTALL_PREFIX}/bin/sphc${RESET}       (Primary compiler c
 echo -e "  * ${CYAN}${INSTALL_PREFIX}/bin/sph${RESET}        (PHP-like CLI alias)"
 echo -e "  * ${CYAN}${INSTALL_PREFIX}/bin/santientphp${RESET} (Full binary command)"
 echo ""
+
