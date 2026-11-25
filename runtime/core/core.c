@@ -99,7 +99,9 @@ typedef struct sph_slab_chunk {
     uint8_t memory[SPH_SLAB_CHUNK_CAPACITY - 48];
 } sph_slab_chunk;
 
-_Static_assert(offsetof(sph_slab_chunk, memory) == 48, "chunk memory must start 16-byte aligned");
+/* Compile-time check: sph_slab_chunk.memory must start at byte 48 (16-byte aligned).
+   Use a typedef-based assertion that works on all C11+ GCC versions. */
+typedef char sph_check_chunk_offset_[(offsetof(sph_slab_chunk, memory) == 48) ? 1 : -1];
 
 typedef struct sph_slab_tier_cache {
     sph_slab_block* free_pool;

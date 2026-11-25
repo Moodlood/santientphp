@@ -8,47 +8,180 @@
 #include <math.h>
 
 // PHP Compatibility Subsystem: Dynamic Values (sph_value)
-void* sph_value_create_null(void) {
-    sph_value* v = (sph_value*)malloc(sizeof(sph_value));
-    if (!v) sph_panic("out of memory creating dynamic null");
-    v->type = SPH_TYPE_NULL;
+
+/* Thread-safe open-addressed pointer registry tracking live heap sph_value*
+   objects so ambiguous void* entry points can distinguish a boxed sph_value*
+   from raw .rodata C strings, SQLite column names, sph_array*, or sph_object*
+   WITHOUT ever reading past short literals (ASan) or unaligned pointers (UBSan). */
+#define SPH_VAL_EMPTY     ((uintptr_t)0)
+#define SPH_VAL_TOMBSTONE ((uintptr_t)1)
+
+static uintptr_t* g_sph_val_slots = NULL;
+static size_t g_sph_val_cap = 0;
+static size_t g_sph_val_count = 0;
+static size_t g_sph_val_used = 0;
+static volatile int g_sph_val_lock = 0;
+
+static inline void sph_val_lock_acquire(void) {
+    while (__atomic_exchange_n(&g_sph_val_lock, 1, __ATOMIC_ACQUIRE) != 0) {
+    }
+}
+
+static inline void sph_val_lock_release(void) {
+    __atomic_store_n(&g_sph_val_lock, 0, __ATOMIC_RELEASE);
+}
+
+static inline size_t sph_val_hash(uintptr_t k, size_t mask) {
+    uint64_t x = (uint64_t)k;
+    x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+    x ^= (x >> 31);
+    return (size_t)x & mask;
+}
+
+static void sph_val_registry_rehash(size_t new_cap) {
+    uintptr_t* next = (uintptr_t*)calloc(new_cap, sizeof(uintptr_t));
+    if (!next) return;
+    size_t mask = new_cap - 1;
+    if (g_sph_val_slots) {
+        for (size_t i = 0; i < g_sph_val_cap; ++i) {
+            uintptr_t cur = g_sph_val_slots[i];
+            if (cur > SPH_VAL_TOMBSTONE) {
+                size_t idx = sph_val_hash(cur, mask);
+                while (next[idx] != SPH_VAL_EMPTY) {
+                    idx = (idx + 1) & mask;
+                }
+                next[idx] = cur;
+            }
+        }
+        free(g_sph_val_slots);
+    }
+    g_sph_val_slots = next;
+    g_sph_val_cap = new_cap;
+    g_sph_val_used = g_sph_val_count;
+}
+
+static void sph_val_registry_add(const void* ptr) {
+    uintptr_t key = (uintptr_t)ptr;
+    if (key <= SPH_VAL_TOMBSTONE) return;
+    sph_val_lock_acquire();
+    if (!g_sph_val_slots) {
+        sph_val_registry_rehash(1024);
+    } else if ((g_sph_val_used + 1) * 2 >= g_sph_val_cap) {
+        size_t next_cap = (g_sph_val_count * 4 >= g_sph_val_cap) ? (g_sph_val_cap * 2) : g_sph_val_cap;
+        sph_val_registry_rehash(next_cap);
+    }
+    if (g_sph_val_slots && g_sph_val_cap > 0) {
+        size_t mask = g_sph_val_cap - 1;
+        size_t idx = sph_val_hash(key, mask);
+        size_t first_tomb = (size_t)-1;
+        for (size_t step = 0; step < g_sph_val_cap; ++step) {
+            uintptr_t cur = g_sph_val_slots[idx];
+            if (cur == key) {
+                sph_val_lock_release();
+                return;
+            }
+            if (cur == SPH_VAL_TOMBSTONE && first_tomb == (size_t)-1) {
+                first_tomb = idx;
+            } else if (cur == SPH_VAL_EMPTY) {
+                size_t dst = (first_tomb != (size_t)-1) ? first_tomb : idx;
+                if (g_sph_val_slots[dst] == SPH_VAL_EMPTY) {
+                    g_sph_val_used++;
+                }
+                g_sph_val_slots[dst] = key;
+                g_sph_val_count++;
+                sph_val_lock_release();
+                return;
+            }
+            idx = (idx + 1) & mask;
+        }
+        if (first_tomb != (size_t)-1) {
+            g_sph_val_slots[first_tomb] = key;
+            g_sph_val_count++;
+        }
+    }
+    sph_val_lock_release();
+}
+
+static int sph_val_registry_remove(const void* ptr) {
+    uintptr_t key = (uintptr_t)ptr;
+    if (key < 4096u || (key & 3u) != 0u) return 0;
+    sph_val_lock_acquire();
+    int removed = 0;
+    if (g_sph_val_slots && g_sph_val_cap > 0) {
+        size_t mask = g_sph_val_cap - 1;
+        size_t idx = sph_val_hash(key, mask);
+        for (size_t step = 0; step < g_sph_val_cap; ++step) {
+            uintptr_t cur = g_sph_val_slots[idx];
+            if (cur == key) {
+                g_sph_val_slots[idx] = SPH_VAL_TOMBSTONE;
+                if (g_sph_val_count > 0) g_sph_val_count--;
+                removed = 1;
+                break;
+            }
+            if (cur == SPH_VAL_EMPTY) break;
+            idx = (idx + 1) & mask;
+        }
+    }
+    sph_val_lock_release();
+    return removed;
+}
+
+static inline sph_value* sph_as_value(const void* ptr) {
+    uintptr_t key = (uintptr_t)ptr;
+    if (key < 4096u || (key & 3u) != 0u) return NULL;
+    sph_val_lock_acquire();
+    int found = 0;
+    if (g_sph_val_slots && g_sph_val_cap > 0) {
+        size_t mask = g_sph_val_cap - 1;
+        size_t idx = sph_val_hash(key, mask);
+        for (size_t step = 0; step < g_sph_val_cap; ++step) {
+            uintptr_t cur = g_sph_val_slots[idx];
+            if (cur == key) {
+                found = 1;
+                break;
+            }
+            if (cur == SPH_VAL_EMPTY) break;
+            idx = (idx + 1) & mask;
+        }
+    }
+    sph_val_lock_release();
+    return found ? (sph_value*)ptr : NULL;
+}
+
+static sph_value* sph_value_alloc(int32_t type) {
+    sph_value* v = (sph_value*)calloc(1, sizeof(sph_value));
+    if (!v) sph_panic("out of memory creating dynamic value");
+    v->type = type;
     v->_reserved = 0;
-    v->data.i = 0;
-    return (void*)v;
+    sph_val_registry_add(v);
+    return v;
+}
+
+void* sph_value_create_null(void) {
+    return (void*)sph_value_alloc(SPH_TYPE_NULL);
 }
 
 void* sph_value_create_bool(int32_t val) {
-    sph_value* v = (sph_value*)malloc(sizeof(sph_value));
-    if (!v) sph_panic("out of memory creating dynamic bool");
-    v->type = SPH_TYPE_BOOL;
-    v->_reserved = 0;
+    sph_value* v = sph_value_alloc(SPH_TYPE_BOOL);
     v->data.b = val != 0 ? 1 : 0;
     return (void*)v;
 }
 
 void* sph_value_create_int(int64_t val) {
-    sph_value* v = (sph_value*)malloc(sizeof(sph_value));
-    if (!v) sph_panic("out of memory creating dynamic int");
-    v->type = SPH_TYPE_INT;
-    v->_reserved = 0;
+    sph_value* v = sph_value_alloc(SPH_TYPE_INT);
     v->data.i = val;
     return (void*)v;
 }
 
 void* sph_value_create_float(double val) {
-    sph_value* v = (sph_value*)malloc(sizeof(sph_value));
-    if (!v) sph_panic("out of memory creating dynamic float");
-    v->type = SPH_TYPE_FLOAT;
-    v->_reserved = 0;
+    sph_value* v = sph_value_alloc(SPH_TYPE_FLOAT);
     v->data.f = val;
     return (void*)v;
 }
 
 void* sph_value_create_string(const char* val) {
-    sph_value* v = (sph_value*)malloc(sizeof(sph_value));
-    if (!v) sph_panic("out of memory creating dynamic string");
-    v->type = SPH_TYPE_STRING;
-    v->_reserved = 0;
+    sph_value* v = sph_value_alloc(SPH_TYPE_STRING);
     if (val) {
         size_t len = strlen(val);
         v->data.s = (char*)malloc(len + 1);
@@ -136,10 +269,7 @@ void* sph_array_create(void) {
 }
 
 void* sph_value_create_array(void* arr) {
-    sph_value* v = (sph_value*)malloc(sizeof(sph_value));
-    if (!v) sph_panic("out of memory creating dynamic array value");
-    v->type = SPH_TYPE_ARRAY;
-    v->_reserved = 0;
+    sph_value* v = sph_value_alloc(SPH_TYPE_ARRAY);
     v->data.a = arr;
     return (void*)v;
 }
@@ -151,8 +281,8 @@ void* sph_value_create_array_empty(void) {
 
 static sph_array* sph_get_or_vivify_array(void* arr_or_val, int vivify) {
     if (!arr_or_val) return NULL;
-    sph_value* v = (sph_value*)arr_or_val;
-    if (v->type >= SPH_TYPE_NULL && v->type <= SPH_TYPE_OBJECT && v->_reserved == 0) {
+    sph_value* v = sph_as_value(arr_or_val);
+    if (v) {
         if (v->type == SPH_TYPE_ARRAY) {
             if (!v->data.a && vivify) {
                 v->data.a = sph_array_create();
@@ -178,8 +308,8 @@ static void sph_extract_key(void* key_val_ptr, int* out_is_str, int64_t* out_int
         *out_str = "";
         return;
     }
-    sph_value* v = (sph_value*)key_val_ptr;
-    if (v->type >= SPH_TYPE_NULL && v->type <= SPH_TYPE_OBJECT && v->_reserved == 0) {
+    sph_value* v = sph_as_value(key_val_ptr);
+    if (v) {
         switch (v->type) {
             case SPH_TYPE_NULL:
                 *out_is_str = 1;
@@ -253,18 +383,12 @@ static void sph_array_resize(sph_array* arr) {
     arr->capacity = new_cap;
 }
 
-void sph_array_set(void* arr_or_val, void* key_val, void* elem_val) {
-    sph_array* arr = sph_get_or_vivify_array(arr_or_val, 1);
+static void sph_array_set_kv(sph_array* arr, int is_str, int64_t int_k, const char* str_k, void* elem_val) {
     if (!arr) return;
-
-    int is_str = 0;
-    int64_t int_k = 0;
-    const char* str_k = NULL;
-    sph_extract_key(key_val, &is_str, &int_k, &str_k);
-
+    const char* safe_str_k = str_k ? str_k : "";
     sph_value* val = (sph_value*)elem_val;
 
-    sph_array_entry* existing = sph_array_find(arr, is_str, int_k, str_k);
+    sph_array_entry* existing = sph_array_find(arr, is_str, int_k, safe_str_k);
     if (existing) {
         if (existing->val && existing->val != val) {
             sph_value_destroy(existing->val);
@@ -281,9 +405,9 @@ void sph_array_set(void* arr_or_val, void* key_val, void* elem_val) {
     if (!entry) sph_panic("out of memory allocating array entry");
     entry->is_string_key = is_str;
     if (is_str) {
-        size_t slen = strlen(str_k);
+        size_t slen = strlen(safe_str_k);
         entry->str_key = (char*)malloc(slen + 1);
-        if (entry->str_key) memcpy(entry->str_key, str_k, slen + 1);
+        if (entry->str_key) memcpy(entry->str_key, safe_str_k, slen + 1);
         entry->int_key = 0;
     } else {
         entry->str_key = NULL;
@@ -303,12 +427,23 @@ void sph_array_set(void* arr_or_val, void* key_val, void* elem_val) {
     }
     arr->tail = entry;
 
-    uint64_t h = is_str ? sph_hash_string(str_k) : sph_hash_int(int_k);
+    uint64_t h = is_str ? sph_hash_string(safe_str_k) : sph_hash_int(int_k);
     size_t b = h & (arr->capacity - 1);
     entry->bucket_next = arr->buckets[b];
     arr->buckets[b] = entry;
 
     arr->count++;
+}
+
+void sph_array_set(void* arr_or_val, void* key_val, void* elem_val) {
+    sph_array* arr = sph_get_or_vivify_array(arr_or_val, 1);
+    if (!arr) return;
+
+    int is_str = 0;
+    int64_t int_k = 0;
+    const char* str_k = NULL;
+    sph_extract_key(key_val, &is_str, &int_k, &str_k);
+    sph_array_set_kv(arr, is_str, int_k, str_k, elem_val);
 }
 
 void sph_array_append(void* arr_or_val, void* elem_val) {
@@ -363,10 +498,7 @@ void sph_array_destroy(void* arr_ptr) {
 }
 
 void* sph_value_create_object(const char* class_name, void* native_instance) {
-    sph_value* v = (sph_value*)malloc(sizeof(sph_value));
-    if (!v) sph_panic("out of memory creating dynamic object");
-    v->type = SPH_TYPE_OBJECT;
-    v->_reserved = 0;
+    sph_value* v = sph_value_alloc(SPH_TYPE_OBJECT);
     v->data.a = sph_object_create(class_name, native_instance);
     return (void*)v;
 }
@@ -388,94 +520,54 @@ void sph_object_destroy(void* obj_ptr) {
     free(obj);
 }
 
+static sph_object* sph_unwrap_object(void* obj_or_val) {
+    if (!obj_or_val) return NULL;
+    sph_value* v = sph_as_value(obj_or_val);
+    if (v) {
+        return (v->type == SPH_TYPE_OBJECT) ? (sph_object*)v->data.a : NULL;
+    }
+    return (sph_object*)obj_or_val;
+}
+
 void* sph_object_get_property(void* obj_or_val, const char* name) {
     if (!obj_or_val || !name) return sph_value_create_null();
-    sph_object* obj = NULL;
-    sph_value* v = (sph_value*)obj_or_val;
-    if (v->type >= SPH_TYPE_NULL && v->type <= SPH_TYPE_OBJECT && v->_reserved == 0) {
-        if (v->type == SPH_TYPE_OBJECT) {
-            obj = (sph_object*)v->data.a;
-        }
-    } else {
-        obj = (sph_object*)obj_or_val;
-    }
+    sph_object* obj = sph_unwrap_object(obj_or_val);
     if (!obj || !obj->properties) return sph_value_create_null();
-
-    int is_str = 0;
-    int64_t int_k = 0;
-    const char* str_k = NULL;
-    sph_extract_key((void*)name, &is_str, &int_k, &str_k);
-    sph_array_entry* e = sph_array_find(obj->properties, is_str, int_k, str_k);
+    sph_array_entry* e = sph_array_find(obj->properties, 1, 0, name);
     if (e && e->val) return (void*)e->val;
     return sph_value_create_null();
 }
 
 void sph_object_set_property(void* obj_or_val, const char* name, void* val_ptr) {
     if (!obj_or_val || !name) return;
-    sph_object* obj = NULL;
-    sph_value* v = (sph_value*)obj_or_val;
-    if (v->type >= SPH_TYPE_NULL && v->type <= SPH_TYPE_OBJECT && v->_reserved == 0) {
-        if (v->type == SPH_TYPE_OBJECT) {
-            obj = (sph_object*)v->data.a;
-        }
-    } else {
-        obj = (sph_object*)obj_or_val;
-    }
+    sph_object* obj = sph_unwrap_object(obj_or_val);
     if (!obj) return;
     if (!obj->properties) obj->properties = (sph_array*)sph_array_create();
-
-    sph_array_set(obj->properties, (void*)name, val_ptr);
+    sph_array_set_kv(obj->properties, 1, 0, name, val_ptr);
 }
 
 const char* sph_object_get_class(void* obj_or_val) {
     if (!obj_or_val) return "";
-    sph_object* obj = NULL;
-    sph_value* v = (sph_value*)obj_or_val;
-    if (v->type >= SPH_TYPE_NULL && v->type <= SPH_TYPE_OBJECT && v->_reserved == 0) {
-        if (v->type == SPH_TYPE_OBJECT) {
-            obj = (sph_object*)v->data.a;
-        }
-    } else {
-        obj = (sph_object*)obj_or_val;
-    }
+    sph_object* obj = sph_unwrap_object(obj_or_val);
     return (obj && obj->class_name) ? obj->class_name : "stdClass";
 }
 
 void* sph_object_get_native(void* obj_or_val) {
     if (!obj_or_val) return NULL;
-    sph_object* obj = NULL;
-    sph_value* v = (sph_value*)obj_or_val;
-    if (v->type >= SPH_TYPE_NULL && v->type <= SPH_TYPE_OBJECT && v->_reserved == 0) {
-        if (v->type == SPH_TYPE_OBJECT) {
-            obj = (sph_object*)v->data.a;
-        }
-    } else {
-        obj = (sph_object*)obj_or_val;
-    }
+    sph_object* obj = sph_unwrap_object(obj_or_val);
     return obj ? obj->native_instance : NULL;
 }
 
 int32_t sph_is_object(void* val) {
-    return (val && ((sph_value*)val)->type == SPH_TYPE_OBJECT) ? 1 : 0;
+    sph_value* v = sph_as_value(val);
+    return (v && v->type == SPH_TYPE_OBJECT) ? 1 : 0;
 }
 
 int32_t sph_property_exists(void* obj_or_val, const char* name) {
     if (!obj_or_val || !name) return 0;
-    sph_object* obj = NULL;
-    sph_value* v = (sph_value*)obj_or_val;
-    if (v->type >= SPH_TYPE_NULL && v->type <= SPH_TYPE_OBJECT && v->_reserved == 0) {
-        if (v->type == SPH_TYPE_OBJECT) {
-            obj = (sph_object*)v->data.a;
-        }
-    } else {
-        obj = (sph_object*)obj_or_val;
-    }
+    sph_object* obj = sph_unwrap_object(obj_or_val);
     if (!obj || !obj->properties) return 0;
-    int is_str = 0;
-    int64_t int_k = 0;
-    const char* str_k = NULL;
-    sph_extract_key((void*)name, &is_str, &int_k, &str_k);
-    sph_array_entry* e = sph_array_find(obj->properties, is_str, int_k, str_k);
+    sph_array_entry* e = sph_array_find(obj->properties, 1, 0, name);
     return (e != NULL) ? 1 : 0;
 }
 
@@ -512,27 +604,34 @@ void* sph_array_iter_next(void* iter) {
 }
 
 int32_t sph_is_array(void* val) {
-    return (val && ((sph_value*)val)->type == SPH_TYPE_ARRAY) ? 1 : 0;
+    sph_value* v = sph_as_value(val);
+    return (v && v->type == SPH_TYPE_ARRAY) ? 1 : 0;
 }
 
 int32_t sph_is_string(void* val) {
-    return (val && ((sph_value*)val)->type == SPH_TYPE_STRING) ? 1 : 0;
+    sph_value* v = sph_as_value(val);
+    return (v && v->type == SPH_TYPE_STRING) ? 1 : 0;
 }
 
 int32_t sph_is_int(void* val) {
-    return (val && ((sph_value*)val)->type == SPH_TYPE_INT) ? 1 : 0;
+    sph_value* v = sph_as_value(val);
+    return (v && v->type == SPH_TYPE_INT) ? 1 : 0;
 }
 
 int32_t sph_is_float(void* val) {
-    return (val && ((sph_value*)val)->type == SPH_TYPE_FLOAT) ? 1 : 0;
+    sph_value* v = sph_as_value(val);
+    return (v && v->type == SPH_TYPE_FLOAT) ? 1 : 0;
 }
 
 int32_t sph_is_bool(void* val) {
-    return (val && ((sph_value*)val)->type == SPH_TYPE_BOOL) ? 1 : 0;
+    sph_value* v = sph_as_value(val);
+    return (v && v->type == SPH_TYPE_BOOL) ? 1 : 0;
 }
 
 int32_t sph_is_null(void* val) {
-    return (!val || ((sph_value*)val)->type == SPH_TYPE_NULL) ? 1 : 0;
+    if (!val) return 1;
+    sph_value* v = sph_as_value(val);
+    return (v && v->type == SPH_TYPE_NULL) ? 1 : 0;
 }
 
 int64_t sph_array_push(void* arr_or_val, void* elem_val) {
@@ -806,6 +905,7 @@ char* sph_php_implode(void* glue_val, void* arr_val) {
 
 void sph_value_destroy(void* val_ptr) {
     if (!val_ptr) return;
+    if (!sph_val_registry_remove(val_ptr)) return;
     sph_value* v = (sph_value*)val_ptr;
     if (v->type == SPH_TYPE_STRING && v->data.s) {
         free(v->data.s);
@@ -819,12 +919,17 @@ void sph_value_destroy(void* val_ptr) {
 
 int32_t sph_value_get_type(void* val_ptr) {
     if (!val_ptr) return SPH_TYPE_NULL;
-    return ((sph_value*)val_ptr)->type;
+    sph_value* v = sph_as_value(val_ptr);
+    return v ? v->type : SPH_TYPE_STRING;
 }
 
 int32_t sph_value_to_bool(void* val_ptr) {
     if (!val_ptr) return 0;
-    sph_value* v = (sph_value*)val_ptr;
+    sph_value* v = sph_as_value(val_ptr);
+    if (!v) {
+        const char* s = (const char*)val_ptr;
+        return (s[0] != '\0' && strcmp(s, "0") != 0) ? 1 : 0;
+    }
     switch (v->type) {
         case SPH_TYPE_NULL: return 0;
         case SPH_TYPE_BOOL: return v->data.b != 0 ? 1 : 0;
@@ -845,7 +950,10 @@ int32_t sph_value_to_bool(void* val_ptr) {
 
 int64_t sph_value_to_int(void* val_ptr) {
     if (!val_ptr) return 0;
-    sph_value* v = (sph_value*)val_ptr;
+    sph_value* v = sph_as_value(val_ptr);
+    if (!v) {
+        return (int64_t)strtoll((const char*)val_ptr, NULL, 10);
+    }
     switch (v->type) {
         case SPH_TYPE_NULL: return 0;
         case SPH_TYPE_BOOL: return v->data.b ? 1 : 0;
@@ -861,7 +969,10 @@ int64_t sph_value_to_int(void* val_ptr) {
 
 double sph_value_to_float(void* val_ptr) {
     if (!val_ptr) return 0.0;
-    sph_value* v = (sph_value*)val_ptr;
+    sph_value* v = sph_as_value(val_ptr);
+    if (!v) {
+        return strtod((const char*)val_ptr, NULL);
+    }
     switch (v->type) {
         case SPH_TYPE_NULL: return 0.0;
         case SPH_TYPE_BOOL: return v->data.b ? 1.0 : 0.0;
@@ -881,8 +992,8 @@ char* sph_value_to_string(void* val_ptr) {
         if (empty) empty[0] = '\0';
         return empty;
     }
-    sph_value* v = (sph_value*)val_ptr;
-    if (v->type < SPH_TYPE_NULL || v->type > SPH_TYPE_OBJECT || v->_reserved != 0) {
+    sph_value* v = sph_as_value(val_ptr);
+    if (!v) {
         const char* raw = (const char*)val_ptr;
         size_t len = strlen(raw);
         char* copy = (char*)malloc(len + 1);
@@ -941,8 +1052,8 @@ char* sph_value_to_string(void* val_ptr) {
 
 static const char* sph_to_raw_string(const void* str_or_val) {
     if (!str_or_val) return "";
-    sph_value* v = (sph_value*)str_or_val;
-    if (v->type >= SPH_TYPE_NULL && v->type <= SPH_TYPE_OBJECT && v->_reserved == 0) {
+    sph_value* v = sph_as_value(str_or_val);
+    if (v) {
         if (v->type == SPH_TYPE_STRING && v->data.s) {
             return v->data.s;
         }
@@ -964,57 +1075,59 @@ static int sph_is_val_float(sph_value* v) {
 }
 
 void* sph_dynamic_add(void* a_ptr, void* b_ptr) {
-    sph_value* a = (sph_value*)a_ptr;
-    sph_value* b = (sph_value*)b_ptr;
+    sph_value* a = sph_as_value(a_ptr);
+    sph_value* b = sph_as_value(b_ptr);
     if (sph_is_val_float(a) || sph_is_val_float(b)) {
-        double res = sph_value_to_float(a) + sph_value_to_float(b);
+        double res = sph_value_to_float(a_ptr) + sph_value_to_float(b_ptr);
         return sph_value_create_float(res);
     }
-    int64_t res = sph_value_to_int(a) + sph_value_to_int(b);
+    int64_t res = sph_value_to_int(a_ptr) + sph_value_to_int(b_ptr);
     return sph_value_create_int(res);
 }
 
 void* sph_dynamic_sub(void* a_ptr, void* b_ptr) {
-    sph_value* a = (sph_value*)a_ptr;
-    sph_value* b = (sph_value*)b_ptr;
+    sph_value* a = sph_as_value(a_ptr);
+    sph_value* b = sph_as_value(b_ptr);
     if (sph_is_val_float(a) || sph_is_val_float(b)) {
-        double res = sph_value_to_float(a) - sph_value_to_float(b);
+        double res = sph_value_to_float(a_ptr) - sph_value_to_float(b_ptr);
         return sph_value_create_float(res);
     }
-    int64_t res = sph_value_to_int(a) - sph_value_to_int(b);
+    int64_t res = sph_value_to_int(a_ptr) - sph_value_to_int(b_ptr);
     return sph_value_create_int(res);
 }
 
 void* sph_dynamic_mul(void* a_ptr, void* b_ptr) {
-    sph_value* a = (sph_value*)a_ptr;
-    sph_value* b = (sph_value*)b_ptr;
+    sph_value* a = sph_as_value(a_ptr);
+    sph_value* b = sph_as_value(b_ptr);
     if (sph_is_val_float(a) || sph_is_val_float(b)) {
-        double res = sph_value_to_float(a) * sph_value_to_float(b);
+        double res = sph_value_to_float(a_ptr) * sph_value_to_float(b_ptr);
         return sph_value_create_float(res);
     }
-    int64_t res = sph_value_to_int(a) * sph_value_to_int(b);
+    int64_t res = sph_value_to_int(a_ptr) * sph_value_to_int(b_ptr);
     return sph_value_create_int(res);
 }
 
 void* sph_dynamic_div(void* a_ptr, void* b_ptr) {
-    sph_value* a = (sph_value*)a_ptr;
-    sph_value* b = (sph_value*)b_ptr;
-    double divisor = sph_value_to_float(b);
+    sph_value* a = sph_as_value(a_ptr);
+    sph_value* b = sph_as_value(b_ptr);
+    (void)a; (void)b;
+    double divisor = sph_value_to_float(b_ptr);
     if (divisor == 0.0) {
         sph_panic("Division by zero in dynamic division");
     }
-    double res = sph_value_to_float(a) / divisor;
+    double res = sph_value_to_float(a_ptr) / divisor;
     return sph_value_create_float(res);
 }
 
 void* sph_dynamic_mod(void* a_ptr, void* b_ptr) {
-    sph_value* a = (sph_value*)a_ptr;
-    sph_value* b = (sph_value*)b_ptr;
-    int64_t divisor = sph_value_to_int(b);
+    sph_value* a = sph_as_value(a_ptr);
+    sph_value* b = sph_as_value(b_ptr);
+    (void)a; (void)b;
+    int64_t divisor = sph_value_to_int(b_ptr);
     if (divisor == 0) {
         sph_panic("Modulo by zero in dynamic modulo");
     }
-    int64_t res = sph_value_to_int(a) % divisor;
+    int64_t res = sph_value_to_int(a_ptr) % divisor;
     return sph_value_create_int(res);
 }
 
@@ -1030,20 +1143,33 @@ void* sph_dynamic_concat(void* a_ptr, void* b_ptr) {
 }
 
 int32_t sph_dynamic_eq(void* a_ptr, void* b_ptr) {
-    sph_value* a = (sph_value*)a_ptr;
-    sph_value* b = (sph_value*)b_ptr;
-    if (!a && !b) return 1;
-    if (!a || !b) return 0;
+    sph_value* a = sph_as_value(a_ptr);
+    sph_value* b = sph_as_value(b_ptr);
+    if (!a_ptr && !b_ptr) return 1;
+    if (!a_ptr || !b_ptr) return 0;
+    if (!a && !b) {
+        return strcmp((const char*)a_ptr, (const char*)b_ptr) == 0 ? 1 : 0;
+    }
+    if (!a || !b) {
+        const char* s1 = a ? (a->type == SPH_TYPE_STRING && a->data.s ? a->data.s : "") : (const char*)a_ptr;
+        const char* s2 = b ? (b->type == SPH_TYPE_STRING && b->data.s ? b->data.s : "") : (const char*)b_ptr;
+        if ((a && a->type == SPH_TYPE_STRING) || (b && b->type == SPH_TYPE_STRING)) {
+            return strcmp(s1, s2) == 0 ? 1 : 0;
+        }
+        return sph_value_to_int(a_ptr) == sph_value_to_int(b_ptr) ? 1 : 0;
+    }
     if (a->type == SPH_TYPE_STRING && b->type == SPH_TYPE_STRING) {
-        return strcmp(a->data.s, b->data.s) == 0 ? 1 : 0;
+        const char* sa = a->data.s ? a->data.s : "";
+        const char* sb = b->data.s ? b->data.s : "";
+        return strcmp(sa, sb) == 0 ? 1 : 0;
     }
     if (sph_is_val_float(a) || sph_is_val_float(b)) {
-        return sph_value_to_float(a) == sph_value_to_float(b) ? 1 : 0;
+        return sph_value_to_float(a_ptr) == sph_value_to_float(b_ptr) ? 1 : 0;
     }
     if (a->type == SPH_TYPE_INT || b->type == SPH_TYPE_INT) {
-        return sph_value_to_int(a) == sph_value_to_int(b) ? 1 : 0;
+        return sph_value_to_int(a_ptr) == sph_value_to_int(b_ptr) ? 1 : 0;
     }
-    return sph_value_to_bool(a) == sph_value_to_bool(b) ? 1 : 0;
+    return sph_value_to_bool(a_ptr) == sph_value_to_bool(b_ptr) ? 1 : 0;
 }
 
 int32_t sph_dynamic_ne(void* a_ptr, void* b_ptr) {
@@ -1051,21 +1177,21 @@ int32_t sph_dynamic_ne(void* a_ptr, void* b_ptr) {
 }
 
 int32_t sph_dynamic_lt(void* a_ptr, void* b_ptr) {
-    sph_value* a = (sph_value*)a_ptr;
-    sph_value* b = (sph_value*)b_ptr;
+    sph_value* a = sph_as_value(a_ptr);
+    sph_value* b = sph_as_value(b_ptr);
     if (sph_is_val_float(a) || sph_is_val_float(b)) {
-        return sph_value_to_float(a) < sph_value_to_float(b) ? 1 : 0;
+        return sph_value_to_float(a_ptr) < sph_value_to_float(b_ptr) ? 1 : 0;
     }
-    return sph_value_to_int(a) < sph_value_to_int(b) ? 1 : 0;
+    return sph_value_to_int(a_ptr) < sph_value_to_int(b_ptr) ? 1 : 0;
 }
 
 int32_t sph_dynamic_le(void* a_ptr, void* b_ptr) {
-    sph_value* a = (sph_value*)a_ptr;
-    sph_value* b = (sph_value*)b_ptr;
+    sph_value* a = sph_as_value(a_ptr);
+    sph_value* b = sph_as_value(b_ptr);
     if (sph_is_val_float(a) || sph_is_val_float(b)) {
-        return sph_value_to_float(a) <= sph_value_to_float(b) ? 1 : 0;
+        return sph_value_to_float(a_ptr) <= sph_value_to_float(b_ptr) ? 1 : 0;
     }
-    return sph_value_to_int(a) <= sph_value_to_int(b) ? 1 : 0;
+    return sph_value_to_int(a_ptr) <= sph_value_to_int(b_ptr) ? 1 : 0;
 }
 
 int32_t sph_dynamic_gt(void* a_ptr, void* b_ptr) {
@@ -1121,7 +1247,13 @@ void sph_var_dump(void* val_ptr) {
         fflush(stdout);
         return;
     }
-    sph_value* v = (sph_value*)val_ptr;
+    sph_value* v = sph_as_value(val_ptr);
+    if (!v) {
+        const char* raw = (const char*)val_ptr;
+        printf("string(%zu) \"%s\"\n", strlen(raw), raw);
+        fflush(stdout);
+        return;
+    }
     switch (v->type) {
         case SPH_TYPE_NULL:
             printf("NULL\n");
@@ -1559,13 +1691,13 @@ int32_t sph_pdostatement_execute(void* stmt_ptr, void* params_arr_or_val) {
 
     if (params_arr_or_val) {
         sph_array* arr = NULL;
-        sph_value* v = (sph_value*)params_arr_or_val;
+        sph_value* v = sph_as_value(params_arr_or_val);
         if (v && v->type == SPH_TYPE_ARRAY) {
             arr = (sph_array*)v->data.a;
         } else if (v && v->type == SPH_TYPE_OBJECT) {
             sph_object* obj = (sph_object*)v->data.a;
             if (obj) arr = obj->properties;
-        } else {
+        } else if (!v) {
             arr = (sph_array*)params_arr_or_val;
         }
         if (arr && arr->head) {
@@ -1582,18 +1714,19 @@ int32_t sph_pdostatement_execute(void* stmt_ptr, void* params_arr_or_val) {
                     }
                 }
                 if (idx > 0) {
-                    sph_value* val = (sph_value*)cur->val;
-                    if (!val || val->type == SPH_TYPE_NULL) {
+                    sph_value* val = sph_as_value(cur->val);
+                    if (!cur->val || (val && val->type == SPH_TYPE_NULL)) {
                         if (fn_sqlite3_bind_null) fn_sqlite3_bind_null(stmt->stmt, idx);
-                    } else if (val->type == SPH_TYPE_INT) {
+                    } else if (val && val->type == SPH_TYPE_INT) {
                         if (fn_sqlite3_bind_int64) fn_sqlite3_bind_int64(stmt->stmt, idx, sph_value_to_int(val));
-                    } else if (val->type == SPH_TYPE_FLOAT) {
+                    } else if (val && val->type == SPH_TYPE_FLOAT) {
                         if (fn_sqlite3_bind_double) fn_sqlite3_bind_double(stmt->stmt, idx, sph_value_to_float(val));
-                    } else if (val->type == SPH_TYPE_BOOL) {
+                    } else if (val && val->type == SPH_TYPE_BOOL) {
                         if (fn_sqlite3_bind_int64) fn_sqlite3_bind_int64(stmt->stmt, idx, sph_value_to_bool(val));
                     } else {
-                        const char* s = sph_value_to_string(val);
+                        char* s = sph_value_to_string(cur->val);
                         if (fn_sqlite3_bind_text) fn_sqlite3_bind_text(stmt->stmt, idx, s ? s : "", -1, SQLITE_TRANSIENT);
+                        if (s) free(s);
                     }
                 }
             }
@@ -1652,18 +1785,14 @@ void* sph_pdostatement_fetch(void* stmt_ptr, int32_t mode) {
             }
         }
         if (mode == SPH_PDO_FETCH_ASSOC || mode == SPH_PDO_FETCH_BOTH || mode == 0) {
-            sph_array_set(row, (void*)col_name, val);
+            sph_array_set_kv(row, 1, 0, col_name ? col_name : "", val);
         }
         if (mode == SPH_PDO_FETCH_NUM || mode == SPH_PDO_FETCH_BOTH) {
-            sph_array_set(row, sph_value_create_int(i), val);
+            sph_array_set_kv(row, 0, i, "", val);
         }
     }
 
-    sph_value* result = (sph_value*)malloc(sizeof(sph_value));
-    result->type = SPH_TYPE_ARRAY;
-    result->_reserved = 0;
-    result->data.a = row;
-    return (void*)result;
+    return sph_value_create_array(row);
 }
 
 void* sph_pdostatement_fetch_all(void* stmt_ptr, int32_t mode) {
@@ -1671,15 +1800,12 @@ void* sph_pdostatement_fetch_all(void* stmt_ptr, int32_t mode) {
     while (1) {
         void* row = sph_pdostatement_fetch(stmt_ptr, mode);
         if (!sph_value_to_bool(row)) {
+            sph_value_destroy(row);
             break;
         }
         sph_array_append(all, row);
     }
-    sph_value* result = (sph_value*)malloc(sizeof(sph_value));
-    result->type = SPH_TYPE_ARRAY;
-    result->_reserved = 0;
-    result->data.a = all;
-    return (void*)result;
+    return sph_value_create_array(all);
 }
 
 int64_t sph_pdostatement_row_count(void* stmt_ptr) {
@@ -1778,18 +1904,17 @@ int32_t sph_curl_setopt(void* ch, int32_t opt, void* val_ptr) {
             h->custom_request = strdup(sph_to_raw_string(val_ptr));
             break;
         case SPH_CURLOPT_HTTPHEADER: {
-            sph_array* arr = NULL;
-            sph_value* v = (sph_value*)val_ptr;
-            if (v && v->type == SPH_TYPE_ARRAY) arr = (sph_array*)v->data.a;
+            sph_array* arr = sph_get_or_vivify_array(val_ptr, 0);
             if (arr && arr->head) {
                 for (sph_array_entry* cur = arr->head; cur != NULL; cur = cur->next) {
-                    const char* hdr_str = sph_value_to_string(cur->val);
+                    char* hdr_str = sph_value_to_string(cur->val);
                     if (hdr_str && hdr_str[0]) {
                         sph_curl_header_entry* e = (sph_curl_header_entry*)malloc(sizeof(sph_curl_header_entry));
                         e->header = strdup(hdr_str);
                         e->next = h->headers;
                         h->headers = e;
                     }
+                    if (hdr_str) free(hdr_str);
                 }
             }
             break;

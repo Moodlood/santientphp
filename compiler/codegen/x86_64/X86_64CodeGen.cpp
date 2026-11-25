@@ -458,6 +458,12 @@ void X86_64CodeGen::generateFunction(const IRFunction& fn) {
     };
 
     if (isSysV()) {
+        struct PendingStackParam {
+            const IRValue* val;
+            int32_t stackOffset;
+            bool isFloat;
+        };
+        std::vector<PendingStackParam> pendingStackParams;
         size_t intRegIdx = m_currentFnReturnsSret ? 1 : 0;
         size_t floatRegIdx = 0;
         size_t stackParamIdx = 0;
@@ -480,15 +486,20 @@ void X86_64CodeGen::generateFunction(const IRFunction& fn) {
                 }
             } else {
                 int32_t stackOffset = 16 + static_cast<int32_t>(stackParamIdx++ * 8);
-                if (m_lsra && !isFloat && m_lsra->hasRegister(params[i].get())) {
-                    m_out << "  mov " << m_lsra->getRegister(params[i].get()) << ", " << argStackRef(stackOffset) << "\n";
-                } else {
-                    m_out << "  mov rax, " << argStackRef(stackOffset) << "\n";
-                    storeRegToSlot("rax", getSlotOffset(*params[i]));
-                }
+                pendingStackParams.push_back({params[i].get(), stackOffset, isFloat});
             }
         }
         resolveParamMoves();
+        // Load stack arguments only after incoming register params (e.g. r9) are moved
+        // to their allocated destinations so stack-param register assignments don't clobber them.
+        for (const auto& sp : pendingStackParams) {
+            if (m_lsra && !sp.isFloat && m_lsra->hasRegister(sp.val)) {
+                m_out << "  mov " << m_lsra->getRegister(sp.val) << ", " << argStackRef(sp.stackOffset) << "\n";
+            } else {
+                m_out << "  mov rax, " << argStackRef(sp.stackOffset) << "\n";
+                storeRegToSlot("rax", getSlotOffset(*sp.val));
+            }
+        }
     } else {
         size_t regOffset = m_currentFnReturnsSret ? 1 : 0;
         for (size_t i = 0; i < params.size() && (i + regOffset) < maxRegs; ++i) {

@@ -337,13 +337,12 @@ static void sph_event_loop_lock_leave(void) {
 }
 #endif
 
-static void sph_event_loop_queue_fiber(void* fiber) {
+static void sph_event_loop_queue_fiber_locked(void* fiber) {
     if (!fiber) return;
     sph_coroutine_node* node = (sph_coroutine_node*)malloc(sizeof(sph_coroutine_node));
     if (!node) return;
     node->fiber = fiber;
     node->next = NULL;
-    sph_event_loop_lock_enter();
     if (!g_event_loop.queue_head) {
         g_event_loop.queue_head = node;
         g_event_loop.queue_tail = node;
@@ -351,6 +350,12 @@ static void sph_event_loop_queue_fiber(void* fiber) {
         g_event_loop.queue_tail->next = node;
         g_event_loop.queue_tail = node;
     }
+}
+
+static void sph_event_loop_queue_fiber(void* fiber) {
+    if (!fiber) return;
+    sph_event_loop_lock_enter();
+    sph_event_loop_queue_fiber_locked(fiber);
     sph_event_loop_lock_leave();
 }
 
@@ -400,18 +405,21 @@ static void sph_promise_add_waiter(sph_promise* p, void* fiber) {
     p->waiting_fibers[p->waiting_count++] = fiber;
 }
 
+#define SPH_PROMISE_COMPLETING (-1)
+
 void sph_promise_resolve(void* promise_ptr, void* value) {
     if (!promise_ptr) return;
     sph_promise* p = (sph_promise*)promise_ptr;
     int32_t expected = SPH_PROMISE_PENDING;
-    if (!__atomic_compare_exchange_n(&p->state, &expected, SPH_PROMISE_FULFILLED, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
+    if (!__atomic_compare_exchange_n(&p->state, &expected, SPH_PROMISE_COMPLETING, 0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
         return;
     }
     p->value = value;
+    __atomic_store_n(&p->state, SPH_PROMISE_FULFILLED, __ATOMIC_RELEASE);
     sph_event_loop_lock_enter();
     for (int32_t i = 0; i < p->waiting_count; ++i) {
         if (p->waiting_fibers[i]) {
-            sph_event_loop_queue_fiber(p->waiting_fibers[i]);
+            sph_event_loop_queue_fiber_locked(p->waiting_fibers[i]);
         }
     }
     p->waiting_count = 0;
@@ -422,14 +430,15 @@ void sph_promise_reject(void* promise_ptr, void* error) {
     if (!promise_ptr) return;
     sph_promise* p = (sph_promise*)promise_ptr;
     int32_t expected = SPH_PROMISE_PENDING;
-    if (!__atomic_compare_exchange_n(&p->state, &expected, SPH_PROMISE_REJECTED, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
+    if (!__atomic_compare_exchange_n(&p->state, &expected, SPH_PROMISE_COMPLETING, 0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
         return;
     }
     p->value = error;
+    __atomic_store_n(&p->state, SPH_PROMISE_REJECTED, __ATOMIC_RELEASE);
     sph_event_loop_lock_enter();
     for (int32_t i = 0; i < p->waiting_count; ++i) {
         if (p->waiting_fibers[i]) {
-            sph_event_loop_queue_fiber(p->waiting_fibers[i]);
+            sph_event_loop_queue_fiber_locked(p->waiting_fibers[i]);
         }
     }
     p->waiting_count = 0;
@@ -449,12 +458,15 @@ void sph_promise_destroy(void* promise_ptr) {
 int32_t sph_promise_is_ready(void* promise_ptr) {
     if (!promise_ptr) return 1;
     sph_promise* p = (sph_promise*)promise_ptr;
-    return p->state != SPH_PROMISE_PENDING ? 1 : 0;
+    int32_t state = __atomic_load_n(&p->state, __ATOMIC_ACQUIRE);
+    return (state == SPH_PROMISE_FULFILLED || state == SPH_PROMISE_REJECTED) ? 1 : 0;
 }
 
 void* sph_promise_get_value(void* promise_ptr) {
     if (!promise_ptr) return NULL;
     sph_promise* p = (sph_promise*)promise_ptr;
+    while (__atomic_load_n(&p->state, __ATOMIC_ACQUIRE) == SPH_PROMISE_COMPLETING) {
+    }
     return p->value;
 }
 

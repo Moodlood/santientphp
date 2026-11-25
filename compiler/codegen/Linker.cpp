@@ -231,14 +231,19 @@ bool Linker::linkExecutable(const std::filesystem::path& asmPath,
         cmd << "-static-libgcc ";
     }
 #else
+#ifdef SPH_SANITIZE_LINK_FLAGS
+    const bool skipNoPie = target.isHost() && std::string(SPH_SANITIZE_LINK_FLAGS).find("thread") != std::string::npos;
+#else
+    const bool skipNoPie = false;
+#endif
     if (isGui) {
         if (target.getOS() == TargetOS::MacOS) {
             cmd << "-lpthread -ldl -lm ";
         } else {
-            cmd << "-no-pie -lpthread -ldl -lm -lX11 -lGL ";
+            cmd << (skipNoPie ? "-lpthread -ldl -lm -lX11 -lGL " : "-no-pie -lpthread -ldl -lm -lX11 -lGL ");
         }
     } else {
-        cmd << "-no-pie -lpthread -ldl -lm ";
+        cmd << (skipNoPie ? "-lpthread -ldl -lm " : "-no-pie -lpthread -ldl -lm ");
     }
 #endif
 
