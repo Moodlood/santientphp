@@ -1,8 +1,10 @@
 #pragma once
 
+#include <atomic>
 #include <concepts>
 #include <functional>
 #include <iostream>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -50,8 +52,9 @@ private:
 };
 
 struct TestContext {
-    int assertionsPassed = 0;
-    int assertionsFailed = 0;
+    std::atomic<int> assertionsPassed{0};
+    std::atomic<int> assertionsFailed{0};
+    std::mutex mtx;
     std::vector<std::string> failureMessages;
 
     static TestContext& current() {
@@ -60,9 +63,20 @@ struct TestContext {
     }
 
     void reset() {
-        assertionsPassed = 0;
-        assertionsFailed = 0;
+        assertionsPassed.store(0, std::memory_order_relaxed);
+        assertionsFailed.store(0, std::memory_order_relaxed);
+        std::lock_guard<std::mutex> lock(mtx);
         failureMessages.clear();
+    }
+
+    void recordPass() {
+        assertionsPassed.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    void recordFailure(std::string msg) {
+        assertionsFailed.fetch_add(1, std::memory_order_relaxed);
+        std::lock_guard<std::mutex> lock(mtx);
+        failureMessages.push_back(std::move(msg));
     }
 };
 
@@ -100,18 +114,19 @@ inline int runAllTests(const std::string& filter = "") {
         try {
             test.func();
         } catch (const std::exception& ex) {
-            ctx.assertionsFailed++;
-            ctx.failureMessages.push_back(std::string("Exception caught: ") + ex.what());
+            ctx.recordFailure(std::string("Exception caught: ") + ex.what());
         } catch (...) {
-            ctx.assertionsFailed++;
-            ctx.failureMessages.push_back("Unknown exception caught");
+            ctx.recordFailure("Unknown exception caught");
         }
 
-        if (ctx.assertionsFailed == 0) {
-            std::cout << "[       OK ] " << test.name << " (" << ctx.assertionsPassed << " assertions passed)" << std::endl;
+        const int failedCount = ctx.assertionsFailed.load(std::memory_order_relaxed);
+        const int passedCount = ctx.assertionsPassed.load(std::memory_order_relaxed);
+        if (failedCount == 0) {
+            std::cout << "[       OK ] " << test.name << " (" << passedCount << " assertions passed)" << std::endl;
             testsPassed++;
         } else {
-            std::cout << "[  FAILED  ] " << test.name << " (" << ctx.assertionsFailed << " assertion failure(s))" << std::endl;
+            std::cout << "[  FAILED  ] " << test.name << " (" << failedCount << " assertion failure(s))" << std::endl;
+            std::lock_guard<std::mutex> lock(ctx.mtx);
             for (const auto& msg : ctx.failureMessages) {
                 std::cout << "    " << msg << "\n";
                 std::cout << "::error title=" << test.name << "::" << msg << "\n";
@@ -160,13 +175,11 @@ inline int runAllTests(const std::string& filter = "") {
 #define CHECK(expr)                                                             \
     do {                                                                        \
         if (expr) {                                                             \
-            ::sph::testing::TestContext::current().assertionsPassed++;          \
+            ::sph::testing::TestContext::current().recordPass();                \
         } else {                                                                \
-            ::sph::testing::TestContext::current().assertionsFailed++;          \
             std::ostringstream ss;                                              \
             ss << __FILE__ << ":" << __LINE__ << ": CHECK(" #expr ") failed";   \
-            ::sph::testing::TestContext::current().failureMessages.push_back(   \
-                ss.str());                                                      \
+            ::sph::testing::TestContext::current().recordFailure(ss.str());     \
         }                                                                       \
     } while (0)
 
@@ -175,15 +188,13 @@ inline int runAllTests(const std::string& filter = "") {
         auto valA = (a);                                                        \
         auto valB = (b);                                                        \
         if (valA == valB) {                                                     \
-            ::sph::testing::TestContext::current().assertionsPassed++;          \
+            ::sph::testing::TestContext::current().recordPass();                \
         } else {                                                                \
-            ::sph::testing::TestContext::current().assertionsFailed++;          \
             std::ostringstream ss;                                              \
             ss << __FILE__ << ":" << __LINE__ << ": CHECK_EQ(" #a ", " #b       \
                << ") failed: [" << ::sph::testing::toStringRepr(valA) << "] != [" \
                << ::sph::testing::toStringRepr(valB) << "]";                    \
-            ::sph::testing::TestContext::current().failureMessages.push_back(   \
-                ss.str());                                                      \
+            ::sph::testing::TestContext::current().recordFailure(ss.str());     \
         }                                                                       \
     } while (0)
 
@@ -192,14 +203,12 @@ inline int runAllTests(const std::string& filter = "") {
         auto valA = (a);                                                        \
         auto valB = (b);                                                        \
         if (valA != valB) {                                                     \
-            ::sph::testing::TestContext::current().assertionsPassed++;          \
+            ::sph::testing::TestContext::current().recordPass();                \
         } else {                                                                \
-            ::sph::testing::TestContext::current().assertionsFailed++;          \
             std::ostringstream ss;                                              \
             ss << __FILE__ << ":" << __LINE__ << ": CHECK_NE(" #a ", " #b       \
                << ") failed: both are [" << ::sph::testing::toStringRepr(valA) \
                << "]";                                                          \
-            ::sph::testing::TestContext::current().failureMessages.push_back(   \
-                ss.str());                                                      \
+            ::sph::testing::TestContext::current().recordFailure(ss.str());     \
         }                                                                       \
     } while (0)
