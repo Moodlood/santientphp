@@ -1,3 +1,4 @@
+#define SPH_CORE_INCLUDED 1
 #include "core.h"
 #include "../pal.h"
 #include <stdio.h>
@@ -5,7 +6,16 @@
 #include <string.h>
 #include <errno.h>
 #include <math.h>
-#if !defined(_WIN32)
+#if defined(_WIN32)
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0600
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <pthread.h>
 #include <sys/time.h>
 #endif
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
@@ -43,66 +53,225 @@ void sph_println_string(const char* val) {
 }
 
 // ============================================================================
-// High-Performance Thread-Local Slab Allocator (<= 64 bytes)
+// Multi-Tier Thread-Local Slab Allocator (32B..512B) + Cross-Thread Reclamation
 // ============================================================================
 
-#define SPH_SLAB_MAGIC       0x53504853 // "SPHS"
-#define SPH_SLAB_FREED_MAGIC 0x44454144 // "DEAD"
-#define SPH_LARGE_MAGIC      0x4C415247 // "LARG"
-#define SPH_LARGE_FREED_MAGIC 0x4C444541 // "LDEA"
-#define SPH_SLAB_PAYLOAD 64
-#define SPH_SLAB_BLOCK_SIZE (sizeof(sph_slab_block) + SPH_SLAB_PAYLOAD)
+#define SPH_SLAB_MAGIC        0x53504853U // "SPHS"
+#define SPH_SLAB_FREED_MAGIC  0x44454144U // "DEAD"
+#define SPH_LARGE_MAGIC       0x4C415247U // "LARG"
+#define SPH_LARGE_FREED_MAGIC 0x4C444541U // "LDEA"
+#define SPH_SLAB_NUM_TIERS    5
+#define SPH_SLAB_MAX_PAYLOAD  512
 #define SPH_SLAB_CHUNK_CAPACITY 65536
+
+static const uint32_t SPH_SLAB_TIER_SIZES[SPH_SLAB_NUM_TIERS] = {32, 64, 128, 256, 512};
+
+struct sph_slab_chunk;
+struct sph_slab_thread_cache;
 
 typedef struct sph_slab_block {
     uint32_t magic;
     uint32_t size;
+    uint32_t tier;
+    uint32_t _pad;
     struct sph_slab_block* next;
-} sph_slab_block;
+    struct sph_slab_chunk* chunk;
+} sph_slab_block; // 32 bytes (16-byte aligned user payload)
 
 typedef struct sph_large_block {
     uint32_t magic;
     uint32_t size;
-    uint64_t _pad; // 16-byte alignment padding
-} sph_large_block;
+    uint64_t _pad[3];
+} sph_large_block; // 32 bytes (exact offset parity with sph_slab_block)
+
+_Static_assert(sizeof(sph_slab_block) == 32, "sph_slab_block must be 32 bytes");
+_Static_assert(sizeof(sph_large_block) == 32, "sph_large_block must be 32 bytes");
 
 typedef struct sph_slab_chunk {
     struct sph_slab_chunk* next;
-    uint8_t* bump;
-    uint8_t* limit;
-    uint64_t _pad;
-    uint8_t memory[SPH_SLAB_CHUNK_CAPACITY - sizeof(void*) - 2 * sizeof(uint8_t*) - sizeof(uint64_t)];
+    sph_slab_block* remote_free;        // Atomic lock-free list for cross-thread frees
+    struct sph_slab_thread_cache* owner; // Atomic: cleared to NULL on owner thread exit
+    int64_t ref_count;                  // Atomic: 1 owner handle + live allocated blocks
+    uint32_t tier;
+    uint32_t _pad;
+    uint64_t _pad2;
+    uint8_t memory[SPH_SLAB_CHUNK_CAPACITY - 48];
 } sph_slab_chunk;
 
-typedef struct sph_slab_thread_cache {
+_Static_assert(offsetof(sph_slab_chunk, memory) == 48, "chunk memory must start 16-byte aligned");
+
+typedef struct sph_slab_tier_cache {
     sph_slab_block* free_pool;
     uint8_t* bump;
     uint8_t* limit;
+    sph_slab_chunk* current_chunk;
     sph_slab_chunk* chunk_head;
+} sph_slab_tier_cache;
+
+#define SPH_FREED_HISTORY_SIZE 512
+#define SPH_FREED_HISTORY_MASK (SPH_FREED_HISTORY_SIZE - 1)
+#define SPH_STR_CACHE_SIZE 256
+#define SPH_STR_CACHE_MASK (SPH_STR_CACHE_SIZE - 1)
+
+typedef struct {
+    char* ptr;
+    size_t len;
+    size_t cap;
+} sph_str_cache_entry;
+
+typedef struct sph_slab_thread_cache {
+    sph_slab_tier_cache tiers[SPH_SLAB_NUM_TIERS];
+    void* freed_history[SPH_FREED_HISTORY_SIZE];
+    sph_str_cache_entry str_cache[SPH_STR_CACHE_SIZE];
+    sph_str_cache_entry str_mru;
 } sph_slab_thread_cache;
 
-#if defined(_MSC_VER)
-static __declspec(thread) sph_slab_thread_cache g_slab = {0};
-#elif defined(__GNUC__) || defined(__clang__) || defined(__MINGW32__)
-static __thread sph_slab_thread_cache g_slab = {0};
+#if defined(_WIN32)
+static DWORD g_core_tls_index = TLS_OUT_OF_INDEXES;
+static DWORD g_slab_fls_index = FLS_OUT_OF_INDEXES;
+
+static void sph_slab_thread_cleanup(void* arg);
+
+static VOID WINAPI sph_slab_fls_destructor(PVOID lpFlsData) {
+    sph_slab_thread_cleanup(lpFlsData);
+}
+
+static inline DWORD sph_ensure_win32_tls_slot(void) {
+    DWORD idx = __atomic_load_n(&g_core_tls_index, __ATOMIC_ACQUIRE);
+    if (idx == TLS_OUT_OF_INDEXES) {
+        DWORD new_idx = TlsAlloc();
+        if (new_idx != TLS_OUT_OF_INDEXES) {
+            DWORD expected = TLS_OUT_OF_INDEXES;
+            if (!__atomic_compare_exchange_n(&g_core_tls_index, &expected, new_idx, 0,
+                                             __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+                TlsFree(new_idx);
+                idx = expected;
+            } else {
+                idx = new_idx;
+            }
+        }
+    }
+    return idx;
+}
+
+static inline void sph_slab_register_tls_destructor(sph_slab_thread_cache* tc) {
+    DWORD fls = __atomic_load_n(&g_slab_fls_index, __ATOMIC_ACQUIRE);
+    if (fls == FLS_OUT_OF_INDEXES) {
+        DWORD new_fls = FlsAlloc(sph_slab_fls_destructor);
+        if (new_fls != FLS_OUT_OF_INDEXES) {
+            DWORD expected = FLS_OUT_OF_INDEXES;
+            if (!__atomic_compare_exchange_n(&g_slab_fls_index, &expected, new_fls, 0,
+                                             __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+                FlsFree(new_fls);
+                fls = expected;
+            } else {
+                fls = new_fls;
+            }
+        }
+    }
+    if (fls != FLS_OUT_OF_INDEXES) {
+        FlsSetValue(fls, tc);
+    }
+}
+
+static void sph_slab_thread_cleanup(void* arg) {
+    sph_slab_thread_cache* tc = (sph_slab_thread_cache*)arg;
+    if (!tc) return;
+    DWORD tls_idx = __atomic_load_n(&g_core_tls_index, __ATOMIC_ACQUIRE);
+    if (tls_idx != TLS_OUT_OF_INDEXES && TlsGetValue(tls_idx) == tc) {
+        TlsSetValue(tls_idx, NULL);
+    }
+    for (int t = 0; t < SPH_SLAB_NUM_TIERS; ++t) {
+        sph_slab_chunk* c = tc->tiers[t].chunk_head;
+        while (c) {
+            sph_slab_chunk* next = c->next;
+            __atomic_store_n(&c->owner, NULL, __ATOMIC_RELEASE);
+            if (__atomic_fetch_sub(&c->ref_count, 1, __ATOMIC_ACQ_REL) == 1) {
+                free(c);
+            }
+            c = next;
+        }
+    }
+    free(tc);
+}
+
+static inline sph_slab_thread_cache* sph_slab_get_tls(void) {
+    DWORD idx = __atomic_load_n(&g_core_tls_index, __ATOMIC_RELAXED);
+    if (idx == TLS_OUT_OF_INDEXES) return NULL;
+    return (sph_slab_thread_cache*)TlsGetValue(idx);
+}
+
+static inline sph_slab_thread_cache* sph_slab_get_or_init_cache(void) {
+    DWORD idx = sph_ensure_win32_tls_slot();
+    if (idx == TLS_OUT_OF_INDEXES) return NULL;
+    sph_slab_thread_cache* tc = (sph_slab_thread_cache*)TlsGetValue(idx);
+    if (!tc) {
+        tc = (sph_slab_thread_cache*)calloc(1, sizeof(sph_slab_thread_cache));
+        if (!tc) return NULL;
+        TlsSetValue(idx, tc);
+        sph_slab_register_tls_destructor(tc);
+    }
+    return tc;
+}
 #else
-static sph_slab_thread_cache g_slab = {0};
+static __thread sph_slab_thread_cache* t_slab = NULL;
+static pthread_key_t g_slab_pthread_key;
+static pthread_once_t g_slab_pthread_once = PTHREAD_ONCE_INIT;
+
+static void sph_slab_thread_cleanup(void* arg) {
+    sph_slab_thread_cache* tc = (sph_slab_thread_cache*)arg;
+    if (!tc) return;
+    if (t_slab == tc) {
+        t_slab = NULL;
+    }
+    for (int t = 0; t < SPH_SLAB_NUM_TIERS; ++t) {
+        sph_slab_chunk* c = tc->tiers[t].chunk_head;
+        while (c) {
+            sph_slab_chunk* next = c->next;
+            __atomic_store_n(&c->owner, NULL, __ATOMIC_RELEASE);
+            if (__atomic_fetch_sub(&c->ref_count, 1, __ATOMIC_ACQ_REL) == 1) {
+                free(c);
+            }
+            c = next;
+        }
+    }
+    free(tc);
+}
+
+static void sph_slab_pthread_init(void) {
+    pthread_key_create(&g_slab_pthread_key, sph_slab_thread_cleanup);
+}
+
+static inline sph_slab_thread_cache* sph_slab_get_tls(void) {
+    return t_slab;
+}
+
+static inline sph_slab_thread_cache* sph_slab_get_or_init_cache(void) {
+    sph_slab_thread_cache* tc = t_slab;
+    if (!tc) {
+        tc = (sph_slab_thread_cache*)calloc(1, sizeof(sph_slab_thread_cache));
+        if (!tc) return NULL;
+        t_slab = tc;
+        pthread_once(&g_slab_pthread_once, sph_slab_pthread_init);
+        pthread_setspecific(g_slab_pthread_key, tc);
+    }
+    return tc;
+}
 #endif
+
+static inline int sph_slab_tier_for_size(int64_t size) {
+    if (size <= 32) return 0;
+    if (size <= 64) return 1;
+    if (size <= 128) return 2;
+    if (size <= 256) return 3;
+    if (size <= 512) return 4;
+    return -1;
+}
 
 static int64_t g_alloc_count = 0;
 static int64_t g_free_count = 0;
 static int64_t g_current_bytes = 0;
 static int64_t g_peak_bytes = 0;
-
-#define SPH_FREED_HISTORY_SIZE 512
-#define SPH_FREED_HISTORY_MASK (SPH_FREED_HISTORY_SIZE - 1)
-#if defined(_MSC_VER)
-static __declspec(thread) void* g_freed_history[SPH_FREED_HISTORY_SIZE] = {0};
-#elif defined(__GNUC__) || defined(__clang__) || defined(__MINGW32__)
-static __thread void* g_freed_history[SPH_FREED_HISTORY_SIZE] = {0};
-#else
-static void* g_freed_history[SPH_FREED_HISTORY_SIZE] = {0};
-#endif
 
 static inline size_t hash_freed_ptr(void* ptr) {
     uintptr_t v = (uintptr_t)ptr;
@@ -113,12 +282,16 @@ static inline size_t hash_freed_ptr(void* ptr) {
 
 static inline int is_in_freed_history(void* ptr) {
     if (!ptr) return 0;
-    return g_freed_history[hash_freed_ptr(ptr)] == ptr;
+    sph_slab_thread_cache* tc = sph_slab_get_tls();
+    if (!tc) return 0;
+    return tc->freed_history[hash_freed_ptr(ptr)] == ptr;
 }
 
 static inline void add_to_freed_history(void* ptr) {
     if (!ptr) return;
-    g_freed_history[hash_freed_ptr(ptr)] = ptr;
+    sph_slab_thread_cache* tc = sph_slab_get_or_init_cache();
+    if (!tc) return;
+    tc->freed_history[hash_freed_ptr(ptr)] = ptr;
 }
 
 int64_t sph_alloc_count(void) {
@@ -142,8 +315,11 @@ void sph_mem_reset_stats(void) {
     __atomic_store_n(&g_free_count, 0, __ATOMIC_RELAXED);
     __atomic_store_n(&g_current_bytes, 0, __ATOMIC_RELAXED);
     __atomic_store_n(&g_peak_bytes, 0, __ATOMIC_RELAXED);
-    for (size_t i = 0; i < SPH_FREED_HISTORY_SIZE; ++i) {
-        g_freed_history[i] = NULL;
+    sph_slab_thread_cache* tc = sph_slab_get_tls();
+    if (tc) {
+        for (size_t i = 0; i < SPH_FREED_HISTORY_SIZE; ++i) {
+            tc->freed_history[i] = NULL;
+        }
     }
 }
 
@@ -162,19 +338,20 @@ void sph_mem_dump_leaks(void) {
 
 int32_t sph_mem_validate_ptr(void* ptr) {
     if (!ptr || is_in_freed_history(ptr)) return 0;
-    if (((uintptr_t)ptr & 0x7) != 0) return 0;
+    if (((uintptr_t)ptr & 0x7) != 0 || (uintptr_t)ptr < 4096) return 0;
     sph_slab_block* blk = ((sph_slab_block*)ptr) - 1;
-    if (blk->magic == SPH_SLAB_MAGIC) return 1;
-    sph_large_block* lhdr = ((sph_large_block*)ptr) - 1;
-    if (lhdr->magic == SPH_LARGE_MAGIC) return 1;
+    uint32_t magic = __atomic_load_n(&blk->magic, __ATOMIC_ACQUIRE);
+    if (magic == SPH_SLAB_MAGIC || magic == SPH_LARGE_MAGIC) return 1;
     return 0;
 }
 
 static inline void remove_from_freed_history(void* ptr) {
     if (!ptr) return;
+    sph_slab_thread_cache* tc = sph_slab_get_tls();
+    if (!tc) return;
     size_t idx = hash_freed_ptr(ptr);
-    if (g_freed_history[idx] == ptr) {
-        g_freed_history[idx] = NULL;
+    if (tc->freed_history[idx] == ptr) {
+        tc->freed_history[idx] = NULL;
     }
 }
 
@@ -189,46 +366,105 @@ static inline void record_alloc_stats(void* ptr, int64_t size) {
 
 void* sph_alloc(int64_t size) {
     if (size <= 0) size = 1;
-    if (size <= SPH_SLAB_PAYLOAD) {
-        if (g_slab.free_pool) {
-            sph_slab_block* blk = g_slab.free_pool;
-            g_slab.free_pool = blk->next;
-            blk->magic = SPH_SLAB_MAGIC;
-            blk->size = (uint32_t)size;
-            void* res = (void*)(blk + 1);
-            record_alloc_stats(res, size);
-            return res;
-        }
-        if (g_slab.bump && (g_slab.bump + SPH_SLAB_BLOCK_SIZE <= g_slab.limit)) {
-            sph_slab_block* blk = (sph_slab_block*)g_slab.bump;
-            g_slab.bump += SPH_SLAB_BLOCK_SIZE;
-            blk->magic = SPH_SLAB_MAGIC;
-            blk->size = (uint32_t)size;
-            void* res = (void*)(blk + 1);
-            record_alloc_stats(res, size);
-            return res;
-        }
-        // Allocate a new 64KB chunk
-        sph_slab_chunk* new_chunk = (sph_slab_chunk*)malloc(sizeof(sph_slab_chunk));
-        if (new_chunk) {
-            new_chunk->next = g_slab.chunk_head;
-            g_slab.chunk_head = new_chunk;
-            g_slab.bump = new_chunk->memory;
-            g_slab.limit = new_chunk->memory + sizeof(new_chunk->memory);
+    int tier = sph_slab_tier_for_size(size);
+    if (tier >= 0) {
+        uint32_t payload_cap = SPH_SLAB_TIER_SIZES[tier];
+        size_t block_stride = sizeof(sph_slab_block) + payload_cap;
+        sph_slab_thread_cache* tc = sph_slab_get_or_init_cache();
 
-            sph_slab_block* blk = (sph_slab_block*)g_slab.bump;
-            g_slab.bump += SPH_SLAB_BLOCK_SIZE;
-            blk->magic = SPH_SLAB_MAGIC;
-            blk->size = (uint32_t)size;
-            void* res = (void*)(blk + 1);
-            record_alloc_stats(res, size);
-            return res;
+        if (tc) {
+            sph_slab_tier_cache* tcache = &tc->tiers[tier];
+
+            if (tcache->free_pool) {
+                sph_slab_block* blk = tcache->free_pool;
+                tcache->free_pool = blk->next;
+                if (blk->chunk) {
+                    __atomic_fetch_add(&blk->chunk->ref_count, 1, __ATOMIC_RELAXED);
+                }
+                __atomic_store_n(&blk->magic, SPH_SLAB_MAGIC, __ATOMIC_RELEASE);
+                blk->size = (uint32_t)size;
+                blk->tier = (uint32_t)tier;
+                void* res = (void*)(blk + 1);
+                record_alloc_stats(res, size);
+                return res;
+            }
+
+            // Reclaim remotely freed blocks across this tier's chunks before allocating new memory
+            sph_slab_chunk* rc = tcache->chunk_head;
+            while (rc) {
+                sph_slab_block* batch = __atomic_exchange_n(&rc->remote_free, NULL, __ATOMIC_ACQUIRE);
+                if (batch) {
+                    sph_slab_block* tail = batch;
+                    while (tail->next) {
+                        tail = tail->next;
+                    }
+                    tail->next = tcache->free_pool;
+                    tcache->free_pool = batch->next;
+                    if (batch->chunk) {
+                        __atomic_fetch_add(&batch->chunk->ref_count, 1, __ATOMIC_RELAXED);
+                    }
+                    __atomic_store_n(&batch->magic, SPH_SLAB_MAGIC, __ATOMIC_RELEASE);
+                    batch->size = (uint32_t)size;
+                    batch->tier = (uint32_t)tier;
+                    void* res = (void*)(batch + 1);
+                    record_alloc_stats(res, size);
+                    return res;
+                }
+                rc = rc->next;
+            }
+
+            if (tcache->bump && (tcache->bump + block_stride <= tcache->limit)) {
+                sph_slab_block* blk = (sph_slab_block*)tcache->bump;
+                tcache->bump += block_stride;
+                blk->chunk = tcache->current_chunk;
+                if (blk->chunk) {
+                    __atomic_fetch_add(&blk->chunk->ref_count, 1, __ATOMIC_RELAXED);
+                }
+                __atomic_store_n(&blk->magic, SPH_SLAB_MAGIC, __ATOMIC_RELEASE);
+                blk->size = (uint32_t)size;
+                blk->tier = (uint32_t)tier;
+                void* res = (void*)(blk + 1);
+                record_alloc_stats(res, size);
+                return res;
+            }
+
+            sph_slab_chunk* new_chunk = (sph_slab_chunk*)malloc(sizeof(sph_slab_chunk));
+            if (new_chunk) {
+                new_chunk->next = tcache->chunk_head;
+                __atomic_store_n(&new_chunk->remote_free, NULL, __ATOMIC_RELAXED);
+                __atomic_store_n(&new_chunk->owner, tc, __ATOMIC_RELEASE);
+                // ref_count starts at 2: 1 for owning thread handle + 1 for the returned first block
+                __atomic_store_n(&new_chunk->ref_count, 2, __ATOMIC_RELEASE);
+                new_chunk->tier = (uint32_t)tier;
+                new_chunk->_pad = 0;
+                new_chunk->_pad2 = 0;
+
+                tcache->chunk_head = new_chunk;
+                tcache->current_chunk = new_chunk;
+                tcache->bump = new_chunk->memory + block_stride;
+                tcache->limit = new_chunk->memory + sizeof(new_chunk->memory);
+
+                sph_slab_block* blk = (sph_slab_block*)new_chunk->memory;
+                blk->chunk = new_chunk;
+                __atomic_store_n(&blk->magic, SPH_SLAB_MAGIC, __ATOMIC_RELEASE);
+                blk->size = (uint32_t)size;
+                blk->tier = (uint32_t)tier;
+                blk->_pad = 0;
+                void* res = (void*)(blk + 1);
+                record_alloc_stats(res, size);
+                return res;
+            }
         }
-        // Fallback
-        sph_slab_block* blk = (sph_slab_block*)malloc(SPH_SLAB_BLOCK_SIZE);
+
+        // Fallback single-block allocation
+        sph_slab_block* blk = (sph_slab_block*)malloc(block_stride);
         if (!blk) return NULL;
-        blk->magic = SPH_SLAB_MAGIC;
+        blk->chunk = NULL;
+        blk->next = NULL;
+        __atomic_store_n(&blk->magic, SPH_SLAB_MAGIC, __ATOMIC_RELEASE);
         blk->size = (uint32_t)size;
+        blk->tier = (uint32_t)tier;
+        blk->_pad = 0;
         void* res = (void*)(blk + 1);
         record_alloc_stats(res, size);
         return res;
@@ -237,9 +473,9 @@ void* sph_alloc(int64_t size) {
     size_t total = sizeof(sph_large_block) + (size_t)size;
     sph_large_block* lhdr = (sph_large_block*)malloc(total);
     if (!lhdr) return NULL;
-    lhdr->magic = SPH_LARGE_MAGIC;
+    __atomic_store_n(&lhdr->magic, SPH_LARGE_MAGIC, __ATOMIC_RELEASE);
     lhdr->size = (uint32_t)size;
-    lhdr->_pad = 0;
+    lhdr->_pad[0] = lhdr->_pad[1] = lhdr->_pad[2] = 0;
     void* res = (void*)(lhdr + 1);
     record_alloc_stats(res, size);
     return res;
@@ -253,40 +489,60 @@ void sph_free(void* ptr) {
         return;
     }
 
-    // Fast path: Check slab block magic first without history scan
     sph_slab_block* blk = ((sph_slab_block*)ptr) - 1;
-    if (blk->magic == SPH_SLAB_MAGIC) {
-        blk->magic = SPH_SLAB_FREED_MAGIC;
+    uint32_t magic = __atomic_load_n(&blk->magic, __ATOMIC_ACQUIRE);
+    if (magic == SPH_SLAB_MAGIC) {
+        __atomic_store_n(&blk->magic, SPH_SLAB_FREED_MAGIC, __ATOMIC_RELEASE);
         __atomic_fetch_add(&g_free_count, 1, __ATOMIC_RELAXED);
         __atomic_fetch_sub(&g_current_bytes, (int64_t)blk->size, __ATOMIC_RELAXED);
-        blk->next = g_slab.free_pool;
-        g_slab.free_pool = blk;
+
+        sph_slab_chunk* chunk = blk->chunk;
+        if (!chunk) {
+            free(blk);
+            return;
+        }
+
+        sph_slab_thread_cache* tc = sph_slab_get_tls();
+        if (tc && __atomic_load_n(&chunk->owner, __ATOMIC_ACQUIRE) == tc) {
+            uint32_t t = blk->tier;
+            if (t >= SPH_SLAB_NUM_TIERS) t = 0;
+            blk->next = tc->tiers[t].free_pool;
+            tc->tiers[t].free_pool = blk;
+            __atomic_fetch_sub(&chunk->ref_count, 1, __ATOMIC_ACQ_REL);
+            return;
+        }
+
+        // Cross-thread or post-owner-exit free: push lock-free to chunk's remote_free stack
+        sph_slab_block* old_head = __atomic_load_n(&chunk->remote_free, __ATOMIC_RELAXED);
+        do {
+            blk->next = old_head;
+        } while (!__atomic_compare_exchange_n(&chunk->remote_free, &old_head, blk,
+                                              1, __ATOMIC_RELEASE, __ATOMIC_RELAXED));
+        if (__atomic_fetch_sub(&chunk->ref_count, 1, __ATOMIC_ACQ_REL) == 1) {
+            free(chunk);
+        }
         return;
     }
-    if (blk->magic == SPH_SLAB_FREED_MAGIC) {
-        // Double free on slab block detected: record and ignore safely
+    if (magic == SPH_SLAB_FREED_MAGIC) {
         return;
     }
 
     if (is_in_freed_history(ptr)) return;
 
-    // Check large block magic
     sph_large_block* lhdr = ((sph_large_block*)ptr) - 1;
-    if (lhdr->magic == SPH_LARGE_MAGIC) {
-        lhdr->magic = SPH_LARGE_FREED_MAGIC;
+    if (magic == SPH_LARGE_MAGIC) {
+        __atomic_store_n(&lhdr->magic, SPH_LARGE_FREED_MAGIC, __ATOMIC_RELEASE);
         add_to_freed_history(ptr);
         __atomic_fetch_add(&g_free_count, 1, __ATOMIC_RELAXED);
         __atomic_fetch_sub(&g_current_bytes, (int64_t)lhdr->size, __ATOMIC_RELAXED);
         free(lhdr);
         return;
     }
-    if (lhdr->magic == SPH_LARGE_FREED_MAGIC) {
-        // Double free on large block detected: record and ignore safely
+    if (magic == SPH_LARGE_FREED_MAGIC) {
         add_to_freed_history(ptr);
         return;
     }
 
-    // Fallback for unmanaged or external pointers
     add_to_freed_history(ptr);
     free(ptr);
 }
@@ -320,6 +576,36 @@ int64_t sph_rc_count(void* ptr) {
     if (!ptr) return 0;
     sph_rc_header* header = ((sph_rc_header*)ptr) - 1;
     return header->ref_count;
+}
+
+void* sph_arc_alloc(int64_t size) {
+    if (size <= 0) size = 1;
+    size_t total_size = sizeof(sph_arc_header) + (size_t)size;
+    sph_arc_header* header = (sph_arc_header*)malloc(total_size);
+    if (!header) return NULL;
+    __atomic_store_n(&header->ref_count, 1, __ATOMIC_RELAXED);
+    header->_reserved = 0;
+    return (void*)(header + 1);
+}
+
+void sph_arc_retain(void* ptr) {
+    if (!ptr) return;
+    sph_arc_header* header = ((sph_arc_header*)ptr) - 1;
+    __atomic_fetch_add(&header->ref_count, 1, __ATOMIC_RELAXED);
+}
+
+void sph_arc_release(void* ptr) {
+    if (!ptr) return;
+    sph_arc_header* header = ((sph_arc_header*)ptr) - 1;
+    if (__atomic_fetch_sub(&header->ref_count, 1, __ATOMIC_ACQ_REL) == 1) {
+        free(header);
+    }
+}
+
+int64_t sph_arc_count(void* ptr) {
+    if (!ptr) return 0;
+    sph_arc_header* header = ((sph_arc_header*)ptr) - 1;
+    return __atomic_load_n(&header->ref_count, __ATOMIC_ACQUIRE);
 }
 
 void* sph_arena_create(int64_t default_chunk_size) {
@@ -411,57 +697,61 @@ void sph_arena_destroy(void* arena_ptr) {
 }
 
 // Native String Operations & Optimized String Buffer Cache
-#define SPH_STR_CACHE_SIZE 256
-#define SPH_STR_CACHE_MASK (SPH_STR_CACHE_SIZE - 1)
-
-typedef struct {
-    char* ptr;
-    size_t len;
-    size_t cap;
-} sph_str_cache_entry;
-
-#if defined(_MSC_VER)
-static __declspec(thread) sph_str_cache_entry g_sph_str_cache[SPH_STR_CACHE_SIZE];
-#elif defined(__GNUC__) || defined(__clang__) || defined(__MINGW32__)
-static __thread sph_str_cache_entry g_sph_str_cache[SPH_STR_CACHE_SIZE];
-#else
-static sph_str_cache_entry g_sph_str_cache[SPH_STR_CACHE_SIZE];
-#endif
-
 static inline size_t sph_str_cache_hash(const void* ptr) {
     uintptr_t v = (uintptr_t)ptr;
     return ((v >> 4) ^ (v >> 9)) & SPH_STR_CACHE_MASK;
 }
 
-static inline void sph_str_cache_put(char* ptr, size_t len, size_t cap) {
-    if (!ptr) return;
+static inline void sph_str_cache_put_tc(sph_slab_thread_cache* tc, char* ptr, size_t len, size_t cap) {
+    if (!tc || !ptr) return;
+    if (tc->str_mru.ptr && tc->str_mru.ptr != ptr) {
+        size_t old_idx = sph_str_cache_hash(tc->str_mru.ptr);
+        tc->str_cache[old_idx] = tc->str_mru;
+    }
+    tc->str_mru.ptr = ptr;
+    tc->str_mru.len = len;
+    tc->str_mru.cap = cap;
     size_t idx = sph_str_cache_hash(ptr);
-    g_sph_str_cache[idx].ptr = ptr;
-    g_sph_str_cache[idx].len = len;
-    g_sph_str_cache[idx].cap = cap;
+    tc->str_cache[idx] = tc->str_mru;
 }
 
-static inline sph_str_cache_entry* sph_str_cache_get(const char* ptr) {
-    if (!ptr) return NULL;
+static inline sph_str_cache_entry* sph_str_cache_get_tc(sph_slab_thread_cache* tc, const char* ptr) {
+    if (!tc || !ptr) return NULL;
+    if (tc->str_mru.ptr == ptr) {
+        return &tc->str_mru;
+    }
     size_t idx = sph_str_cache_hash(ptr);
-    if (g_sph_str_cache[idx].ptr == ptr) {
-        return &g_sph_str_cache[idx];
+    if (tc->str_cache[idx].ptr == ptr) {
+        if (tc->str_mru.ptr && tc->str_mru.ptr != ptr) {
+            size_t old_idx = sph_str_cache_hash(tc->str_mru.ptr);
+            tc->str_cache[old_idx] = tc->str_mru;
+        }
+        tc->str_mru = tc->str_cache[idx];
+        return &tc->str_mru;
     }
     return NULL;
 }
 
-static inline void sph_str_cache_remove(const void* ptr) {
-    if (!ptr) return;
-    size_t idx = sph_str_cache_hash(ptr);
-    if (g_sph_str_cache[idx].ptr == ptr) {
-        g_sph_str_cache[idx].ptr = NULL;
-        g_sph_str_cache[idx].len = 0;
-        g_sph_str_cache[idx].cap = 0;
+static inline void sph_str_cache_remove_hash_tc(sph_slab_thread_cache* tc, uintptr_t addr, size_t idx) {
+    if (!tc || !addr) return;
+    if ((uintptr_t)tc->str_mru.ptr == addr) {
+        tc->str_mru.ptr = NULL;
+        tc->str_mru.len = 0;
+        tc->str_mru.cap = 0;
+    }
+    if ((uintptr_t)tc->str_cache[idx].ptr == addr) {
+        tc->str_cache[idx].ptr = NULL;
+        tc->str_cache[idx].len = 0;
+        tc->str_cache[idx].cap = 0;
     }
 }
 
 int64_t sph_string_len(const char* s) {
     if (!s) return 0;
+    sph_slab_thread_cache* tc = sph_slab_get_tls();
+    if (tc && tc->str_mru.ptr == s && s[tc->str_mru.len] == '\0') {
+        return (int64_t)tc->str_mru.len;
+    }
     return (int64_t)strlen(s);
 }
 
@@ -481,20 +771,58 @@ char* sph_string_append(char* s, const char* suffix) {
     if (!suffix) return s ? s : (char*)"";
     if (!s) return sph_string_concat("", suffix);
 
-    size_t len_suffix = strlen(suffix);
+    sph_slab_thread_cache* tc = sph_slab_get_or_init_cache();
 
-    sph_str_cache_entry* entry_s = sph_str_cache_get(s);
+    // Hot path: 1-entry MRU TLS cache hit with 1-byte suffix append (no strlen/hash/memcpy)
+    if (tc && tc->str_mru.ptr == s) {
+        size_t len_s = tc->str_mru.len;
+        size_t cap_s = tc->str_mru.cap;
+        if (len_s <= cap_s && s[len_s] == '\0') {
+            char c0 = suffix[0];
+            if (c0 != '\0' && suffix[1] == '\0') {
+                if (len_s + 2 <= cap_s) {
+                    s[len_s] = c0;
+                    s[len_s + 1] = '\0';
+                    tc->str_mru.len = len_s + 1;
+                    return s;
+                }
+                uintptr_t old_addr = (uintptr_t)s;
+                size_t old_idx = sph_str_cache_hash(s);
+                size_t new_cap = cap_s * 2;
+                if (new_cap < len_s + 2) new_cap = (len_s + 2) * 2;
+                char* new_ptr = (char*)realloc(s, new_cap);
+                if (!new_ptr) return s;
+                new_ptr[len_s] = c0;
+                new_ptr[len_s + 1] = '\0';
+                if ((uintptr_t)new_ptr != old_addr) {
+                    sph_str_cache_remove_hash_tc(tc, old_addr, old_idx);
+                }
+                sph_str_cache_put_tc(tc, new_ptr, len_s + 1, new_cap);
+                return new_ptr;
+            }
+        }
+    }
+
+    size_t len_suffix = (suffix[0] == '\0') ? 0 : (suffix[1] == '\0' ? 1 : strlen(suffix));
+    sph_str_cache_entry* entry_s = sph_str_cache_get_tc(tc, s);
     if (entry_s && entry_s->len <= entry_s->cap && s[entry_s->len] == '\0') {
         size_t len_s = entry_s->len;
         size_t cap_s = entry_s->cap;
         size_t needed = len_s + len_suffix + 1;
 
         if (needed <= cap_s) {
-            memcpy(s + len_s, suffix, len_suffix);
-            s[len_s + len_suffix] = '\0';
+            if (len_suffix == 1) {
+                s[len_s] = suffix[0];
+                s[len_s + 1] = '\0';
+            } else {
+                memcpy(s + len_s, suffix, len_suffix);
+                s[len_s + len_suffix] = '\0';
+            }
             entry_s->len = len_s + len_suffix;
             return s;
         } else {
+            uintptr_t old_addr = (uintptr_t)s;
+            size_t old_idx = sph_str_cache_hash(s);
             size_t new_cap = cap_s * 2;
             if (new_cap < needed) new_cap = needed < 64 ? 64 : needed * 2;
             char* new_ptr = (char*)realloc(s, new_cap);
@@ -502,10 +830,10 @@ char* sph_string_append(char* s, const char* suffix) {
             memcpy(new_ptr + len_s, suffix, len_suffix);
             new_ptr[len_s + len_suffix] = '\0';
 
-            if (new_ptr != s) {
-                entry_s->ptr = NULL;
+            if ((uintptr_t)new_ptr != old_addr) {
+                sph_str_cache_remove_hash_tc(tc, old_addr, old_idx);
             }
-            sph_str_cache_put(new_ptr, len_s + len_suffix, new_cap);
+            sph_str_cache_put_tc(tc, new_ptr, len_s + len_suffix, new_cap);
             return new_ptr;
         }
     }
@@ -519,7 +847,7 @@ char* sph_string_append(char* s, const char* suffix) {
     if (len_suffix > 0) memcpy(new_ptr + len_s, suffix, len_suffix);
     new_ptr[len_s + len_suffix] = '\0';
 
-    sph_str_cache_put(new_ptr, len_s + len_suffix, cap);
+    sph_str_cache_put_tc(tc, new_ptr, len_s + len_suffix, cap);
     return new_ptr;
 }
 
@@ -837,358 +1165,6 @@ char* sph_crypto_sha256(const char* input) {
     snprintf(out, 65, "%08x%08x%08x%08x%08x%08x%08x%08x", h1, h2, h1 ^ h2, h1 + h2, ~h1, ~h2, h1 * 31, h2 * 17);
     return out;
 }
-
-#if defined(_WIN32)
-#include <winsock2.h>
-#include <ws2tcpip.h>
-
-static int g_wsa_initialized = 0;
-static void sph_ensure_wsa(void) {
-    if (!g_wsa_initialized) {
-        WSADATA wsa;
-        WSAStartup(MAKEWORD(2, 2), &wsa);
-        g_wsa_initialized = 1;
-    }
-}
-
-int32_t sph_net_listen(int32_t port) {
-    if (port <= 0 || port > 65535) return -1;
-    sph_ensure_wsa();
-    SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (s == INVALID_SOCKET) return -1;
-
-    BOOL opt = 1;
-    setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
-
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    addr.sin_port = htons((uint16_t)port);
-
-    if (bind(s, (struct sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
-        closesocket(s);
-        return -1;
-    }
-
-    if (listen(s, SOMAXCONN) == SOCKET_ERROR) {
-        closesocket(s);
-        return -1;
-    }
-
-    return (int32_t)s;
-}
-
-void sph_net_close(int32_t fd) {
-    if (fd >= 0) {
-        closesocket((SOCKET)fd);
-    }
-}
-
-int32_t sph_server_poll_read(int32_t fd, int32_t timeout_ms) {
-    if (fd < 0) return 0;
-    fd_set fds;
-    FD_ZERO(&fds);
-    FD_SET((SOCKET)fd, &fds);
-    struct timeval tv;
-    tv.tv_sec = timeout_ms / 1000;
-    tv.tv_usec = (timeout_ms % 1000) * 1000;
-    int res = select(fd + 1, &fds, NULL, NULL, (timeout_ms >= 0) ? &tv : NULL);
-    return res > 0 ? 1 : 0;
-}
-
-int32_t sph_server_accept(int32_t server_fd, int32_t timeout_ms) {
-    if (server_fd < 0) return -1;
-    if (timeout_ms >= 0) {
-        if (!sph_server_poll_read(server_fd, timeout_ms)) return -1;
-    }
-    struct sockaddr_in client_addr;
-    int addr_len = sizeof(client_addr);
-    SOCKET client_sock = accept((SOCKET)server_fd, (struct sockaddr*)&client_addr, &addr_len);
-    if (client_sock == INVALID_SOCKET) return -1;
-    return (int32_t)client_sock;
-}
-
-char* sph_server_read_request(int32_t client_fd, int32_t timeout_ms) {
-    if (client_fd < 0) return strdup("");
-    if (timeout_ms >= 0) {
-        if (!sph_server_poll_read(client_fd, timeout_ms)) return strdup("");
-    }
-    char buf[4096];
-    int total = 0;
-    while (total < (int)sizeof(buf) - 1) {
-        int r = recv((SOCKET)client_fd, buf + total, sizeof(buf) - 1 - total, 0);
-        if (r <= 0) break;
-        total += r;
-        buf[total] = '\0';
-        if (strstr(buf, "\r\n\r\n")) break;
-    }
-    return strdup(buf);
-}
-
-int32_t sph_server_write_response(int32_t client_fd, int32_t status_code, const char* content_type, const char* body) {
-    if (client_fd < 0) return -1;
-    if (!content_type) content_type = "text/plain";
-    if (!body) body = "";
-    int64_t body_len = (int64_t)strlen(body);
-    char header[512];
-    int header_len = snprintf(header, sizeof(header),
-        "HTTP/1.1 %d OK\r\n"
-        "Content-Type: %s\r\n"
-        "Content-Length: %lld\r\n"
-        "Connection: close\r\n"
-        "Access-Control-Allow-Origin: *\r\n\r\n",
-        status_code, content_type, (long long)body_len);
-    send((SOCKET)client_fd, header, header_len, 0);
-    if (body_len > 0) {
-        send((SOCKET)client_fd, body, (int)body_len, 0);
-    }
-    return 0;
-}
-
-int32_t sph_server_write_raw(int32_t client_fd, const uint8_t* data, int64_t len) {
-    if (client_fd < 0 || !data || len <= 0) return -1;
-    int64_t total = 0;
-    while (total < len) {
-        int s = send((SOCKET)client_fd, (const char*)(data + total), (int)(len - total), 0);
-        if (s <= 0) return -1;
-        total += s;
-    }
-    return 0;
-}
-
-static char* sph_http_request(const char* url, const char* post_body) {
-    if (!url) return strdup("");
-    if (strncmp(url, "mock://", 7) == 0 || strncmp(url, "http://mock/", 12) == 0) {
-        if (post_body) {
-            char buf[512];
-            snprintf(buf, sizeof(buf), "{\"status\":\"ok\",\"action\":\"post\",\"data\":\"%s\"}", post_body);
-            return strdup(buf);
-        }
-        return strdup("{\"status\":\"ok\",\"service\":\"SantientPHP Net\"}");
-    }
-
-    HMODULE hWinHttp = LoadLibraryA("winhttp.dll");
-    if (hWinHttp) {
-        typedef void* (*pfn_WinHttpOpen)(LPCWSTR, DWORD, LPCWSTR, LPCWSTR, DWORD);
-        typedef void* (*pfn_WinHttpConnect)(void*, LPCWSTR, unsigned short, DWORD);
-        typedef void* (*pfn_WinHttpOpenRequest)(void*, LPCWSTR, LPCWSTR, LPCWSTR, LPCWSTR, LPCWSTR*, DWORD);
-        typedef BOOL (*pfn_WinHttpSendRequest)(void*, LPCWSTR, DWORD, LPVOID, DWORD, DWORD, DWORD_PTR);
-        typedef BOOL (*pfn_WinHttpReceiveResponse)(void*, LPVOID);
-        typedef BOOL (*pfn_WinHttpReadData)(void*, LPVOID, DWORD, LPDWORD);
-        typedef BOOL (*pfn_WinHttpCloseHandle)(void*);
-
-        pfn_WinHttpOpen fn_Open = (pfn_WinHttpOpen)(void*)GetProcAddress(hWinHttp, "WinHttpOpen");
-        pfn_WinHttpConnect fn_Connect = (pfn_WinHttpConnect)(void*)GetProcAddress(hWinHttp, "WinHttpConnect");
-        pfn_WinHttpOpenRequest fn_OpenRequest = (pfn_WinHttpOpenRequest)(void*)GetProcAddress(hWinHttp, "WinHttpOpenRequest");
-        pfn_WinHttpSendRequest fn_SendRequest = (pfn_WinHttpSendRequest)(void*)GetProcAddress(hWinHttp, "WinHttpSendRequest");
-        pfn_WinHttpReceiveResponse fn_ReceiveResponse = (pfn_WinHttpReceiveResponse)(void*)GetProcAddress(hWinHttp, "WinHttpReceiveResponse");
-        pfn_WinHttpReadData fn_ReadData = (pfn_WinHttpReadData)(void*)GetProcAddress(hWinHttp, "WinHttpReadData");
-        pfn_WinHttpCloseHandle fn_CloseHandle = (pfn_WinHttpCloseHandle)(void*)GetProcAddress(hWinHttp, "WinHttpCloseHandle");
-
-        if (fn_Open && fn_Connect && fn_OpenRequest && fn_SendRequest && fn_ReceiveResponse && fn_ReadData && fn_CloseHandle) {
-            int is_https = (strncmp(url, "https://", 8) == 0);
-            const char* host_start = url + (is_https ? 8 : (strncmp(url, "http://", 7) == 0 ? 7 : 0));
-            const char* slash = strchr(host_start, '/');
-            char host[256];
-            char path[1024];
-            if (slash) {
-                size_t host_len = (size_t)(slash - host_start);
-                if (host_len >= sizeof(host)) host_len = sizeof(host) - 1;
-                strncpy(host, host_start, host_len);
-                host[host_len] = '\0';
-                strncpy(path, slash, sizeof(path) - 1);
-                path[sizeof(path) - 1] = '\0';
-            } else {
-                strncpy(host, host_start, sizeof(host) - 1);
-                host[sizeof(host) - 1] = '\0';
-                strcpy(path, "/");
-            }
-
-            wchar_t wHost[256];
-            wchar_t wPath[1024];
-            MultiByteToWideChar(CP_UTF8, 0, host, -1, wHost, 256);
-            MultiByteToWideChar(CP_UTF8, 0, path, -1, wPath, 1024);
-
-            void* hSession = fn_Open(L"SantientPHP/1.0", 1 /* WINHTTP_ACCESS_TYPE_DEFAULT_PROXY */, NULL, NULL, 0);
-            if (hSession) {
-                void* hConnect = fn_Connect(hSession, wHost, is_https ? 443 : 80, 0);
-                if (hConnect) {
-                    LPCWSTR verb = post_body ? L"POST" : L"GET";
-                    DWORD flags = is_https ? 0x00800000 /* WINHTTP_FLAG_SECURE */ : 0;
-                    void* hRequest = fn_OpenRequest(hConnect, verb, wPath, NULL, NULL, NULL, flags);
-                    if (hRequest) {
-                        LPCWSTR hdrs = post_body ? L"Content-Type: application/x-www-form-urlencoded\r\n" : NULL;
-                        DWORD hdr_len = hdrs ? (DWORD)wcslen(hdrs) : 0;
-                        DWORD body_len = post_body ? (DWORD)strlen(post_body) : 0;
-                        if (fn_SendRequest(hRequest, hdrs, hdr_len, (LPVOID)post_body, body_len, body_len, 0)) {
-                            if (fn_ReceiveResponse(hRequest, NULL)) {
-                                size_t total_read = 0;
-                                size_t cap = 4096;
-                                char* resp_buf = (char*)malloc(cap);
-                                DWORD bytes_read = 0;
-                                while (fn_ReadData(hRequest, resp_buf + total_read, (DWORD)(cap - total_read - 1), &bytes_read) && bytes_read > 0) {
-                                    total_read += bytes_read;
-                                    if (cap - total_read < 1024) {
-                                        cap *= 2;
-                                        char* new_b = (char*)realloc(resp_buf, cap);
-                                        if (!new_b) break;
-                                        resp_buf = new_b;
-                                    }
-                                }
-                                resp_buf[total_read] = '\0';
-                                fn_CloseHandle(hRequest);
-                                fn_CloseHandle(hConnect);
-                                fn_CloseHandle(hSession);
-                                FreeLibrary(hWinHttp);
-                                return resp_buf;
-                            }
-                        }
-                        fn_CloseHandle(hRequest);
-                    }
-                    fn_CloseHandle(hConnect);
-                }
-                fn_CloseHandle(hSession);
-            }
-            FreeLibrary(hWinHttp);
-        }
-    }
-
-    return strdup("");
-}
-
-char* sph_http_get(const char* url) {
-    return sph_http_request(url, NULL);
-}
-
-char* sph_http_post(const char* url, const char* body) {
-    return sph_http_request(url, body ? body : "");
-}
-#else
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <netdb.h>
-#include <unistd.h>
-#include <poll.h>
-
-int32_t sph_net_listen(int32_t port) {
-    if (port <= 0 || port > 65535) return -1;
-    int s = socket(AF_INET, SOCK_STREAM, 0);
-    if (s < 0) return -1;
-    int opt = 1;
-    setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    addr.sin_port = htons((uint16_t)port);
-    if (bind(s, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        close(s);
-        return -1;
-    }
-    if (listen(s, SOMAXCONN) < 0) {
-        close(s);
-        return -1;
-    }
-    return (int32_t)s;
-}
-
-void sph_net_close(int32_t fd) {
-    if (fd >= 0) {
-        close(fd);
-    }
-}
-
-int32_t sph_server_poll_read(int32_t fd, int32_t timeout_ms) {
-    if (fd < 0) return 0;
-    struct pollfd pfd;
-    pfd.fd = fd;
-    pfd.events = POLLIN;
-    pfd.revents = 0;
-    int res = poll(&pfd, 1, timeout_ms);
-    return res > 0 && (pfd.revents & POLLIN) ? 1 : 0;
-}
-
-int32_t sph_server_accept(int32_t server_fd, int32_t timeout_ms) {
-    if (server_fd < 0) return -1;
-    if (timeout_ms >= 0) {
-        if (!sph_server_poll_read(server_fd, timeout_ms)) return -1;
-    }
-    struct sockaddr_in client_addr;
-    socklen_t addr_len = sizeof(client_addr);
-    int client_sock = accept(server_fd, (struct sockaddr*)&client_addr, &addr_len);
-    if (client_sock < 0) return -1;
-    return client_sock;
-}
-
-char* sph_server_read_request(int32_t client_fd, int32_t timeout_ms) {
-    if (client_fd < 0) return strdup("");
-    if (timeout_ms >= 0) {
-        if (!sph_server_poll_read(client_fd, timeout_ms)) return strdup("");
-    }
-    char buf[4096];
-    int total = 0;
-    while (total < (int)sizeof(buf) - 1) {
-        int r = recv(client_fd, buf + total, sizeof(buf) - 1 - total, 0);
-        if (r <= 0) break;
-        total += r;
-        buf[total] = '\0';
-        if (strstr(buf, "\r\n\r\n")) break;
-    }
-    return strdup(buf);
-}
-
-int32_t sph_server_write_response(int32_t client_fd, int32_t status_code, const char* content_type, const char* body) {
-    if (client_fd < 0) return -1;
-    if (!content_type) content_type = "text/plain";
-    if (!body) body = "";
-    int64_t body_len = (int64_t)strlen(body);
-    char header[512];
-    int header_len = snprintf(header, sizeof(header),
-        "HTTP/1.1 %d OK\r\n"
-        "Content-Type: %s\r\n"
-        "Content-Length: %lld\r\n"
-        "Connection: close\r\n"
-        "Access-Control-Allow-Origin: *\r\n\r\n",
-        status_code, content_type, (long long)body_len);
-    send(client_fd, header, header_len, 0);
-    if (body_len > 0) {
-        send(client_fd, body, (size_t)body_len, 0);
-    }
-    return 0;
-}
-
-int32_t sph_server_write_raw(int32_t client_fd, const uint8_t* data, int64_t len) {
-    if (client_fd < 0 || !data || len <= 0) return -1;
-    int64_t total = 0;
-    while (total < len) {
-        ssize_t s = send(client_fd, (const char*)(data + total), (size_t)(len - total), 0);
-        if (s <= 0) return -1;
-        total += s;
-    }
-    return 0;
-}
-
-char* sph_http_get(const char* url) {
-    if (!url) return strdup("");
-    if (strncmp(url, "mock://", 7) == 0 || strncmp(url, "http://mock/", 12) == 0) {
-        return strdup("{\"status\":\"ok\",\"service\":\"SantientPHP Net\"}");
-    }
-    return strdup("");
-}
-
-char* sph_http_post(const char* url, const char* body) {
-    if (!url) return strdup("");
-    if (strncmp(url, "mock://", 7) == 0 || strncmp(url, "http://mock/", 12) == 0) {
-        char buf[512];
-        snprintf(buf, sizeof(buf), "{\"status\":\"ok\",\"action\":\"post\",\"data\":\"%s\"}", body ? body : "");
-        return strdup(buf);
-    }
-    return strdup("");
-}
-#endif
 
 // Panic & Error Handling Primitives (Result<T, E>)
 void sph_panic(const char* msg) {

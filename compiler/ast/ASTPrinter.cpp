@@ -586,6 +586,30 @@ void ASTPrinter::visit(RcCountExpr& node) {
     --m_indentLevel;
 }
 
+void ASTPrinter::visit(ArcNewExpr& node) {
+    indent();
+    m_out << "Arc::new\n";
+    ++m_indentLevel;
+    node.getValue().accept(*this);
+    --m_indentLevel;
+}
+
+void ASTPrinter::visit(ArcCountExpr& node) {
+    indent();
+    m_out << "Arc::count\n";
+    ++m_indentLevel;
+    node.getPointer().accept(*this);
+    --m_indentLevel;
+}
+
+void ASTPrinter::visit(ArcCloneExpr& node) {
+    indent();
+    m_out << "Arc::clone\n";
+    ++m_indentLevel;
+    node.getPointer().accept(*this);
+    --m_indentLevel;
+}
+
 void ASTPrinter::visit(BoxNewExpr& node) {
     indent();
     m_out << "Box::new\n";

@@ -219,6 +219,22 @@ void IRPrinter::print(const IRInstruction& inst) {
             m_out << "rc_release " << rcRelease.getPtr()->getType()->toString() << " " << formatValue(*rcRelease.getPtr());
             break;
         }
+        case IROpcode::ArcAlloc: {
+            const auto& arcAlloc = static_cast<const ArcAllocInst&>(inst);
+            m_out << formatValue(arcAlloc) << " = arc_alloc " << arcAlloc.getInnerType()->toString()
+                  << " (" << arcAlloc.getAllocSize() << " bytes)";
+            break;
+        }
+        case IROpcode::ArcRetain: {
+            const auto& arcRetain = static_cast<const ArcRetainInst&>(inst);
+            m_out << "arc_retain " << arcRetain.getPtr()->getType()->toString() << " " << formatValue(*arcRetain.getPtr());
+            break;
+        }
+        case IROpcode::ArcRelease: {
+            const auto& arcRelease = static_cast<const ArcReleaseInst&>(inst);
+            m_out << "arc_release " << arcRelease.getPtr()->getType()->toString() << " " << formatValue(*arcRelease.getPtr());
+            break;
+        }
         case IROpcode::SetJmp: {
             const auto& sj = static_cast<const SetJmpInst&>(inst);
             m_out << "%" << inst.getName() << " = setjmp " << formatValue(*sj.getFramePtr());

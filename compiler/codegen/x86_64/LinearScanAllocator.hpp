@@ -3,6 +3,7 @@
 #include "compiler/ir/IRBasicBlock.hpp"
 #include "compiler/ir/IRFunction.hpp"
 #include "compiler/ir/IRInstruction.hpp"
+#include <cstdint>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -14,6 +15,7 @@ struct LiveInterval {
     const IRValue* value = nullptr;
     int start = 0;
     int end = 0;
+    uint64_t spillCost = 10;
     std::string assignedReg;
     bool isSpilled = false;
 };
@@ -34,11 +36,14 @@ public:
 private:
     void computeLiveIntervals();
     void runLinearScan();
+    [[nodiscard]] bool valuesInterfere(const IRValue* a, const IRValue* b) const;
 
     const IRFunction& m_fn;
     bool m_isSysV;
     std::vector<LiveInterval> m_intervals;
     std::unordered_map<const IRValue*, size_t> m_intervalMap;
+    std::unordered_map<const IRValue*, std::vector<const IRValue*>> m_coalescePrefs;
+    std::unordered_map<const IRValue*, std::unordered_set<const IRValue*>> m_interference;
     std::unordered_map<const IRValue*, std::string> m_physRegs;
     std::unordered_set<const IRValue*> m_spilled;
     std::vector<std::string> m_usedCalleeSaved;

@@ -30,6 +30,7 @@ const std::unordered_map<std::string_view, TokenKind> kKeywords = {
     {"extern",     TokenKind::KwExtern},
     {"as",         TokenKind::KwAs},
     {"Rc",         TokenKind::KwRc},
+    {"Arc",        TokenKind::KwArc},
     {"Box",        TokenKind::KwBox},
     {"Arena",      TokenKind::KwArena},
     {"Vec",        TokenKind::KwVec},

@@ -52,9 +52,16 @@ public:
     static bool generateLockfile(const std::filesystem::path& projectDir,
                                  std::string& errorMsg);
 
-    // Verify existing sph.lock against disk files
+    // Verify existing sph.lock against disk files and pinned git commits
     static bool verifyLockfile(const std::filesystem::path& projectDir,
                                std::string& errorMsg);
+
+    // Resolve git HEAD commit hash for a repository URL or local repo path
+    static std::string resolveGitHeadCommit(const std::string& gitUrl);
+
+    // Restore / fetch git dependencies into .sph_deps checking out pinned commit SHAs
+    static bool restoreDependencies(const std::filesystem::path& projectDir,
+                                    std::string& errorMsg);
 };
 
 } // namespace sph

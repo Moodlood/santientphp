@@ -19,6 +19,7 @@ public:
 
     [[nodiscard]] bool isVerifyEachPass() const noexcept { return m_verifyEachPass; }
     void setVerifyEachPass(bool verify) noexcept { m_verifyEachPass = verify; }
+    [[nodiscard]] bool hasVerificationErrors() const noexcept { return m_verificationFailed; }
 
     bool run(IRModule& module);
 
@@ -27,6 +28,7 @@ public:
 private:
     OptimizationLevel m_level;
     bool m_verifyEachPass{false};
+    bool m_verificationFailed{false};
     std::vector<std::unique_ptr<FunctionPass>> m_functionPasses;
     std::vector<std::unique_ptr<ModulePass>> m_modulePasses;
 };

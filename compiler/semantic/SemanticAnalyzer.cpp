@@ -171,6 +171,18 @@ std::shared_ptr<Type> SemanticAnalyzer::resolveType(const std::string& name) {
         return nullptr;
     }
 
+    // Check if Arc type: e.g. Arc<Point>
+    if (name.size() >= 5 && name.substr(0, 4) == "Arc<" && name.back() == '>') {
+        std::string inner = name.substr(4, name.size() - 5);
+        while (!inner.empty() && (inner.front() == ' ' || inner.front() == '\t')) inner.erase(0, 1);
+        while (!inner.empty() && (inner.back() == ' ' || inner.back() == '\t')) inner.pop_back();
+        auto innerType = resolveType(inner);
+        if (innerType) {
+            return ArcType::get(innerType);
+        }
+        return nullptr;
+    }
+
     // Check if Box type: e.g. Box<Point>
     if (name.size() >= 5 && name.substr(0, 4) == "Box<" && name.back() == '>') {
         std::string inner = name.substr(4, name.size() - 5);
@@ -1515,6 +1527,9 @@ void SemanticAnalyzer::visit(MemberAccessExpr& node) {
     if (baseType->isRc()) {
         auto rcType = std::static_pointer_cast<RcType>(baseType);
         effectiveType = rcType->getInnerType();
+    } else if (baseType->isArc()) {
+        auto arcType = std::static_pointer_cast<ArcType>(baseType);
+        effectiveType = arcType->getInnerType();
     } else if (baseType->isBox()) {
         auto boxType = std::static_pointer_cast<BoxType>(baseType);
         effectiveType = boxType->getInnerType();
@@ -2071,6 +2086,46 @@ void SemanticAnalyzer::visit(RcCountExpr& node) {
         return;
     }
     node.setInferredType(Type::getI64());
+}
+
+void SemanticAnalyzer::visit(ArcNewExpr& node) {
+    node.getValue().accept(*this);
+    auto innerType = node.getValue().getInferredType();
+    if (!innerType || innerType->isError()) {
+        node.setInferredType(Type::getError());
+        return;
+    }
+    node.setInferredType(ArcType::get(innerType));
+}
+
+void SemanticAnalyzer::visit(ArcCountExpr& node) {
+    node.getPointer().accept(*this);
+    auto ptrType = node.getPointer().getInferredType();
+    if (!ptrType || ptrType->isError()) {
+        node.setInferredType(Type::getError());
+        return;
+    }
+    if (!ptrType->isArc()) {
+        error(node.getSpan(), "Arc::count expects an argument of type 'Arc<T>', but got '" + ptrType->toString() + "'");
+        node.setInferredType(Type::getError());
+        return;
+    }
+    node.setInferredType(Type::getI64());
+}
+
+void SemanticAnalyzer::visit(ArcCloneExpr& node) {
+    node.getPointer().accept(*this);
+    auto ptrType = node.getPointer().getInferredType();
+    if (!ptrType || ptrType->isError()) {
+        node.setInferredType(Type::getError());
+        return;
+    }
+    if (!ptrType->isArc()) {
+        error(node.getSpan(), "Arc::clone expects an argument of type 'Arc<T>', but got '" + ptrType->toString() + "'");
+        node.setInferredType(Type::getError());
+        return;
+    }
+    node.setInferredType(ptrType);
 }
 
 void SemanticAnalyzer::visit(BoxNewExpr& node) {
@@ -2636,6 +2691,50 @@ void SemanticAnalyzer::visit(CallExpr& node) {
         if (node.getArgs().size() != 2) {
             error(node.getSpan(), "'Thread::spawn' expects 2 arguments (func, arg), found " +
                                   std::to_string(node.getArgs().size()));
+        } else {
+            auto containsNonAtomicRc = [](const Type* type, std::unordered_set<const Type*>& visited, auto& self) -> bool {
+                if (!type || visited.count(type)) return false;
+                visited.insert(type);
+                if (type->isRc()) return true;
+                if (type->isArc()) {
+                    return self(static_cast<const ArcType*>(type)->getInnerType().get(), visited, self);
+                }
+                if (type->isBox()) {
+                    return self(static_cast<const BoxType*>(type)->getInnerType().get(), visited, self);
+                }
+                if (type->isPointer()) {
+                    return self(static_cast<const PointerType*>(type)->getPointeeType().get(), visited, self);
+                }
+                if (type->isArray()) {
+                    return self(static_cast<const ArrayType*>(type)->getElementType().get(), visited, self);
+                }
+                if (type->isSlice()) {
+                    return self(static_cast<const SliceType*>(type)->getElementType().get(), visited, self);
+                }
+                if (type->isOption()) {
+                    return self(static_cast<const OptionType*>(type)->getValueType().get(), visited, self);
+                }
+                if (type->isResult()) {
+                    const auto* res = static_cast<const ResultType*>(type);
+                    return self(res->getOkType().get(), visited, self) ||
+                           self(res->getErrType().get(), visited, self);
+                }
+                if (type->isStruct() || type->isClass() || type->isUnion()) {
+                    const auto* st = static_cast<const StructType*>(type);
+                    for (const auto& m : st->getMembers()) {
+                        if (self(m.type.get(), visited, self)) return true;
+                    }
+                }
+                return false;
+            };
+            for (const auto& arg : node.getArgs()) {
+                if (!arg) continue;
+                auto argType = arg->getInferredType();
+                std::unordered_set<const Type*> visited;
+                if (argType && containsNonAtomicRc(argType.get(), visited, containsNonAtomicRc)) {
+                    error(arg->getSpan(), "cannot pass non-atomic 'Rc<T>' across thread boundary in 'Thread::spawn'; use 'Arc<T>' instead");
+                }
+            }
         }
         node.setInferredType(Type::getI64());
         return;

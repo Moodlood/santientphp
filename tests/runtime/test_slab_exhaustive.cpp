@@ -1,14 +1,10 @@
 #include "common/test_framework.hpp"
+#include "runtime/core/core.h"
 #include <cstdint>
 #include <cstring>
 #include <string>
 #include <thread>
 #include <vector>
-
-extern "C" {
-    void* sph_alloc(int64_t size);
-    void sph_free(void* ptr);
-}
 
 namespace sph {
 
@@ -112,6 +108,66 @@ struct SlabExhaustiveRegistrar {
 static SlabExhaustiveRegistrar s_slabRegistrar;
 
 } // namespace
+
+TEST_CASE("Slab Multi-Tier: 32..512B 16-byte alignment and canary validation") {
+    const int64_t before = sph_current_bytes();
+    const int64_t sizes[] = {1, 16, 32, 48, 64, 100, 128, 200, 256, 400, 512, 513, 1024};
+    std::vector<void*> ptrs;
+    for (int64_t sz : sizes) {
+        void* p = sph_alloc(sz);
+        CHECK(p != nullptr);
+        CHECK_EQ(reinterpret_cast<uintptr_t>(p) & 0xF, static_cast<uintptr_t>(0));
+        CHECK_EQ(sph_mem_validate_ptr(p), 1);
+        std::memset(p, 0xA5, static_cast<size_t>(sz));
+        ptrs.push_back(p);
+    }
+    for (void* p : ptrs) {
+        sph_free(p);
+        CHECK_EQ(sph_mem_validate_ptr(p), 0);
+    }
+    CHECK_EQ(sph_current_bytes(), before);
+}
+
+TEST_CASE("Slab Cross-Thread: Exited producer orphan chunk safe remote reclamation") {
+    const int64_t before = sph_current_bytes();
+    std::vector<void*> transferred;
+    const int64_t tierSizes[] = {32, 64, 128, 256, 512};
+
+    // Producer allocates blocks across all 5 slab tiers and exits before consumer frees them
+    std::thread producer([&]() {
+        for (int i = 0; i < 500; ++i) {
+            int64_t sz = tierSizes[i % 5];
+            void* p = sph_alloc(sz);
+            std::memset(p, (i % 200) + 1, static_cast<size_t>(sz));
+            transferred.push_back(p);
+        }
+    });
+    producer.join();
+
+    // Producer thread has exited and retired its TLS cache; consumer frees safely
+    for (void* p : transferred) {
+        CHECK_EQ(sph_mem_validate_ptr(p), 1);
+        sph_free(p);
+    }
+    CHECK_EQ(sph_current_bytes(), before);
+}
+
+TEST_CASE("Slab Cross-Thread: Live producer reclaims remotely freed blocks") {
+    const int64_t before = sph_current_bytes();
+    for (int round = 0; round < 50; ++round) {
+        std::vector<void*> batch;
+        for (int i = 0; i < 128; ++i) {
+            batch.push_back(sph_alloc(64));
+        }
+        std::thread consumer([&]() {
+            for (void* p : batch) {
+                sph_free(p);
+            }
+        });
+        consumer.join();
+    }
+    CHECK_EQ(sph_current_bytes(), before);
+}
 
 } // namespace sph
 

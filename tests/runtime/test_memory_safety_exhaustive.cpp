@@ -173,6 +173,33 @@ TEST_CASE("Escape Analysis Hardening: Allocation inside loop prevents unsafe sta
     auto sz = ConstantInt::get(32, Type::getI64());
     auto allocCall = std::make_shared<CallInst>("sph_alloc", std::vector<std::shared_ptr<IRValue>>{sz}, ptrType, "loopAlloc");
     loopBody->addInstruction(allocCall);
+    // Missing dominating sph_free before latch: unsafe to stack-demote across iterations
+    loopBody->addInstruction(std::make_shared<BranchInst>(loopHeader));
+
+    exit->addInstruction(std::make_shared<RetInst>());
+
+    EscapeAnalysisPass pass;
+    bool changed = pass.runOnFunction(fn);
+    CHECK(!changed); // Must NOT demote unsafe allocation inside cyclic loop
+}
+
+TEST_CASE("Escape Analysis Hardening: Iteration-local loop allocation with dominating sph_free reuses stack slot") {
+    auto ptrType = PointerType::get(Type::getVoid());
+    IRFunction fn("fn_ea_loop_alloc_safe", Type::getVoid());
+
+    auto entry = fn.createBlock("entry");
+    auto loopHeader = fn.createBlock("loop.header");
+    auto loopBody = fn.createBlock("loop.body");
+    auto exit = fn.createBlock("exit");
+
+    entry->addInstruction(std::make_shared<BranchInst>(loopHeader));
+
+    auto cond = ConstantInt::get(1, Type::getBool());
+    loopHeader->addInstruction(std::make_shared<CondBranchInst>(cond, loopBody, exit));
+
+    auto sz = ConstantInt::get(32, Type::getI64());
+    auto allocCall = std::make_shared<CallInst>("sph_alloc", std::vector<std::shared_ptr<IRValue>>{sz}, ptrType, "loopAllocSafe");
+    loopBody->addInstruction(allocCall);
 
     auto freeCall = std::make_shared<CallInst>("sph_free", std::vector<std::shared_ptr<IRValue>>{allocCall}, Type::getVoid(), "freeCall");
     loopBody->addInstruction(freeCall);
@@ -182,7 +209,7 @@ TEST_CASE("Escape Analysis Hardening: Allocation inside loop prevents unsafe sta
 
     EscapeAnalysisPass pass;
     bool changed = pass.runOnFunction(fn);
-    CHECK(!changed); // Must NOT demote allocation inside cyclic loop
+    CHECK(changed); // Safely demotes iteration-local loop allocation to entry-block AllocaInst
 }
 
 } // namespace sph

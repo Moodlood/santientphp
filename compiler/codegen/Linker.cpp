@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <sstream>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #if defined(_WIN32)
@@ -10,6 +11,40 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+
+static std::string findExecutableInPath(const std::string& name) {
+    char buf[MAX_PATH];
+    DWORD len = SearchPathA(NULL, name.c_str(), ".exe", MAX_PATH, buf, NULL);
+    if (len > 0 && len < MAX_PATH) {
+        return std::string(buf, len);
+    }
+    return "";
+}
+#else
+#include <sys/wait.h>
+#include <unistd.h>
+#include <wordexp.h>
+
+static std::string findExecutableInPath(const std::string& name) {
+    if (name.find('/') != std::string::npos) {
+        return access(name.c_str(), X_OK) == 0 ? name : "";
+    }
+    const char* pathEnv = std::getenv("PATH");
+    if (!pathEnv) return "";
+    std::stringstream ss(pathEnv);
+    std::string dir;
+    while (std::getline(ss, dir, ':')) {
+        if (dir.empty()) continue;
+        std::string full = dir + "/" + name;
+        if (access(full.c_str(), X_OK) == 0) {
+            return full;
+        }
+    }
+    return "";
+}
+#endif
+
+#if defined(_WIN32)
 
 static int runProcessDirect(const std::string& commandLine) {
     std::wstring wcmd(commandLine.begin(), commandLine.end());
@@ -71,12 +106,7 @@ std::optional<std::string> Linker::findCrossToolchain(const Target& target) cons
 
     for (const auto& cand : candidates) {
         if (cand.empty()) continue;
-#if defined(_WIN32)
-        std::string checkCmd = "where.exe " + cand + " >nul 2>&1";
-#else
-        std::string checkCmd = "which " + cand + " >/dev/null 2>&1";
-#endif
-        if (std::system(checkCmd.c_str()) == 0) {
+        if (!findExecutableInPath(cand).empty()) {
             return cand;
         }
     }
@@ -96,20 +126,45 @@ bool Linker::linkExecutable(const std::filesystem::path& asmPath,
                            const std::filesystem::path& resourceObjPath,
                            const std::vector<std::string>& extraLibs,
                            const std::vector<std::filesystem::path>& libSearchPaths) const {
+    std::vector<std::filesystem::path> libs;
+    if (!runtimeLibPath.empty()) {
+        libs.push_back(runtimeLibPath);
+    }
+    bool linkNet = runtimeLibPath.filename() != "libsph_core.a";
+    return linkExecutable(asmPath, outputPath, libs, errorMsg, optLevel, debugInfo,
+                          target, isGui, guiLibPath, resourceObjPath, extraLibs, libSearchPaths, linkNet);
+}
+
+bool Linker::linkExecutable(const std::filesystem::path& asmPath,
+                           const std::filesystem::path& outputPath,
+                           const std::vector<std::filesystem::path>& runtimeLibPaths,
+                           std::string& errorMsg,
+                           const std::string& /*optLevel*/,
+                           bool debugInfo,
+                           const Target& target,
+                           bool isGui,
+                           const std::filesystem::path& guiLibPath,
+                           const std::filesystem::path& resourceObjPath,
+                           const std::vector<std::string>& extraLibs,
+                           const std::vector<std::filesystem::path>& libSearchPaths,
+                           bool linkNetwork) const {
     std::string tool;
     if (target.isHost()) {
         static std::string cachedHostTool;
         if (cachedHostTool.empty()) {
-            cachedHostTool = "gcc";
+            std::string found = findExecutableInPath("gcc");
+            if (!found.empty()) {
+                cachedHostTool = found;
+            } else {
+                cachedHostTool = "gcc";
 #if defined(_WIN32)
-            if (std::system("where.exe gcc >nul 2>&1") != 0) {
                 if (std::filesystem::exists("C:\\msys64\\ucrt64\\bin\\gcc.exe")) {
                     cachedHostTool = "C:\\msys64\\ucrt64\\bin\\gcc.exe";
                 } else if (std::filesystem::exists("C:\\msys64\\mingw64\\bin\\gcc.exe")) {
                     cachedHostTool = "C:\\msys64\\mingw64\\bin\\gcc.exe";
                 }
-            }
 #endif
+            }
         }
         tool = cachedHostTool;
     } else {
@@ -125,7 +180,7 @@ bool Linker::linkExecutable(const std::filesystem::path& asmPath,
     }
 
     std::ostringstream cmd;
-    cmd << tool << " ";
+    cmd << "\"" << tool << "\" ";
     if (!target.isHost() && tool == "clang") {
         cmd << "--target=" << target.getLLVMTriple() << " ";
     }
@@ -133,21 +188,26 @@ bool Linker::linkExecutable(const std::filesystem::path& asmPath,
         cmd << "-g ";
     } else {
         cmd << "-s -pipe ";
-    }
-    if (!optLevel.empty()) {
-        if (optLevel.front() == 'O') {
-            cmd << "-" << optLevel << " ";
+        if (target.getOS() == TargetOS::MacOS) {
+            cmd << "-Wl,-dead_strip ";
         } else {
-            cmd << "-O" << optLevel << " ";
+            cmd << "-Wl,--gc-sections ";
         }
     }
+#ifdef SPH_SANITIZE_LINK_FLAGS
+    if (target.isHost()) {
+        cmd << SPH_SANITIZE_LINK_FLAGS << " ";
+    }
+#endif
     for (const auto& searchPath : libSearchPaths) {
         cmd << "-L\"" << searchPath.string() << "\" ";
     }
     cmd << "\"" << asmPath.string() << "\" ";
 
-    if (std::filesystem::exists(runtimeLibPath)) {
-        cmd << "\"" << runtimeLibPath.string() << "\" ";
+    for (const auto& rtLib : runtimeLibPaths) {
+        if (!rtLib.empty() && std::filesystem::exists(rtLib)) {
+            cmd << "\"" << rtLib.string() << "\" ";
+        }
     }
     if (isGui && !guiLibPath.empty() && std::filesystem::exists(guiLibPath)) {
         cmd << "\"" << guiLibPath.string() << "\" ";
@@ -157,13 +217,22 @@ bool Linker::linkExecutable(const std::filesystem::path& asmPath,
     }
 #if defined(_WIN32)
     if (isGui) {
-        cmd << "-mwindows -static-libgcc -lws2_32 -lwinmm -lcomctl32 -lgdi32 -luser32 -lopengl32 -lole32 -luuid -lwinmm ";
+        cmd << "-mwindows -static-libgcc -lcomctl32 -lgdi32 -luser32 -lopengl32 -lole32 -luuid -lwinmm ";
+        if (linkNetwork) {
+            cmd << "-lws2_32 ";
+        }
+    } else if (linkNetwork) {
+        cmd << "-static-libgcc -lws2_32 ";
     } else {
-        cmd << "-static-libgcc -lws2_32 -lwinmm ";
+        cmd << "-static-libgcc ";
     }
 #else
     if (isGui) {
-        cmd << "-no-pie -lpthread -ldl -lm -lGL ";
+        if (target.getOS() == TargetOS::MacOS) {
+            cmd << "-lpthread -ldl -lm ";
+        } else {
+            cmd << "-no-pie -lpthread -ldl -lm -lX11 -lGL ";
+        }
     } else {
         cmd << "-no-pie -lpthread -ldl -lm ";
     }

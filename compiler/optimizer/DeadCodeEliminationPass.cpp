@@ -112,49 +112,54 @@ bool DeadCodeEliminationPass::eliminateUnreachableBlocks(IRFunction& fn) {
 }
 
 bool DeadCodeEliminationPass::eliminateDeadInstructions(IRFunction& fn) {
-    bool anyChanged = false;
-    bool changedInPass = true;
+    // Mark-and-sweep live instruction analysis (also eliminates dead cyclic Phi nodes)
+    std::unordered_set<const IRInstruction*> live;
+    std::vector<const IRInstruction*> worklist;
 
-    while (changedInPass) {
-        changedInPass = false;
-
-        // Build use count map
-        std::unordered_map<const IRValue*, size_t> useCounts;
-        for (const auto& bb : fn.getBlocks()) {
-            if (!bb) continue;
-            for (const auto& inst : bb->getInstructions()) {
-                if (!inst) continue;
-                auto operands = getInstructionOperands(*inst);
-                for (const auto* op : operands) {
-                    if (op) useCounts[op]++;
+    for (const auto& bb : fn.getBlocks()) {
+        if (!bb) continue;
+        for (const auto& inst : bb->getInstructions()) {
+            if (!inst) continue;
+            if (!isSideEffectFree(*inst) && inst->getOpcode() != IROpcode::Phi) {
+                if (live.insert(inst.get()).second) {
+                    worklist.push_back(inst.get());
                 }
             }
         }
+    }
 
-        // Identify and remove dead side-effect-free instructions
-        for (auto& bb : fn.getBlocks()) {
-            if (!bb) continue;
-            auto& insts = bb->getInstructions();
-            size_t oldSize = insts.size();
-            insts.erase(
-                std::remove_if(insts.begin(), insts.end(),
-                    [&](const std::shared_ptr<IRInstruction>& inst) {
-                        if (!inst) return true;
-                        if (isSideEffectFree(*inst)) {
-                            auto it = useCounts.find(inst.get());
-                            if (it == useCounts.end() || it->second == 0) {
-                                return true;
-                            }
-                        }
-                        return false;
-                    }),
-                insts.end()
-            );
-
-            if (insts.size() < oldSize) {
-                changedInPass = true;
-                anyChanged = true;
+    while (!worklist.empty()) {
+        const IRInstruction* cur = worklist.back();
+        worklist.pop_back();
+        for (const auto* op : getInstructionOperands(*cur)) {
+            if (op && op->isInstruction()) {
+                const auto* defInst = static_cast<const IRInstruction*>(op);
+                if (live.insert(defInst).second) {
+                    worklist.push_back(defInst);
+                }
             }
+        }
+    }
+
+    bool anyChanged = false;
+    for (auto& bb : fn.getBlocks()) {
+        if (!bb) continue;
+        auto& insts = bb->getInstructions();
+        size_t oldSize = insts.size();
+        insts.erase(
+            std::remove_if(insts.begin(), insts.end(),
+                [&](const std::shared_ptr<IRInstruction>& inst) {
+                    if (!inst) return true;
+                    if ((isSideEffectFree(*inst) || inst->getOpcode() == IROpcode::Phi) &&
+                        !live.count(inst.get())) {
+                        return true;
+                    }
+                    return false;
+                }),
+            insts.end()
+        );
+        if (insts.size() < oldSize) {
+            anyChanged = true;
         }
     }
 

@@ -47,6 +47,11 @@ jobs:
               exit $LASTEXITCODE
           }
 
+      - name: Run Differential IR/Codegen Fuzzer
+        shell: powershell
+        run: |
+          .\build\bin\sph_diff_fuzz.exe --iterations 100 --native 6
+
       - name: Verify CLI Compiler Run
         shell: powershell
         run: |
@@ -66,7 +71,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc g++ cmake ninja-build libsqlite3-dev
+          sudo apt-get install -y gcc g++ cmake ninja-build libsqlite3-dev libx11-dev libgl1-mesa-dev xvfb
 
       - name: Configure CMake
         run: |
@@ -76,9 +81,32 @@ jobs:
         run: |
           ninja -C build
 
-      - name: Execute Full Test Suite
+      - name: Execute Full Test Suite under Xvfb
         run: |
-          ./build/bin/sph_tests
+          xvfb-run -a ./build/bin/sph_tests
+
+      - name: Run Native X11 GUI Smoke Test under Xvfb
+        run: |
+          cat << 'EOF' > /tmp/x11_smoke.sph
+          <?php
+          import "std/gui.sph";
+          fn main(): i32 {
+              let win: Window = window_create("CI Smoke", 320, 240);
+              let btn: Button = button_create(win, "OK", 10, 10, 80, 28, 1);
+              window_show(win);
+              sph_gui_pump_events();
+              let pushed: bool = button_is_pushed(btn);
+              if (pushed) { println(1); } else { println(0); }
+              window_close(win);
+              return 0;
+          }
+          EOF
+          ./build/bin/sphc build /tmp/x11_smoke.sph -O2 --gui -o /tmp/x11_smoke
+          xvfb-run -a /tmp/x11_smoke
+
+      - name: Run Differential IR/Codegen Fuzzer
+        run: |
+          ./build/bin/sph_diff_fuzz --iterations 200 --native 10
 
       - name: Verify CLI Compiler Run
         run: |
@@ -86,3 +114,66 @@ jobs:
           ./build/bin/sphc doctor
           echo "=== Running: sphc run hello.sph ==="
           ./build/bin/sphc run hello.sph
+
+  sanitize-asan-ubsan:
+    name: Sanitize (Linux ASan + UBSan)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc g++ cmake ninja-build libsqlite3-dev libx11-dev libgl1-mesa-dev xvfb
+
+      - name: Configure CMake (ASan + UBSan)
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DSPH_SANITIZE=address
+
+      - name: Build Sanitized Targets
+        run: |
+          ninja -C build sph_tests sphc sph_diff_fuzz
+
+      - name: Run Test Suite & Fuzzer under ASan + UBSan
+        env:
+          ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:abort_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: |
+          xvfb-run -a ./build/bin/sph_tests
+          ./build/bin/sph_diff_fuzz --iterations 100 --native 0
+
+  sanitize-tsan:
+    name: Sanitize (Linux TSan)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc g++ cmake ninja-build libsqlite3-dev libx11-dev libgl1-mesa-dev
+
+      - name: Tune ASLR entropy for TSan on Ubuntu 24.04 kernels
+        run: |
+          sudo sysctl -w vm.mmap_rnd_bits=28 || true
+
+      - name: Configure CMake (TSan)
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DSPH_SANITIZE=thread
+
+      - name: Build TSan Test Suite
+        run: |
+          ninja -C build sph_tests
+
+      - name: Run Concurrency & Slab & Arc Tests under TSan
+        env:
+          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+        run: |
+          ./build/bin/sph_tests -f "Concurrency"
+          ./build/bin/sph_tests -f "Slab"
+          ./build/bin/sph_tests -f "Arc"
+          ./build/bin/sph_tests -f "Memory"

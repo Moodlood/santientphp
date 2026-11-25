@@ -1,5 +1,6 @@
 #include "common/test_framework.hpp"
 #include "runtime/async/async.h"
+#include "runtime/core/core.h"
 #include "runtime/net/websocket.h"
 #include <atomic>
 #include <cstdint>
@@ -141,6 +142,40 @@ TEST_CASE("Network & WebSocket: Handshake parsing and safe resource teardown") {
     CHECK_EQ(sph_ws_is_open(nullptr), 0);
     sph_ws_close(nullptr); // Must not crash
     CHECK_EQ(sph_ws_send_text(nullptr, "hello"), -1);
+}
+
+TEST_CASE("Concurrency Stress: Arc atomic retain and release under multi-thread contention") {
+    void* arc = sph_arc_alloc(sizeof(int64_t));
+    CHECK(arc != nullptr);
+    *static_cast<int64_t*>(arc) = 123456789LL;
+    CHECK_EQ(sph_arc_count(arc), 1);
+
+    const int threadCount = 8;
+    const int loops = 5000;
+    std::vector<std::thread> threads;
+    std::vector<int> threadOk(threadCount, 1);
+    threads.reserve(threadCount);
+    for (int t = 0; t < threadCount; ++t) {
+        threads.emplace_back([arc, loops, &threadOk, t]() {
+            for (int i = 0; i < loops; ++i) {
+                sph_arc_retain(arc);
+                volatile int64_t v = *static_cast<int64_t*>(arc);
+                if (v != 123456789LL) {
+                    threadOk[t] = 0;
+                }
+                sph_arc_release(arc);
+            }
+        });
+    }
+    for (auto& th : threads) {
+        th.join();
+    }
+    for (int t = 0; t < threadCount; ++t) {
+        CHECK_EQ(threadOk[t], 1);
+    }
+
+    CHECK_EQ(sph_arc_count(arc), 1);
+    sph_arc_release(arc);
 }
 
 } // namespace sph

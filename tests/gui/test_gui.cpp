@@ -407,4 +407,49 @@ TEST_CASE("GUI: Reactive StateInt and StateString with dirty tracking") {
     CHECK(ok);
 }
 
+TEST_CASE("GUI: Cross-platform button_is_pushed FFI signature and widget primitives") {
+    sph::SourceManager sm;
+    std::string code =
+        "<?php\n"
+        "import \"std/gui.sph\";\n"
+        "\n"
+        "fn main(): i32 {\n"
+        "    let win: Window = window_create(\"Btn Test\", 320, 240);\n"
+        "    let btn: Button = button_create(win, \"Go\", 10, 10, 80, 28, 101);\n"
+        "    let pushed: bool = button_is_pushed(btn);\n"
+        "    if (pushed) { window_close(win); }\n"
+        "    return 0;\n"
+        "}\n";
+
+    uint32_t fileId = sm.addSource("test_button_pushed_gui.sph", code);
+    sph::DiagnosticEmitter emitter(sm);
+    sph::Parser parser(fileId, sm, &emitter);
+    auto program = parser.parseProgram();
+    CHECK(!emitter.hasErrors());
+    CHECK(program != nullptr);
+
+    sph::SemanticAnalyzer analyzer(emitter);
+    CHECK(analyzer.analyze(*program));
+
+    void* win = sph_gui_window_create("CrossPlatform Test", 320, 240);
+    if (win) {
+        CHECK_EQ(sph_gui_window_is_open(win), 1);
+        sph_gui_window_set_title(win, "Updated Title");
+        void* btn = sph_gui_button_create(win, "Click", 10, 10, 80, 25, 10);
+        CHECK_EQ(sph_gui_button_is_pushed(btn), 0);
+        void* cb = sph_gui_checkbox_create(win, "Agree", 10, 45, 120, 24, 11);
+        sph_gui_checkbox_set_checked(cb, 1);
+        CHECK_EQ(sph_gui_checkbox_is_checked(cb), 1);
+        void* pb = sph_gui_progressbar_create(win, 10, 80, 200, 20, 12);
+        sph_gui_progressbar_set_range(pb, 0, 100);
+        sph_gui_progressbar_set_pos(pb, 50);
+        void* lv = sph_gui_listview_create(win, 10, 110, 200, 80, 13);
+        int32_t itemIdx = sph_gui_listview_add_item(lv, "Item 0");
+        CHECK(itemIdx >= 0);
+        sph_gui_window_destroy(win);
+        sph_gui_pump_events();
+    }
+}
+
+
 

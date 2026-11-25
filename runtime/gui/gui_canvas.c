@@ -334,6 +334,8 @@ void sph_canvas_present(sph_canvas* canvas) {
             ReleaseDC((HWND)canvas->hwnd, hdc_win);
         }
     }
+#elif defined(__linux__) || (defined(__unix__) && !defined(__APPLE__))
+    sph_x11_canvas_present(canvas);
 #endif
 }
 
@@ -364,6 +366,23 @@ void sph_canvas_map_mouse(sph_canvas* canvas, int32_t client_x, int32_t client_y
                 *out_y = cy;
                 return;
             }
+        }
+    }
+#elif defined(__linux__) || (defined(__unix__) && !defined(__APPLE__))
+    if (canvas->hwnd) {
+        int32_t win_w = 0, win_h = 0;
+        if (sph_x11_get_window_size(canvas->hwnd, &win_w, &win_h) && win_w > 0 && win_h > 0) {
+            int dst_x = (win_w > canvas->width) ? (win_w - canvas->width) / 2 : 0;
+            int dst_y = (win_h > canvas->height) ? (win_h - canvas->height) / 2 : 0;
+            int cx = client_x - dst_x;
+            int cy = client_y - dst_y;
+            if (cx < 0) cx = 0;
+            if (cx >= canvas->width) cx = canvas->width - 1;
+            if (cy < 0) cy = 0;
+            if (cy >= canvas->height) cy = canvas->height - 1;
+            *out_x = cx;
+            *out_y = cy;
+            return;
         }
     }
 #endif
@@ -405,6 +424,8 @@ void* sph_gl_context_create(void* hwnd) {
     }
     ReleaseDC((HWND)hwnd, hdc);
     return (void*)hglrc;
+#elif defined(__linux__) || (defined(__unix__) && !defined(__APPLE__))
+    return sph_x11_gl_context_create(hwnd);
 #else
     (void)hwnd;
     return NULL;
@@ -420,6 +441,8 @@ void sph_gl_swap_buffers(void* hwnd) {
             ReleaseDC((HWND)hwnd, hdc);
         }
     }
+#elif defined(__linux__) || (defined(__unix__) && !defined(__APPLE__))
+    sph_x11_gl_swap_buffers(hwnd);
 #else
     (void)hwnd;
 #endif
@@ -436,6 +459,8 @@ void sph_gl_make_current(void* hwnd, void* gl_ctx) {
     } else {
         wglMakeCurrent(NULL, NULL);
     }
+#elif defined(__linux__) || (defined(__unix__) && !defined(__APPLE__))
+    sph_x11_gl_make_current(hwnd, gl_ctx);
 #else
     (void)hwnd;
     (void)gl_ctx;

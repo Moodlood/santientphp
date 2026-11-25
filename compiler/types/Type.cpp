@@ -20,6 +20,7 @@ std::string Type::toString() const {
         case TypeKind::Slice:     return "slice";
         case TypeKind::Pointer:   return "pointer";
         case TypeKind::Rc:        return "rc";
+        case TypeKind::Arc:       return "arc";
         case TypeKind::Box:       return "box";
         case TypeKind::Arena:     return "arena";
         case TypeKind::Vector:    return "vector";

@@ -12,6 +12,7 @@ struct LockedPackage {
     std::string name;
     std::string version;
     std::string source;     // e.g. "path:../lib", "git:https://...", "registry:..."
+    std::string commit;     // Pinned git commit SHA for git dependencies
     std::string checksum;   // SHA-256 hex digest
     std::vector<std::string> dependencies;
 };

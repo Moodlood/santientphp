@@ -298,3 +298,88 @@ TEST_CASE("LSP: Document Symbol recovery and Hover on partially malformed syntax
     CHECK(symObj["result"].isArray());
 }
 
+TEST_CASE("LSP: Cross-file definition, prepareRename/rename, and signatureHelp") {
+    LspServer server;
+    server.handleMessage("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}");
+
+    std::string libCode =
+        "<?php\n"
+        "fn compute_score(base: i32, bonus: i32): i32 {\n"
+        "    return base + bonus;\n"
+        "}\n";
+    std::string mainCode =
+        "<?php\n"
+        "import \"math_lib.sph\";\n"
+        "fn main(): i32 {\n"
+        "    let res: i32 = compute_score(10, 5);\n"
+        "    return res;\n"
+        "}\n";
+
+    server.handleMessage(JsonValue(JsonValue::Object{
+        {"jsonrpc", JsonValue("2.0")},
+        {"method", JsonValue("textDocument/didOpen")},
+        {"params", JsonValue::Object{
+            {"textDocument", JsonValue::Object{
+                {"uri", JsonValue("file:///proj/math_lib.sph")},
+                {"languageId", JsonValue("sph")},
+                {"version", JsonValue(1)},
+                {"text", JsonValue(libCode)}
+            }}
+        }}
+    }).serialize());
+    server.handleMessage(JsonValue(JsonValue::Object{
+        {"jsonrpc", JsonValue("2.0")},
+        {"method", JsonValue("textDocument/didOpen")},
+        {"params", JsonValue::Object{
+            {"textDocument", JsonValue::Object{
+                {"uri", JsonValue("file:///proj/main.sph")},
+                {"languageId", JsonValue("sph")},
+                {"version", JsonValue(1)},
+                {"text", JsonValue(mainCode)}
+            }}
+        }}
+    }).serialize());
+
+    // 1. Cross-file go-to-definition from main.sph line 3 col 22 ('compute_score')
+    std::string defResp = server.handleMessage(
+        "{\"jsonrpc\":\"2.0\",\"id\":50,\"method\":\"textDocument/definition\",\"params\":{"
+        "\"textDocument\":{\"uri\":\"file:///proj/main.sph\"},"
+        "\"position\":{\"line\":3,\"character\":22}}}");
+    JsonValue defObj = JsonValue::parse(defResp);
+    CHECK_EQ(defObj["result"]["uri"].asString(), "file:///proj/math_lib.sph");
+    CHECK_EQ(defObj["result"]["range"]["start"]["line"].asInt(), 1);
+
+    // 2. Signature help inside second argument: compute_score(10, |
+    std::string sigResp = server.handleMessage(
+        "{\"jsonrpc\":\"2.0\",\"id\":51,\"method\":\"textDocument/signatureHelp\",\"params\":{"
+        "\"textDocument\":{\"uri\":\"file:///proj/main.sph\"},"
+        "\"position\":{\"line\":3,\"character\":37}}}");
+    JsonValue sigObj = JsonValue::parse(sigResp);
+    CHECK(sigObj["result"]["signatures"].isArray());
+    const auto& sigs = sigObj["result"]["signatures"].asArray();
+    CHECK_EQ(sigs.size(), size_t(1));
+    if (!sigs.empty()) {
+        CHECK_EQ(sigObj["result"]["activeParameter"].asInt(), 1);
+        CHECK(sigs[0]["label"].asString().find("compute_score(base: i32, bonus: i32)") != std::string::npos);
+    }
+
+    // 3. prepareRename & rename across both files
+    std::string prepResp = server.handleMessage(
+        "{\"jsonrpc\":\"2.0\",\"id\":52,\"method\":\"textDocument/prepareRename\",\"params\":{"
+        "\"textDocument\":{\"uri\":\"file:///proj/main.sph\"},"
+        "\"position\":{\"line\":3,\"character\":22}}}");
+    JsonValue prepObj = JsonValue::parse(prepResp);
+    CHECK_EQ(prepObj["result"]["placeholder"].asString(), "compute_score");
+
+    std::string renResp = server.handleMessage(
+        "{\"jsonrpc\":\"2.0\",\"id\":53,\"method\":\"textDocument/rename\",\"params\":{"
+        "\"textDocument\":{\"uri\":\"file:///proj/main.sph\"},"
+        "\"position\":{\"line\":3,\"character\":22},"
+        "\"newName\":\"calc_score\"}}");
+    JsonValue renObj = JsonValue::parse(renResp);
+    CHECK(renObj["result"]["changes"]["file:///proj/main.sph"].isArray());
+    CHECK(renObj["result"]["changes"]["file:///proj/math_lib.sph"].isArray());
+    CHECK_EQ(renObj["result"]["changes"]["file:///proj/main.sph"].asArray().size(), size_t(1));
+    CHECK_EQ(renObj["result"]["changes"]["file:///proj/math_lib.sph"].asArray().size(), size_t(1));
+}
+

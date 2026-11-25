@@ -351,3 +351,40 @@ TEST_CASE("Positive: Dereferencing raw pointer inside unsafe block is permitted"
     CHECK(checkValid(code));
 }
 
+TEST_CASE("Negative: Passing non-atomic Rc<T> into Thread::spawn is rejected") {
+    std::string code =
+        "<?php\n"
+        "struct Item { x: i32 }\n"
+        "fn worker(a: *u8): void {}\n"
+        "fn main(): void {\n"
+        "    let r = Rc::new(Item { x: 1 });\n"
+        "    Thread::spawn(worker, r);\n"
+        "}\n";
+    CHECK(checkInvalid(code));
+}
+
+TEST_CASE("Negative: Passing struct containing Rc<T> into Thread::spawn is rejected") {
+    std::string code =
+        "<?php\n"
+        "struct Inner { x: i32 }\n"
+        "struct Wrapper { r: Rc<Inner> }\n"
+        "fn worker(w: Wrapper): void {}\n"
+        "fn main(): void {\n"
+        "    let w = Wrapper { r: Rc::new(Inner { x: 2 }) };\n"
+        "    Thread::spawn(worker, w);\n"
+        "}\n";
+    CHECK(checkInvalid(code));
+}
+
+TEST_CASE("Positive: Passing atomic Arc<T> into Thread::spawn is permitted") {
+    std::string code =
+        "<?php\n"
+        "struct Shared { x: i32 }\n"
+        "fn worker(a: Arc<Shared>): void {}\n"
+        "fn main(): void {\n"
+        "    let a = Arc::new(Shared { x: 42 });\n"
+        "    Thread::spawn(worker, a);\n"
+        "}\n";
+    CHECK(checkValid(code));
+}
+

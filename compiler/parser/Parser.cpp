@@ -791,6 +791,13 @@ std::string Parser::parseType() {
         if (!consumeClosingAngle()) return "";
         return "Rc<" + elemType + ">";
     }
+    if (match(TokenKind::KwArc)) {
+        if (!expect(TokenKind::Less, "expected '<' after 'Arc'")) return "";
+        std::string elemType = parseType();
+        if (elemType.empty()) return "";
+        if (!consumeClosingAngle()) return "";
+        return "Arc<" + elemType + ">";
+    }
     if (match(TokenKind::KwBox)) {
         if (!expect(TokenKind::Less, "expected '<' after 'Box'")) return "";
         std::string elemType = parseType();
@@ -1644,6 +1651,44 @@ std::unique_ptr<ExprAST> Parser::parsePrimary() {
             return std::make_unique<RcCountExpr>(std::move(ptr), SourceSpan(startLoc, endLoc));
         } else {
             error(memberTok->span, "unknown Rc function '" + memberTok->text + "', expected 'new' or 'count'");
+            return nullptr;
+        }
+    }
+
+    if (match(TokenKind::KwArc)) {
+        SourceLocation startLoc = previous().span.start;
+        if (!expect(TokenKind::ColonColon, "expected '::' after 'Arc'")) return nullptr;
+        const Token* memberTok = nullptr;
+        if (check(TokenKind::KwNew) || check(TokenKind::Identifier)) {
+            memberTok = &advance();
+        } else {
+            error(peek().span, "expected 'new', 'count', or 'clone' after 'Arc::'");
+            return nullptr;
+        }
+
+        if (memberTok->text == "new") {
+            if (!expect(TokenKind::LParen, "expected '(' after 'Arc::new'")) return nullptr;
+            auto val = parseExpression();
+            if (!val) return nullptr;
+            const Token* rparen = expect(TokenKind::RParen, "expected ')' after Arc::new argument");
+            SourceLocation endLoc = rparen ? rparen->span.end : val->getSpan().end;
+            return std::make_unique<ArcNewExpr>(std::move(val), SourceSpan(startLoc, endLoc));
+        } else if (memberTok->text == "count") {
+            if (!expect(TokenKind::LParen, "expected '(' after 'Arc::count'")) return nullptr;
+            auto ptr = parseExpression();
+            if (!ptr) return nullptr;
+            const Token* rparen = expect(TokenKind::RParen, "expected ')' after Arc::count argument");
+            SourceLocation endLoc = rparen ? rparen->span.end : ptr->getSpan().end;
+            return std::make_unique<ArcCountExpr>(std::move(ptr), SourceSpan(startLoc, endLoc));
+        } else if (memberTok->text == "clone") {
+            if (!expect(TokenKind::LParen, "expected '(' after 'Arc::clone'")) return nullptr;
+            auto ptr = parseExpression();
+            if (!ptr) return nullptr;
+            const Token* rparen = expect(TokenKind::RParen, "expected ')' after Arc::clone argument");
+            SourceLocation endLoc = rparen ? rparen->span.end : ptr->getSpan().end;
+            return std::make_unique<ArcCloneExpr>(std::move(ptr), SourceSpan(startLoc, endLoc));
+        } else {
+            error(memberTok->span, "unknown Arc function '" + memberTok->text + "', expected 'new', 'count', or 'clone'");
             return nullptr;
         }
     }

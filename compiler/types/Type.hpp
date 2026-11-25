@@ -29,6 +29,7 @@ enum class TypeKind {
     Slice,
     Pointer,
     Rc,
+    Arc,
     Box,
     Arena,
     Vector,
@@ -79,6 +80,8 @@ public:
     [[nodiscard]] bool isSlice() const noexcept { return m_kind == TypeKind::Slice; }
     [[nodiscard]] bool isPointer() const noexcept { return m_kind == TypeKind::Pointer; }
     [[nodiscard]] bool isRc() const noexcept { return m_kind == TypeKind::Rc; }
+    [[nodiscard]] bool isArc() const noexcept { return m_kind == TypeKind::Arc; }
+    [[nodiscard]] bool isAnyRc() const noexcept { return m_kind == TypeKind::Rc || m_kind == TypeKind::Arc; }
     [[nodiscard]] bool isBox() const noexcept { return m_kind == TypeKind::Box; }
     [[nodiscard]] bool isArena() const noexcept { return m_kind == TypeKind::Arena; }
     [[nodiscard]] bool isVector() const noexcept { return m_kind == TypeKind::Vector; }
@@ -494,6 +497,36 @@ public:
 
     static std::shared_ptr<RcType> get(std::shared_ptr<Type> innerType) {
         return std::make_shared<RcType>(std::move(innerType));
+    }
+
+private:
+    std::shared_ptr<Type> m_innerType;
+};
+
+class ArcType : public Type {
+public:
+    explicit ArcType(std::shared_ptr<Type> innerType)
+        : Type(TypeKind::Arc), m_innerType(std::move(innerType)) {}
+
+    [[nodiscard]] const std::shared_ptr<Type>& getInnerType() const noexcept { return m_innerType; }
+
+    [[nodiscard]] std::string toString() const override {
+        return "Arc<" + (m_innerType ? m_innerType->toString() : "void") + ">";
+    }
+
+    [[nodiscard]] bool isEqual(const Type& other) const override {
+        if (other.getKind() != getKind()) return false;
+        const auto& o = static_cast<const ArcType&>(other);
+        if (!m_innerType && !o.m_innerType) return true;
+        if (!m_innerType || !o.m_innerType) return false;
+        return m_innerType->isEqual(*o.m_innerType);
+    }
+
+    [[nodiscard]] size_t getSize() const override { return 8; }
+    [[nodiscard]] size_t getAlignment() const override { return 8; }
+
+    static std::shared_ptr<ArcType> get(std::shared_ptr<Type> innerType) {
+        return std::make_shared<ArcType>(std::move(innerType));
     }
 
 private:

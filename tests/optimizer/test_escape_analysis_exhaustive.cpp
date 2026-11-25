@@ -15,6 +15,7 @@ struct EscapeAnalysisExhaustiveRegistrar {
     EscapeAnalysisExhaustiveRegistrar() {
         registerNonEscapingDemotions();
         registerEscapingPointerPreservations();
+        registerLoopScopedSafetyChecks();
     }
 
     void registerNonEscapingDemotions() {
@@ -109,6 +110,155 @@ struct EscapeAnalysisExhaustiveRegistrar {
                 CHECK(hasAllocCall);
             });
         }
+    }
+
+    void registerLoopScopedSafetyChecks() {
+        // Loop-local allocation freed on every path before latch is demoted to entry-block AllocaInst
+        for (int k = 1; k <= 50; ++k) {
+            std::string name = "EscapeAnalysisExhaustive: Loop-scoped iteration-local demotion " + std::to_string(k);
+            testing::TestRegistry::instance().registerTest(name, [k]() {
+                IRFunction fn("fn_ea_loop_local_" + std::to_string(k), Type::getI32());
+                auto* bEntry = fn.createBlock("entry");
+                auto* bHdr = fn.createBlock("loop.hdr");
+                auto* bBody = fn.createBlock("loop.body");
+                auto* bExit = fn.createBlock("loop.exit");
+
+                bEntry->addInstruction(std::make_shared<BranchInst>(bHdr));
+                auto cond = ConstantBool::get(true);
+                bHdr->addInstruction(std::make_shared<CondBranchInst>(cond, bBody, bExit));
+
+                auto sz = ConstantInt::get((k % 8 + 1) * 8, Type::getI64());
+                auto allocCall = std::make_shared<CallInst>(
+                    "sph_alloc",
+                    std::vector<std::shared_ptr<IRValue>>{sz},
+                    PointerType::get(Type::getI32()),
+                    "loopPtr_" + std::to_string(k));
+                bBody->addInstruction(allocCall);
+                bBody->addInstruction(std::make_shared<StoreInst>(ConstantInt::get(k, Type::getI32()), allocCall));
+                auto freeCall = std::make_shared<CallInst>(
+                    "sph_free",
+                    std::vector<std::shared_ptr<IRValue>>{allocCall},
+                    Type::getVoid(),
+                    "");
+                bBody->addInstruction(freeCall);
+                bBody->addInstruction(std::make_shared<BranchInst>(bHdr));
+
+                bExit->addInstruction(std::make_shared<RetInst>(ConstantInt::get(0, Type::getI32())));
+
+                EscapeAnalysisPass pass;
+                CHECK(pass.runOnFunction(fn));
+
+                bool hasAllocInEntry = false;
+                for (const auto& inst : bEntry->getInstructions()) {
+                    if (inst->getOpcode() == IROpcode::Alloca) hasAllocInEntry = true;
+                }
+                CHECK(hasAllocInEntry);
+                for (const auto& inst : bBody->getInstructions()) {
+                    if (inst->getOpcode() == IROpcode::Call) {
+                        const auto& c = static_cast<const CallInst&>(*inst);
+                        CHECK(c.getCallee() != "sph_alloc");
+                        CHECK(c.getCallee() != "sph_free");
+                    }
+                }
+            });
+        }
+
+        // Loop allocation WITHOUT dominating sph_free before latch must NOT be demoted
+        testing::TestRegistry::instance().registerTest(
+            "EscapeAnalysisExhaustive: Loop allocation missing sph_free preserved", []() {
+                IRFunction fn("fn_ea_loop_missing_free", Type::getI32());
+                auto* bEntry = fn.createBlock("entry");
+                auto* bHdr = fn.createBlock("loop.hdr");
+                auto* bBody = fn.createBlock("loop.body");
+                auto* bExit = fn.createBlock("loop.exit");
+
+                bEntry->addInstruction(std::make_shared<BranchInst>(bHdr));
+                bHdr->addInstruction(std::make_shared<CondBranchInst>(ConstantBool::get(true), bBody, bExit));
+
+                auto allocCall = std::make_shared<CallInst>(
+                    "sph_alloc",
+                    std::vector<std::shared_ptr<IRValue>>{ConstantInt::get(16, Type::getI64())},
+                    PointerType::get(Type::getI32()),
+                    "unfreed");
+                bBody->addInstruction(allocCall);
+                bBody->addInstruction(std::make_shared<StoreInst>(ConstantInt::get(7, Type::getI32()), allocCall));
+                bBody->addInstruction(std::make_shared<BranchInst>(bHdr));
+                bExit->addInstruction(std::make_shared<RetInst>(ConstantInt::get(0, Type::getI32())));
+
+                EscapeAnalysisPass pass;
+                CHECK(!pass.runOnFunction(fn));
+            });
+
+        // Loop allocation crossing backedge via PhiInst must NOT be demoted
+        testing::TestRegistry::instance().registerTest(
+            "EscapeAnalysisExhaustive: Loop allocation crossing backedge Phi preserved", []() {
+                auto ptrType = PointerType::get(Type::getI32());
+                IRFunction fn("fn_ea_loop_phi_escape", Type::getI32());
+                auto* bEntry = fn.createBlock("entry");
+                auto* bHdr = fn.createBlock("loop.hdr");
+                auto* bBody = fn.createBlock("loop.body");
+                auto* bExit = fn.createBlock("loop.exit");
+
+                auto initAlloc = std::make_shared<CallInst>(
+                    "sph_alloc",
+                    std::vector<std::shared_ptr<IRValue>>{ConstantInt::get(8, Type::getI64())},
+                    ptrType,
+                    "initPtr");
+                bEntry->addInstruction(initAlloc);
+                bEntry->addInstruction(std::make_shared<BranchInst>(bHdr));
+
+                auto phi = std::make_shared<PhiInst>(ptrType, "carried");
+                bHdr->addInstruction(phi);
+                bHdr->addInstruction(std::make_shared<CondBranchInst>(ConstantBool::get(true), bBody, bExit));
+
+                auto iterAlloc = std::make_shared<CallInst>(
+                    "sph_alloc",
+                    std::vector<std::shared_ptr<IRValue>>{ConstantInt::get(8, Type::getI64())},
+                    ptrType,
+                    "iterPtr");
+                bBody->addInstruction(iterAlloc);
+                bBody->addInstruction(std::make_shared<CallInst>(
+                    "sph_free", std::vector<std::shared_ptr<IRValue>>{phi}, Type::getVoid(), ""));
+                bBody->addInstruction(std::make_shared<BranchInst>(bHdr));
+
+                phi->addIncoming(bEntry, initAlloc);
+                phi->addIncoming(bBody, iterAlloc);
+
+                bExit->addInstruction(std::make_shared<CallInst>(
+                    "sph_free", std::vector<std::shared_ptr<IRValue>>{phi}, Type::getVoid(), ""));
+                bExit->addInstruction(std::make_shared<RetInst>(ConstantInt::get(0, Type::getI32())));
+
+                EscapeAnalysisPass pass;
+                pass.runOnFunction(fn);
+
+                // iterAlloc crosses backedge via phi so it MUST remain a heap sph_alloc
+                bool iterStillHeap = false;
+                for (const auto& inst : bBody->getInstructions()) {
+                    if (inst.get() == iterAlloc.get()) iterStillHeap = true;
+                }
+                CHECK(iterStillHeap);
+            });
+
+        // Pointer cast to integer escapes and must NOT be demoted
+        testing::TestRegistry::instance().registerTest(
+            "EscapeAnalysisExhaustive: Ptr-to-int cast escape preserved", []() {
+                IRFunction fn("fn_ea_ptrtoint", Type::getI64());
+                auto* bEntry = fn.createBlock("entry");
+                auto allocCall = std::make_shared<CallInst>(
+                    "sph_alloc",
+                    std::vector<std::shared_ptr<IRValue>>{ConstantInt::get(16, Type::getI64())},
+                    PointerType::get(Type::getI32()),
+                    "raw");
+                bEntry->addInstruction(allocCall);
+                auto asInt = std::make_shared<CastInst>(allocCall, Type::getI64(), "addr");
+                bEntry->addInstruction(asInt);
+                bEntry->addInstruction(std::make_shared<CallInst>(
+                    "sph_free", std::vector<std::shared_ptr<IRValue>>{allocCall}, Type::getVoid(), ""));
+                bEntry->addInstruction(std::make_shared<RetInst>(asInt));
+
+                EscapeAnalysisPass pass;
+                CHECK(!pass.runOnFunction(fn));
+            });
     }
 };
 

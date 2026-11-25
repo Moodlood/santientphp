@@ -45,6 +45,9 @@ public:
     void visit(CastExpr& node) override;
     void visit(RcNewExpr& node) override;
     void visit(RcCountExpr& node) override;
+    void visit(ArcNewExpr& node) override;
+    void visit(ArcCountExpr& node) override;
+    void visit(ArcCloneExpr& node) override;
     void visit(BoxNewExpr& node) override;
     void visit(ArenaNewExpr& node) override;
     void visit(ArenaAllocExpr& node) override;

@@ -1,6 +1,7 @@
 #include "common/test_framework.hpp"
 #include "compiler/manifest/Manifest.hpp"
 #include "compiler/package/PackageManager.hpp"
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -31,6 +32,9 @@ TEST_CASE("Package: createProject scaffolds valid project structure") {
         CHECK_EQ(manifest->entry, "src/main.sph");
     }
 
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(testDir, ec)) {
+        std::filesystem::permissions(entry.path(), std::filesystem::perms::owner_write, std::filesystem::perm_options::add, ec);
+    }
     std::filesystem::remove_all(testDir, ec);
 }
 
@@ -54,6 +58,9 @@ TEST_CASE("Package: initProject creates sph.toml and rejects duplicates") {
     // Second init should fail because sph.toml exists
     CHECK(!PackageManager::initProject(testDir, errorMsg));
 
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(testDir, ec)) {
+        std::filesystem::permissions(entry.path(), std::filesystem::perms::owner_write, std::filesystem::perm_options::add, ec);
+    }
     std::filesystem::remove_all(testDir, ec);
 }
 
@@ -91,6 +98,9 @@ TEST_CASE("Package: addDependency and listDependencies manage dependencies") {
     CHECK(foundMath);
     CHECK(foundNet);
 
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(testDir, ec)) {
+        std::filesystem::permissions(entry.path(), std::filesystem::perms::owner_write, std::filesystem::perm_options::add, ec);
+    }
     std::filesystem::remove_all(testDir, ec);
 }
 
@@ -186,6 +196,9 @@ TEST_CASE("Package: Lockfile serialization and integrity verification") {
     // Verify lockfile integrity
     CHECK(PackageManager::verifyLockfile(testDir, errorMsg));
 
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(testDir, ec)) {
+        std::filesystem::permissions(entry.path(), std::filesystem::perms::owner_write, std::filesystem::perm_options::add, ec);
+    }
     std::filesystem::remove_all(testDir, ec);
 }
 
@@ -216,6 +229,77 @@ TEST_CASE("Package: createProject supports GUI, Web, and Lib templates") {
     CHECK_EQ(libManifest->entry, "src/lib.sph");
     CHECK(std::filesystem::exists(testDir / "math_lib" / "src" / "lib.sph"));
 
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(testDir, ec)) {
+        std::filesystem::permissions(entry.path(), std::filesystem::perms::owner_write, std::filesystem::perm_options::add, ec);
+    }
+    std::filesystem::remove_all(testDir, ec);
+}
+
+TEST_CASE("Package: Lockfile pins and restores exact git commit SHA") {
+    auto nonce = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    std::filesystem::path testDir = std::filesystem::temp_directory_path() / ("sph_git_pin_" + nonce);
+    std::error_code ec;
+    std::filesystem::remove_all(testDir, ec);
+    std::filesystem::create_directories(testDir, ec);
+
+    std::filesystem::path repoDir = testDir / "upstream_pkg";
+    std::filesystem::path appDir = testDir / "consumer_app";
+    std::filesystem::create_directories(repoDir, ec);
+    std::filesystem::create_directories(appDir, ec);
+
+    // Initialize local git repository with two commits to verify pinning to exact SHA
+    std::string initCmd =
+        "git -C \"" + repoDir.string() + "\" init -q && "
+        "git -C \"" + repoDir.string() + "\" config user.email test@example.com && "
+        "git -C \"" + repoDir.string() + "\" config user.name Tester";
+    CHECK_EQ(std::system(initCmd.c_str()), 0);
+    {
+        std::ofstream f(repoDir / "lib.sph");
+        f << "<?php\nfn v1(): i32 { return 1; }\n";
+    }
+    std::string c1Cmd =
+        "git -C \"" + repoDir.string() + "\" add lib.sph && "
+        "git -C \"" + repoDir.string() + "\" commit -q -m \"v1\"";
+    CHECK_EQ(std::system(c1Cmd.c_str()), 0);
+
+    std::string sha1 = PackageManager::resolveGitHeadCommit(repoDir.string());
+    CHECK(!sha1.empty());
+    CHECK(sha1.size() >= 40);
+
+    std::string err;
+    CHECK(PackageManager::initProject(appDir, err));
+    CHECK(PackageManager::addDependency(appDir, "upstream_pkg", repoDir.string(), true, err));
+    CHECK(PackageManager::generateLockfile(appDir, err));
+
+    auto lf = Lockfile::fromFile(appDir / "sph.lock");
+    CHECK(lf.has_value());
+    if (lf) {
+        const auto* pkg = lf->findPackage("upstream_pkg");
+        CHECK(pkg != nullptr);
+        if (pkg) {
+            CHECK_EQ(pkg->commit, sha1);
+        }
+    }
+
+    // Advance upstream repo with a second commit; restoreDependencies must pin back to sha1!
+    {
+        std::ofstream f(repoDir / "lib.sph");
+        f << "<?php\nfn v2(): i32 { return 2; }\n";
+    }
+    std::string c2Cmd =
+        "git -C \"" + repoDir.string() + "\" add lib.sph && "
+        "git -C \"" + repoDir.string() + "\" commit -q -m \"v2\"";
+    CHECK_EQ(std::system(c2Cmd.c_str()), 0);
+    std::string sha2 = PackageManager::resolveGitHeadCommit(repoDir.string());
+    CHECK(sha2 != sha1);
+
+    CHECK(PackageManager::restoreDependencies(appDir, err));
+    std::string restoredHead = PackageManager::resolveGitHeadCommit((appDir / ".sph_deps" / "upstream_pkg").string());
+    CHECK_EQ(restoredHead, sha1);
+
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(testDir, ec)) {
+        std::filesystem::permissions(entry.path(), std::filesystem::perms::owner_write, std::filesystem::perm_options::add, ec);
+    }
     std::filesystem::remove_all(testDir, ec);
 }
 

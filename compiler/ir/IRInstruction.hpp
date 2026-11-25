@@ -62,6 +62,9 @@ enum class IROpcode {
     RcAlloc,
     RcRetain,
     RcRelease,
+    ArcAlloc,
+    ArcRetain,
+    ArcRelease,
 
     // Exceptions
     SetJmp
@@ -400,6 +403,46 @@ class RcReleaseInst : public IRInstruction {
 public:
     explicit RcReleaseInst(std::shared_ptr<IRValue> ptr)
         : IRInstruction(IROpcode::RcRelease, Type::getVoid(), ""),
+          m_ptr(std::move(ptr)) {}
+
+    [[nodiscard]] const std::shared_ptr<IRValue>& getPtr() const noexcept { return m_ptr; }
+    void setPtr(std::shared_ptr<IRValue> ptr) noexcept { m_ptr = std::move(ptr); }
+
+private:
+    std::shared_ptr<IRValue> m_ptr;
+};
+
+class ArcAllocInst : public IRInstruction {
+public:
+    ArcAllocInst(std::shared_ptr<Type> innerType, size_t allocSize, std::string name)
+        : IRInstruction(IROpcode::ArcAlloc, ArcType::get(innerType), std::move(name)),
+          m_innerType(std::move(innerType)), m_allocSize(allocSize) {}
+
+    [[nodiscard]] const std::shared_ptr<Type>& getInnerType() const noexcept { return m_innerType; }
+    [[nodiscard]] size_t getAllocSize() const noexcept { return m_allocSize; }
+
+private:
+    std::shared_ptr<Type> m_innerType;
+    size_t m_allocSize;
+};
+
+class ArcRetainInst : public IRInstruction {
+public:
+    explicit ArcRetainInst(std::shared_ptr<IRValue> ptr)
+        : IRInstruction(IROpcode::ArcRetain, Type::getVoid(), ""),
+          m_ptr(std::move(ptr)) {}
+
+    [[nodiscard]] const std::shared_ptr<IRValue>& getPtr() const noexcept { return m_ptr; }
+    void setPtr(std::shared_ptr<IRValue> ptr) noexcept { m_ptr = std::move(ptr); }
+
+private:
+    std::shared_ptr<IRValue> m_ptr;
+};
+
+class ArcReleaseInst : public IRInstruction {
+public:
+    explicit ArcReleaseInst(std::shared_ptr<IRValue> ptr)
+        : IRInstruction(IROpcode::ArcRelease, Type::getVoid(), ""),
           m_ptr(std::move(ptr)) {}
 
     [[nodiscard]] const std::shared_ptr<IRValue>& getPtr() const noexcept { return m_ptr; }

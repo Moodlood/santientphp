@@ -12,6 +12,15 @@ extern "C" fn sph_mutex_lock(mutex: *u8): void;
 extern "C" fn sph_mutex_unlock(mutex: *u8): void;
 extern "C" fn sph_mutex_destroy(mutex: *u8): void;
 
+extern "C" fn sph_arc_alloc(size: i64): *u8;
+extern "C" fn sph_arc_retain(ptr: *u8): void;
+extern "C" fn sph_arc_release(ptr: *u8): void;
+extern "C" fn sph_arc_count(ptr: *u8): i64;
+
+fn arc_count(ptr: *u8): i64 {
+    return sph_arc_count(ptr);
+}
+
 fn thread_spawn(fn_ptr: *u8, arg: *u8): *u8 {
     return sph_thread_spawn(fn_ptr, arg);
 }

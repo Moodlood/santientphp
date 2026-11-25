@@ -2,7 +2,7 @@
   "name": "santientphp",
   "displayName": "SantientPHP",
   "description": "Rich language support for SantientPHP (SPH) with Language Server Protocol, syntax highlighting, diagnostics, and build tools.",
-  "version": "0.1.0",
+  "version": "0.2.2",
   "publisher": "santientphp",
   "license": "MIT",
   "engines": {

@@ -75,6 +75,7 @@ void sph_gui_window_destroy(void* hwnd);
 // ============================================================================
 
 void* sph_gui_button_create(void* parent_hwnd, const char* text, int32_t x, int32_t y, int32_t w, int32_t h, int32_t id);
+int32_t sph_gui_button_is_pushed(void* ctrl_hwnd);
 void* sph_gui_label_create(void* parent_hwnd, const char* text, int32_t x, int32_t y, int32_t w, int32_t h, int32_t id);
 void* sph_gui_textbox_create(void* parent_hwnd, const char* text, int32_t x, int32_t y, int32_t w, int32_t h, int32_t id, int32_t multiline);
 void* sph_gui_checkbox_create(void* parent_hwnd, const char* text, int32_t x, int32_t y, int32_t w, int32_t h, int32_t id);

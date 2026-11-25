@@ -319,7 +319,7 @@ $DestLib = Join-Path $InstallDir "lib"
 Copy-Item -Path (Join-Path $RepoDir "build\lib\libsph_runtime.a") -Destination (Join-Path $DestLib "libsph_runtime.a") -Force
 
 # Modular runtime archives
-$ModularLibs = @("libsph_core.a", "libsph_async.a", "libsph_compat.a")
+$ModularLibs = @("libsph_core.a", "libsph_async.a", "libsph_compat.a", "libsph_net.a", "libsph_gui.a")
 foreach ($mlib in $ModularLibs) {
     $src = Join-Path $RepoDir "build\lib\$mlib"
     if (Test-Path $src) {
@@ -339,7 +339,7 @@ Copy-Item -Path (Join-Path $RepoDir "runtime\*") -Destination $DestRuntime -Recu
 # Include directory
 Copy-Item -Path (Join-Path $RepoDir "runtime\core\runtime.h") -Destination (Join-Path $InstallDir "include\runtime.h") -Force
 
-Write-Success "Runtime libraries (libsph_runtime.a, libsph_core.a, libsph_async.a, libsph_compat.a) and headers installed."
+Write-Success "Runtime libraries (libsph_runtime.a, libsph_core.a, libsph_async.a, libsph_compat.a, libsph_net.a, libsph_gui.a) and headers installed."
 
 # 5b. Copy Standard Library (stdlib)
 Write-Step "Installing SantientPHP standard library..."
@@ -530,8 +530,13 @@ if (-not $NoRegistry) {
     # Compute installed folder size in KB
     $folderSizeKB = [math]::Round(((Get-ChildItem $InstallDir -Recurse | Measure-Object -Property Length -Sum).Sum / 1KB))
 
-    Set-ItemProperty -Path $uninstallKey -Name "DisplayName" -Value "SantientPHP 0.1.0 (x86_64)"
-    Set-ItemProperty -Path $uninstallKey -Name "DisplayVersion" -Value "0.1.0"
+    $SphVersion = "0.2.2"
+    $VersionFile = Join-Path $RepoDir "VERSION"
+    if (Test-Path $VersionFile) {
+        $SphVersion = (Get-Content $VersionFile -TotalCount 1).Trim()
+    }
+    Set-ItemProperty -Path $uninstallKey -Name "DisplayName" -Value "SantientPHP $SphVersion (x86_64)"
+    Set-ItemProperty -Path $uninstallKey -Name "DisplayVersion" -Value $SphVersion
     Set-ItemProperty -Path $uninstallKey -Name "Publisher" -Value "SantientPHP Development Team"
     Set-ItemProperty -Path $uninstallKey -Name "InstallLocation" -Value $InstallDir
     Set-ItemProperty -Path $uninstallKey -Name "DisplayIcon" -Value "$icon,0"

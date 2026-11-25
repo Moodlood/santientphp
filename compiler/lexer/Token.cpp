@@ -29,6 +29,7 @@ const char* tokenKindToString(TokenKind kind) noexcept {
         case TokenKind::KwExtern:     return "extern";
         case TokenKind::KwAs:         return "as";
         case TokenKind::KwRc:         return "Rc";
+        case TokenKind::KwArc:        return "Arc";
         case TokenKind::KwBox:        return "Box";
         case TokenKind::KwArena:      return "Arena";
         case TokenKind::KwVec:        return "Vec";

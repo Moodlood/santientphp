@@ -32,6 +32,21 @@ std::string X86_64CodeGen::getReg32(const std::string& reg64) const {
     return reg64;
 }
 
+std::string X86_64CodeGen::memRef(int32_t localOffset) const {
+    if (m_useFramePointer) {
+        return "[rbp - " + std::to_string(localOffset) + "]";
+    }
+    return "[rsp + " + std::to_string(m_rspAllocSize - localOffset) + "]";
+}
+
+std::string X86_64CodeGen::argStackRef(int32_t rbpPlusOffset) const {
+    if (m_useFramePointer) {
+        return "[rbp + " + std::to_string(rbpPlusOffset) + "]";
+    }
+    int32_t rspOff = m_rspAllocSize + static_cast<int32_t>(m_calleePushCount * 8) + (rbpPlusOffset - 8);
+    return "[rsp + " + std::to_string(rspOff) + "]";
+}
+
 int32_t X86_64CodeGen::getSlotOffset(const IRValue& val) {
     auto it = m_slots.find(&val);
     if (it != m_slots.end()) {
@@ -96,16 +111,16 @@ void X86_64CodeGen::loadValueToReg(const IRValue& val, const std::string& reg) {
           static_cast<const CallInst&>(val).getCallee().rfind("sph_", 0) != 0));
     if (isAllocaOrBigStructCall) {
         int32_t offset = getSlotOffset(val);
-        m_out << "  lea " << reg << ", [rbp - " << offset << "]\n";
+        m_out << "  lea " << reg << ", " << memRef(offset) << "\n";
         return;
     }
 
     int32_t offset = getSlotOffset(val);
-    m_out << "  mov " << reg << ", [rbp - " << offset << "]\n";
+    m_out << "  mov " << reg << ", " << memRef(offset) << "\n";
 }
 
 void X86_64CodeGen::storeRegToSlot(const std::string& reg, int32_t offset) {
-    m_out << "  mov [rbp - " << offset << "], " << reg << "\n";
+    m_out << "  mov " << memRef(offset) << ", " << reg << "\n";
 }
 
 void X86_64CodeGen::storeRegToValue(const std::string& reg, const IRValue& val) {
@@ -121,12 +136,22 @@ void X86_64CodeGen::storeRegToValue(const std::string& reg, const IRValue& val) 
 }
 
 void X86_64CodeGen::emitEpilogue(const IRFunction& /*fn*/) {
-    for (const auto& [reg, offset] : m_calleeSavedSlots) {
-        m_out << "  mov " << reg << ", [rbp - " << offset << "]\n";
+    if (m_useFramePointer) {
+        for (const auto& [reg, offset] : m_calleeSavedSlots) {
+            m_out << "  mov " << reg << ", [rbp - " << offset << "]\n";
+        }
+        m_out << "  mov rsp, rbp\n";
+        m_out << "  pop rbp\n";
+        m_out << "  ret\n";
+    } else {
+        if (m_rspAllocSize > 0) {
+            m_out << "  add rsp, " << m_rspAllocSize << "\n";
+        }
+        for (auto it = m_usedCalleeSaved.rbegin(); it != m_usedCalleeSaved.rend(); ++it) {
+            m_out << "  pop " << *it << "\n";
+        }
+        m_out << "  ret\n";
     }
-    m_out << "  mov rsp, rbp\n";
-    m_out << "  pop rbp\n";
-    m_out << "  ret\n";
 }
 
 std::string X86_64CodeGen::getLabel(const IRBasicBlock& bb, const IRFunction& fn) const {
@@ -160,17 +185,8 @@ void X86_64CodeGen::generate(const IRModule& module) {
     for (const auto& fn : module.getFunctions()) {
         for (const auto& bb : fn->getBlocks()) {
             for (const auto& inst : bb->getInstructions()) {
-                if (inst->getOpcode() == IROpcode::Store) {
-                    const auto& s = static_cast<const StoreInst&>(*inst);
-                    recordString(s.getValue().get());
-                } else if (inst->getOpcode() == IROpcode::Call) {
-                    const auto& c = static_cast<const CallInst&>(*inst);
-                    for (const auto& arg : c.getArgs()) {
-                        recordString(arg.get());
-                    }
-                } else if (inst->getOpcode() == IROpcode::Ret) {
-                    const auto& r = static_cast<const RetInst&>(*inst);
-                    if (r.hasValue()) recordString(r.getValue().get());
+                for (const auto* op : getInstructionOperands(*inst)) {
+                    recordString(op);
                 }
             }
         }
@@ -224,14 +240,19 @@ void X86_64CodeGen::generate(const IRModule& module) {
 void X86_64CodeGen::generateFunction(const IRFunction& fn) {
     m_slots.clear();
     m_currentOffset = 0;
+    m_useFramePointer = (m_optLevel == OptimizationLevel::O0);
+    m_rspAllocSize = 0;
+    m_calleePushCount = 0;
 
     m_lsra = std::make_unique<LinearScanAllocator>(fn, isSysV());
     m_lsra->allocate();
     m_usedCalleeSaved = m_lsra->getUsedCalleeSavedRegs();
     m_calleeSavedSlots.clear();
-    for (const auto& reg : m_usedCalleeSaved) {
-        m_currentOffset += 8;
-        m_calleeSavedSlots[reg] = m_currentOffset;
+    if (m_useFramePointer) {
+        for (const auto& reg : m_usedCalleeSaved) {
+            m_currentOffset += 8;
+            m_calleeSavedSlots[reg] = m_currentOffset;
+        }
     }
 
     m_currentFnReturnsSret = false;
@@ -247,17 +268,36 @@ void X86_64CodeGen::generateFunction(const IRFunction& fn) {
         }
     }
 
-    // First pass: allocate slots for all parameters, allocas, and instructions
+    // Reserve stack slots only for parameters not permanently assigned a register
     const auto& params = fn.getParameters();
     for (const auto& param : params) {
-        getSlotOffset(*param);
+        if (param->getType()->isFloatingPoint() || !m_lsra || !m_lsra->hasRegister(param.get())) {
+            getSlotOffset(*param);
+        }
     }
 
-    size_t maxCallArgs = 4;
+    bool hasCalls = false;
+    bool hasTco = false;
+    size_t maxCallArgs = 0;
+    size_t maxPhiCopies = 0;
     for (const auto& bb : fn.getBlocks()) {
+        size_t bbPhiCount = 0;
         for (const auto& inst : bb->getInstructions()) {
-            if (inst->getOpcode() == IROpcode::Call) {
+            auto op = inst->getOpcode();
+            if (op == IROpcode::Phi) {
+                bbPhiCount++;
+                if (inst->getType()->isFloatingPoint() || !m_lsra || !m_lsra->hasRegister(inst.get())) {
+                    getSlotOffset(*inst);
+                }
+                continue;
+            }
+            if (op == IROpcode::Call) {
                 const auto& callInst = static_cast<const CallInst&>(*inst);
+                if (callInst.isTailCall() && !callInst.isIndirect() && callInst.getCallee() == fn.getName()) {
+                    hasTco = true;
+                } else {
+                    hasCalls = true;
+                }
                 bool isSret = callInst.getType()->isStruct() &&
                     std::static_pointer_cast<StructType>(callInst.getType())->getSize() > 8 &&
                     callInst.getCallee().rfind("sph_", 0) != 0;
@@ -265,26 +305,25 @@ void X86_64CodeGen::generateFunction(const IRFunction& fn) {
                 if (callArgCount > maxCallArgs) {
                     maxCallArgs = callArgCount;
                 }
+            } else if (op == IROpcode::RcAlloc || op == IROpcode::RcRetain ||
+                       op == IROpcode::RcRelease || op == IROpcode::ArcAlloc ||
+                       op == IROpcode::ArcRetain || op == IROpcode::ArcRelease ||
+                       op == IROpcode::SetJmp) {
+                hasCalls = true;
+                if (maxCallArgs < 1) maxCallArgs = 1;
             }
-            if (inst->getOpcode() == IROpcode::Alloca) {
+            if (op == IROpcode::Alloca) {
                 const auto& allocaInst = static_cast<const AllocaInst&>(*inst);
-                int32_t size = 8;
-                if (allocaInst.getAllocatedType()->isStruct() || allocaInst.getAllocatedType()->isClass()) {
-                    auto structType = std::static_pointer_cast<StructType>(allocaInst.getAllocatedType());
-                    size = static_cast<int32_t>(structType->getSize());
-                    if (size < 8) size = 8;
-                    size = (size + 7) & ~7;
-                } else if (allocaInst.getAllocatedType()->isArray()) {
-                    auto arrType = std::static_pointer_cast<ArrayType>(allocaInst.getAllocatedType());
-                    size = static_cast<int32_t>(arrType->getSize());
-                    if (size < 8) size = 8;
-                    size = (size + 7) & ~7;
-                } else if (allocaInst.getAllocatedType()->isSlice()) {
+                const auto& allocTy = allocaInst.getAllocatedType();
+                int32_t size = allocTy ? static_cast<int32_t>(allocTy->getSize()) : 8;
+                if (allocTy && (allocTy->isSlice() || allocTy->isInterface()) && size < 16) {
                     size = 16;
                 }
+                if (size < 8) size = 8;
+                size = (size + 7) & ~7;
                 m_currentOffset += size;
                 m_slots[inst.get()] = m_currentOffset;
-            } else if (inst->getOpcode() == IROpcode::Call) {
+            } else if (op == IROpcode::Call) {
                 const auto& callInst = static_cast<const CallInst&>(*inst);
                 bool isSret = callInst.getType()->isStruct() &&
                     std::static_pointer_cast<StructType>(callInst.getType())->getSize() > 8 &&
@@ -295,37 +334,44 @@ void X86_64CodeGen::generateFunction(const IRFunction& fn) {
                     size = (size + 7) & ~7;
                     m_currentOffset += size;
                     m_slots[inst.get()] = m_currentOffset;
-                } else {
+                } else if (!inst->getType()->isVoid() &&
+                           (inst->getType()->isFloatingPoint() || !m_lsra || !m_lsra->hasRegister(inst.get()))) {
                     getSlotOffset(*inst);
                 }
-            } else if (inst->getOpcode() == IROpcode::Load ||
-                       inst->getOpcode() == IROpcode::GetFieldPtr ||
-                       inst->getOpcode() == IROpcode::GetElementPtr ||
-                       inst->getOpcode() == IROpcode::AddressOf ||
-                       inst->getOpcode() == IROpcode::SetJmp ||
-                       inst->getOpcode() == IROpcode::RcAlloc ||
-                       (inst->getOpcode() >= IROpcode::Add && inst->getOpcode() <= IROpcode::Cast)) {
-                getSlotOffset(*inst);
+            } else if (op == IROpcode::Load || op == IROpcode::GetFieldPtr ||
+                       op == IROpcode::GetElementPtr || op == IROpcode::AddressOf ||
+                       op == IROpcode::SetJmp || op == IROpcode::RcAlloc ||
+                       op == IROpcode::ArcAlloc ||
+                       (op >= IROpcode::Add && op <= IROpcode::Cast)) {
+                if (inst->getType()->isFloatingPoint() || !m_lsra || !m_lsra->hasRegister(inst.get())) {
+                    getSlotOffset(*inst);
+                }
             }
+        }
+        if (bbPhiCount > maxPhiCopies) {
+            maxPhiCopies = bbPhiCount;
         }
     }
 
-    // Allocate stack frame: local variables + shadow space + outgoing call argument space
     m_tcoScratchOffset = m_currentOffset;
-    m_currentOffset += 48; // Reserve 6 * 8 bytes for TCO parallel argument staging
+    size_t scratchSlots = 0;
+    if (hasTco) {
+        scratchSlots = std::max<size_t>(std::max<size_t>(6, params.size()), maxPhiCopies);
+    } else if (maxPhiCopies > 1) {
+        scratchSlots = maxPhiCopies;
+    }
+    m_currentOffset += static_cast<int32_t>(scratchSlots * 8);
 
     size_t maxRegs = getMaxRegisterParams();
     int32_t outgoingSpace = 0;
-    if (isSysV()) {
-        outgoingSpace = (maxCallArgs > maxRegs ? static_cast<int32_t>((maxCallArgs - maxRegs) * 8) : 0);
-    } else if (isInternalFastCC(fn)) {
-        outgoingSpace = (maxCallArgs > 6 ? static_cast<int32_t>((maxCallArgs - 6) * 8) : 0);
-    } else {
-        outgoingSpace = 32 + (maxCallArgs > 4 ? static_cast<int32_t>((maxCallArgs - 4) * 8) : 0);
-    }
-    m_frameSize = m_currentOffset + outgoingSpace;
-    if (m_frameSize % 16 != 0) {
-        m_frameSize += 16 - (m_frameSize % 16);
+    if (hasCalls) {
+        if (isSysV()) {
+            outgoingSpace = (maxCallArgs > maxRegs ? static_cast<int32_t>((maxCallArgs - maxRegs) * 8) : 0);
+        } else if (isInternalFastCC(fn)) {
+            outgoingSpace = (maxCallArgs > 6 ? static_cast<int32_t>((maxCallArgs - 6) * 8) : 0);
+        } else {
+            outgoingSpace = 32 + (maxCallArgs > 4 ? static_cast<int32_t>((maxCallArgs - 4) * 8) : 0);
+        }
     }
 
     m_out << fn.getName() << ":\n";
@@ -338,88 +384,140 @@ void X86_64CodeGen::generateFunction(const IRFunction& fn) {
     if (m_debugInfo) {
         m_out << "  .cfi_startproc\n";
     }
-    m_out << "  push rbp\n";
-    if (m_debugInfo) {
-        m_out << "  .cfi_def_cfa_offset 16\n";
-        m_out << "  .cfi_offset rbp, -16\n";
-    }
-    m_out << "  mov rbp, rsp\n";
-    if (m_debugInfo) {
-        m_out << "  .cfi_def_cfa_register rbp\n";
-    }
-    m_out << "  sub rsp, " << m_frameSize << "\n";
 
-    // Save used callee-saved registers
-    for (const auto& [reg, offset] : m_calleeSavedSlots) {
-        m_out << "  mov [rbp - " << offset << "], " << reg << "\n";
+    if (m_useFramePointer) {
+        m_frameSize = m_currentOffset + outgoingSpace;
+        if (m_frameSize % 16 != 0) {
+            m_frameSize += 16 - (m_frameSize % 16);
+        }
+        m_out << "  push rbp\n";
+        if (m_debugInfo) {
+            m_out << "  .cfi_def_cfa_offset 16\n";
+            m_out << "  .cfi_offset rbp, -16\n";
+        }
+        m_out << "  mov rbp, rsp\n";
+        if (m_debugInfo) {
+            m_out << "  .cfi_def_cfa_register rbp\n";
+        }
+        m_out << "  sub rsp, " << m_frameSize << "\n";
+
+        for (const auto& [reg, offset] : m_calleeSavedSlots) {
+            m_out << "  mov [rbp - " << offset << "], " << reg << "\n";
+        }
+    } else {
+        m_calleePushCount = m_usedCalleeSaved.size();
+        for (const auto& reg : m_usedCalleeSaved) {
+            m_out << "  push " << reg << "\n";
+        }
+        m_rspAllocSize = m_currentOffset + outgoingSpace;
+        if (hasCalls || m_rspAllocSize > 0) {
+            size_t totalDepth = 8 + m_calleePushCount * 8 + static_cast<size_t>(m_rspAllocSize);
+            if (totalDepth % 16 != 0) {
+                m_rspAllocSize += static_cast<int32_t>(16 - (totalDepth % 16));
+            }
+        }
+        if (m_rspAllocSize > 0) {
+            m_out << "  sub rsp, " << m_rspAllocSize << "\n";
+        }
     }
 
-    // Copy incoming parameters from calling convention registers into slots
+    // Copy incoming parameters into slots or directly into LSRA registers (conflict-free order)
     if (m_currentFnReturnsSret) {
         storeRegToSlot(getParamReg(0), m_currentFnSretSlot);
     }
+    struct RegMove {
+        std::string dst;
+        std::string src;
+    };
+    std::vector<RegMove> pendingParamMoves;
+    auto resolveParamMoves = [&]() {
+        while (!pendingParamMoves.empty()) {
+            auto it = std::find_if(pendingParamMoves.begin(), pendingParamMoves.end(), [&](const RegMove& m) {
+                for (const auto& other : pendingParamMoves) {
+                    if (&other != &m && other.src == m.dst) return false;
+                }
+                return true;
+            });
+            if (it != pendingParamMoves.end()) {
+                if (it->dst != it->src) {
+                    m_out << "  mov " << it->dst << ", " << it->src << "\n";
+                }
+                pendingParamMoves.erase(it);
+            } else {
+                // Break permutation cycle (e.g. r8 <-> r9) via rax
+                std::string cycleSrc = pendingParamMoves[0].src;
+                std::string cycleDst = pendingParamMoves[0].dst;
+                m_out << "  mov rax, " << cycleDst << "\n";
+                m_out << "  mov " << cycleDst << ", " << cycleSrc << "\n";
+                for (auto& rem : pendingParamMoves) {
+                    if (rem.src == cycleDst) rem.src = "rax";
+                }
+                pendingParamMoves.erase(pendingParamMoves.begin());
+            }
+        }
+    };
+
     if (isSysV()) {
         size_t intRegIdx = m_currentFnReturnsSret ? 1 : 0;
         size_t floatRegIdx = 0;
         size_t stackParamIdx = 0;
         for (size_t i = 0; i < params.size(); ++i) {
-            int32_t offset = getSlotOffset(*params[i]);
             bool isFloat = params[i]->getType()->isFloatingPoint();
             if (isFloat && floatRegIdx < 8) {
+                int32_t offset = getSlotOffset(*params[i]);
+                std::string destMem = memRef(offset);
                 if (params[i]->getType()->isF32()) {
-                    m_out << "  movss dword ptr [rbp - " << offset << "], xmm" << floatRegIdx++ << "\n";
+                    m_out << "  movss dword ptr " << destMem << ", xmm" << floatRegIdx++ << "\n";
                 } else {
-                    m_out << "  movsd qword ptr [rbp - " << offset << "], xmm" << floatRegIdx++ << "\n";
+                    m_out << "  movsd qword ptr " << destMem << ", xmm" << floatRegIdx++ << "\n";
                 }
             } else if (!isFloat && intRegIdx < 6) {
-                storeRegToSlot(getParamReg(intRegIdx++), offset);
+                const char* srcReg = getParamReg(intRegIdx++);
+                if (m_lsra && m_lsra->hasRegister(params[i].get())) {
+                    pendingParamMoves.push_back({m_lsra->getRegister(params[i].get()), srcReg});
+                } else {
+                    storeRegToSlot(srcReg, getSlotOffset(*params[i]));
+                }
             } else {
                 int32_t stackOffset = 16 + static_cast<int32_t>(stackParamIdx++ * 8);
-                m_out << "  mov rax, [rbp + " << stackOffset << "]\n";
-                storeRegToSlot("rax", offset);
-            }
-        }
-        // Load into assigned registers if allocated
-        if (m_lsra) {
-            for (size_t i = 0; i < params.size(); ++i) {
-                if (!params[i]->getType()->isFloatingPoint()) {
-                    if (m_lsra->hasRegister(params[i].get())) {
-                        const std::string& reg = m_lsra->getRegister(params[i].get());
-                        int32_t offset = getSlotOffset(*params[i]);
-                        m_out << "  mov " << reg << ", [rbp - " << offset << "]\n";
-                    }
+                if (m_lsra && !isFloat && m_lsra->hasRegister(params[i].get())) {
+                    m_out << "  mov " << m_lsra->getRegister(params[i].get()) << ", " << argStackRef(stackOffset) << "\n";
+                } else {
+                    m_out << "  mov rax, " << argStackRef(stackOffset) << "\n";
+                    storeRegToSlot("rax", getSlotOffset(*params[i]));
                 }
             }
         }
+        resolveParamMoves();
     } else {
         size_t regOffset = m_currentFnReturnsSret ? 1 : 0;
         for (size_t i = 0; i < params.size() && (i + regOffset) < maxRegs; ++i) {
-            int32_t offset = getSlotOffset(*params[i]);
-            if (params[i]->getType()->isFloatingPoint()) {
+            bool isFloat = params[i]->getType()->isFloatingPoint();
+            if (isFloat) {
+                int32_t offset = getSlotOffset(*params[i]);
+                std::string destMem = memRef(offset);
                 if (params[i]->getType()->isF32()) {
-                    m_out << "  movss dword ptr [rbp - " << offset << "], xmm" << (i + regOffset) << "\n";
+                    m_out << "  movss dword ptr " << destMem << ", xmm" << (i + regOffset) << "\n";
                 } else {
-                    m_out << "  movsd qword ptr [rbp - " << offset << "], xmm" << (i + regOffset) << "\n";
+                    m_out << "  movsd qword ptr " << destMem << ", xmm" << (i + regOffset) << "\n";
                 }
             } else {
-                storeRegToSlot(getParamReg(i + regOffset), offset);
+                const char* srcReg = getParamReg(i + regOffset);
+                if (m_lsra && m_lsra->hasRegister(params[i].get())) {
+                    pendingParamMoves.push_back({m_lsra->getRegister(params[i].get()), srcReg});
+                } else {
+                    storeRegToSlot(srcReg, getSlotOffset(*params[i]));
+                }
             }
         }
+        resolveParamMoves();
         for (size_t i = (maxRegs > regOffset ? maxRegs - regOffset : 0); i < params.size(); ++i) {
             int32_t stackOffset = 48 + static_cast<int32_t>((i + regOffset - maxRegs) * 8);
-            m_out << "  mov rax, [rbp + " << stackOffset << "]\n";
-            storeRegToSlot("rax", getSlotOffset(*params[i]));
-        }
-        // Load into assigned registers if allocated
-        if (m_lsra) {
-            for (size_t i = 0; i < params.size(); ++i) {
-                if (!params[i]->getType()->isFloatingPoint()) {
-                    if (m_lsra->hasRegister(params[i].get())) {
-                        const std::string& reg = m_lsra->getRegister(params[i].get());
-                        int32_t offset = getSlotOffset(*params[i]);
-                        m_out << "  mov " << reg << ", [rbp - " << offset << "]\n";
-                    }
-                }
+            if (m_lsra && !params[i]->getType()->isFloatingPoint() && m_lsra->hasRegister(params[i].get())) {
+                m_out << "  mov " << m_lsra->getRegister(params[i].get()) << ", " << argStackRef(stackOffset) << "\n";
+            } else {
+                m_out << "  mov rax, " << argStackRef(stackOffset) << "\n";
+                storeRegToSlot("rax", getSlotOffset(*params[i]));
             }
         }
     }
@@ -427,8 +525,10 @@ void X86_64CodeGen::generateFunction(const IRFunction& fn) {
     // Entry loop label for self-recursion TCO
     m_out << "." << fn.getName() << "_entry_loop:\n";
 
-    for (const auto& bb : fn.getBlocks()) {
-        generateBasicBlock(*bb, fn);
+    const auto& blocks = fn.getBlocks();
+    for (size_t bIdx = 0; bIdx < blocks.size(); ++bIdx) {
+        const IRBasicBlock* nextBlock = (bIdx + 1 < blocks.size()) ? blocks[bIdx + 1].get() : nullptr;
+        generateBasicBlock(*blocks[bIdx], fn, nextBlock);
     }
 
     if (m_debugInfo) {
@@ -446,6 +546,8 @@ static std::vector<std::string> applyPeephole(const std::vector<std::string>& li
 
         // Drop redundant 64-bit self-moves: e.g. "  mov rax, rax"
         if (line == "  mov rax, rax" || line == "  mov rcx, rcx" || line == "  mov rdx, rdx" ||
+            line == "  mov rbx, rbx" || line == "  mov r12, r12" || line == "  mov r13, r13" ||
+            line == "  mov r14, r14" || line == "  mov r15, r15" ||
             line == "  mov rsi, rsi" || line == "  mov rdi, rdi" || line == "  mov r8, r8" ||
             line == "  mov r9, r9" || line == "  mov r10, r10" || line == "  mov r11, r11") {
             continue;
@@ -453,21 +555,21 @@ static std::vector<std::string> applyPeephole(const std::vector<std::string>& li
 
         if (!out.empty()) {
             const std::string& prev = out.back();
-            // Pattern: prev is "  mov [rbp - X], reg"
-            //          line is "  mov reg, [rbp - X]"
-            if (prev.rfind("  mov [rbp - ", 0) == 0 && line.rfind("  mov ", 0) == 0) {
+            // Pattern: prev is "  mov [rbp - X], reg" or "  mov [rsp + X], reg"
+            //          line is "  mov reg, [rbp - X]" or "  mov reg, [rsp + X]"
+            if ((prev.rfind("  mov [rbp - ", 0) == 0 || prev.rfind("  mov [rsp + ", 0) == 0) &&
+                line.rfind("  mov ", 0) == 0) {
                 size_t commaPrev = prev.find("], ");
-                size_t commaLine = line.find(", [rbp - ");
+                size_t commaLine = line.find(", [");
                 if (commaPrev != std::string::npos && commaLine != std::string::npos) {
-                    std::string slotPrev = prev.substr(6, commaPrev - 6 + 1); // "[rbp - X]"
-                    std::string regPrev = prev.substr(commaPrev + 3);          // "rax"
-                    std::string regLine = line.substr(6, commaLine - 6);      // "rax"
-                    std::string slotLine = line.substr(commaLine + 2);        // "[rbp - X]"
+                    std::string slotPrev = prev.substr(6, commaPrev - 6 + 1);
+                    std::string regPrev = prev.substr(commaPrev + 3);
+                    std::string regLine = line.substr(6, commaLine - 6);
+                    std::string slotLine = line.substr(commaLine + 2);
 
                     if (slotPrev == slotLine && regPrev == regLine &&
                         (regPrev == "rax" || regPrev == "rcx" || regPrev == "rdx" ||
                          regPrev == "r8" || regPrev == "r9" || regPrev == "r10" || regPrev == "r11")) {
-                        // Completely redundant load immediately following store!
                         continue;
                     }
                 }
@@ -478,29 +580,62 @@ static std::vector<std::string> applyPeephole(const std::vector<std::string>& li
     return out;
 }
 
-void X86_64CodeGen::generateBasicBlock(const IRBasicBlock& bb, const IRFunction& fn) {
+static bool isImm32Value(const IRValue* val, int64_t& outImm) {
+    if (!val || !val->isConstant()) return false;
+    if (const auto* ci = dynamic_cast<const ConstantInt*>(val)) {
+        int64_t v = ci->getValue();
+        if (v >= -2147483648LL && v <= 2147483647LL) {
+            outImm = v;
+            return true;
+        }
+    } else if (val->getType()->isBoolean()) {
+        outImm = (val->getName() == "true") ? 1 : 0;
+        return true;
+    }
+    return false;
+}
+
+void X86_64CodeGen::generateBasicBlock(const IRBasicBlock& bb, const IRFunction& fn, const IRBasicBlock* nextBlock) {
     *m_pOut << getLabel(bb, fn) << ":\n";
 
     std::ostringstream bbStream;
     std::ostream* savedOut = m_pOut;
     m_pOut = &bbStream;
 
+    auto edgeHasNoPhiMoves = [&](const IRBasicBlock* target) -> bool {
+        if (!target) return true;
+        for (const auto& tInst : target->getInstructions()) {
+            if (tInst->getOpcode() != IROpcode::Phi) break;
+            const auto& phi = static_cast<const PhiInst&>(*tInst);
+            auto val = phi.getIncomingValue(&bb);
+            if (!val || val.get() == &phi) continue;
+            if (m_lsra && m_lsra->hasRegister(&phi) && m_lsra->hasRegister(val.get()) &&
+                m_lsra->getRegister(&phi) == m_lsra->getRegister(val.get())) {
+                continue;
+            }
+            return false;
+        }
+        return true;
+    };
+
     const auto& insts = bb.getInstructions();
     for (size_t i = 0; i < insts.size(); ++i) {
-        // Compare-Branch Fusion
+        // Compare-Branch Fusion (safe when target edges require no materialized Phi copies)
         if (i + 1 < insts.size() && insts[i+1]->getOpcode() == IROpcode::CondBr) {
             const auto& condBr = static_cast<const CondBranchInst&>(*insts[i+1]);
-            if (condBr.getCondition().get() == insts[i].get()) {
+            if (condBr.getCondition().get() == insts[i].get() &&
+                edgeHasNoPhiMoves(condBr.getTrueTarget()) &&
+                edgeHasNoPhiMoves(condBr.getFalseTarget())) {
                 auto op = insts[i]->getOpcode();
                 if (op == IROpcode::Equal || op == IROpcode::NotEqual ||
                     op == IROpcode::Less || op == IROpcode::LessEqual ||
                     op == IROpcode::Greater || op == IROpcode::GreaterEqual) {
 
                     const auto& binInst = static_cast<const BinaryInst&>(*insts[i]);
-                    loadValueToReg(*binInst.getLhs(), "rax");
-                    loadValueToReg(*binInst.getRhs(), "rcx");
 
                     if (binInst.getLhs()->getType()->isFloatingPoint()) {
+                        loadValueToReg(*binInst.getLhs(), "rax");
+                        loadValueToReg(*binInst.getRhs(), "rcx");
                         if (binInst.getLhs()->getType()->isF32()) {
                             *m_pOut << "  movd xmm0, eax\n";
                             *m_pOut << "  movd xmm1, ecx\n";
@@ -521,40 +656,84 @@ void X86_64CodeGen::generateBasicBlock(const IRBasicBlock& bb, const IRFunction&
                         if (op == IROpcode::Equal) {
                             *m_pOut << "  jp " << getLabel(*condBr.getFalseTarget(), fn) << "\n";
                             *m_pOut << "  jne " << getLabel(*condBr.getFalseTarget(), fn) << "\n";
-                            *m_pOut << "  jmp " << getLabel(*condBr.getTrueTarget(), fn) << "\n";
+                            if (condBr.getTrueTarget() != nextBlock) {
+                                *m_pOut << "  jmp " << getLabel(*condBr.getTrueTarget(), fn) << "\n";
+                            }
                         } else if (op == IROpcode::NotEqual) {
                             *m_pOut << "  jp " << getLabel(*condBr.getTrueTarget(), fn) << "\n";
                             *m_pOut << "  jne " << getLabel(*condBr.getTrueTarget(), fn) << "\n";
-                            *m_pOut << "  jmp " << getLabel(*condBr.getFalseTarget(), fn) << "\n";
+                            if (condBr.getFalseTarget() != nextBlock) {
+                                *m_pOut << "  jmp " << getLabel(*condBr.getFalseTarget(), fn) << "\n";
+                            }
                         } else if (op == IROpcode::Less || op == IROpcode::Greater) {
                             *m_pOut << "  ja " << getLabel(*condBr.getTrueTarget(), fn) << "\n";
-                            *m_pOut << "  jmp " << getLabel(*condBr.getFalseTarget(), fn) << "\n";
+                            if (condBr.getFalseTarget() != nextBlock) {
+                                *m_pOut << "  jmp " << getLabel(*condBr.getFalseTarget(), fn) << "\n";
+                            }
                         } else if (op == IROpcode::LessEqual || op == IROpcode::GreaterEqual) {
                             *m_pOut << "  jae " << getLabel(*condBr.getTrueTarget(), fn) << "\n";
-                            *m_pOut << "  jmp " << getLabel(*condBr.getFalseTarget(), fn) << "\n";
+                            if (condBr.getFalseTarget() != nextBlock) {
+                                *m_pOut << "  jmp " << getLabel(*condBr.getFalseTarget(), fn) << "\n";
+                            }
                         }
                     } else {
-                        *m_pOut << "  cmp rax, rcx\n";
-
-                        std::string jmpInst;
-                        switch (op) {
-                            case IROpcode::Equal:        jmpInst = "je"; break;
-                            case IROpcode::NotEqual:     jmpInst = "jne"; break;
-                            case IROpcode::Less:         jmpInst = "jl"; break;
-                            case IROpcode::LessEqual:    jmpInst = "jle"; break;
-                            case IROpcode::Greater:      jmpInst = "jg"; break;
-                            case IROpcode::GreaterEqual: jmpInst = "jge"; break;
-                            default:                     jmpInst = "jne"; break;
+                        const IRValue* lhs = binInst.getLhs().get();
+                        const IRValue* rhs = binInst.getRhs().get();
+                        std::string lhsOp = "rax";
+                        if (m_lsra && m_lsra->hasRegister(lhs)) {
+                            lhsOp = m_lsra->getRegister(lhs);
+                        } else {
+                            loadValueToReg(*lhs, "rax");
                         }
-                        *m_pOut << "  " << jmpInst << " " << getLabel(*condBr.getTrueTarget(), fn) << "\n";
-                        *m_pOut << "  jmp " << getLabel(*condBr.getFalseTarget(), fn) << "\n";
+
+                        int64_t rhsImm = 0;
+                        if (isImm32Value(rhs, rhsImm)) {
+                            *m_pOut << "  cmp " << lhsOp << ", " << rhsImm << "\n";
+                        } else if (m_lsra && m_lsra->hasRegister(rhs)) {
+                            *m_pOut << "  cmp " << lhsOp << ", " << m_lsra->getRegister(rhs) << "\n";
+                        } else {
+                            loadValueToReg(*rhs, "rcx");
+                            *m_pOut << "  cmp " << lhsOp << ", rcx\n";
+                        }
+
+                        auto invertCc = [](IROpcode c) {
+                            switch (c) {
+                                case IROpcode::Equal:        return "jne";
+                                case IROpcode::NotEqual:     return "je";
+                                case IROpcode::Less:         return "jge";
+                                case IROpcode::LessEqual:    return "jg";
+                                case IROpcode::Greater:      return "jle";
+                                case IROpcode::GreaterEqual: return "jl";
+                                default:                     return "je";
+                            }
+                        };
+                        auto directCc = [](IROpcode c) {
+                            switch (c) {
+                                case IROpcode::Equal:        return "je";
+                                case IROpcode::NotEqual:     return "jne";
+                                case IROpcode::Less:         return "jl";
+                                case IROpcode::LessEqual:    return "jle";
+                                case IROpcode::Greater:      return "jg";
+                                case IROpcode::GreaterEqual: return "jge";
+                                default:                     return "jne";
+                            }
+                        };
+
+                        if (condBr.getTrueTarget() == nextBlock && condBr.getFalseTarget() != nextBlock) {
+                            *m_pOut << "  " << invertCc(op) << " " << getLabel(*condBr.getFalseTarget(), fn) << "\n";
+                        } else {
+                            *m_pOut << "  " << directCc(op) << " " << getLabel(*condBr.getTrueTarget(), fn) << "\n";
+                            if (condBr.getFalseTarget() != nextBlock) {
+                                *m_pOut << "  jmp " << getLabel(*condBr.getFalseTarget(), fn) << "\n";
+                            }
+                        }
                     }
                     ++i;
                     continue;
                 }
             }
         }
-        generateInstruction(*insts[i], fn);
+        generateInstruction(*insts[i], fn, nextBlock);
     }
 
     m_pOut = savedOut;
@@ -576,9 +755,20 @@ void X86_64CodeGen::generateBasicBlock(const IRBasicBlock& bb, const IRFunction&
 }
 
 void X86_64CodeGen::emitParallelPhiCopies(const IRBasicBlock& target, const IRBasicBlock& fromBlock) {
+    auto valueLocKey = [&](const IRValue* v) -> std::string {
+        if (!v) return "";
+        if (m_lsra && m_lsra->hasRegister(v)) {
+            return "reg:" + m_lsra->getRegister(v);
+        }
+        if (v->isConstant()) return "";
+        return "val:" + std::to_string(reinterpret_cast<uintptr_t>(v));
+    };
+
     struct CopyItem {
         const PhiInst* dst;
         const IRValue* src;
+        std::string dstLoc;
+        std::string srcLoc;
     };
     std::vector<CopyItem> pending;
 
@@ -587,7 +777,11 @@ void X86_64CodeGen::emitParallelPhiCopies(const IRBasicBlock& target, const IRBa
             const auto& phi = static_cast<const PhiInst&>(*inst);
             auto val = phi.getIncomingValue(&fromBlock);
             if (val && val.get() != &phi) {
-                pending.push_back({&phi, val.get()});
+                std::string dLoc = valueLocKey(&phi);
+                std::string sLoc = valueLocKey(val.get());
+                // Skip no-op copies when coalesced to the exact same physical location
+                if (!dLoc.empty() && dLoc == sLoc) continue;
+                pending.push_back({&phi, val.get(), std::move(dLoc), std::move(sLoc)});
             }
         } else {
             break;
@@ -596,21 +790,28 @@ void X86_64CodeGen::emitParallelPhiCopies(const IRBasicBlock& target, const IRBa
 
     if (pending.empty()) return;
 
+    auto emitDirectCopy = [&](const IRValue* src, const PhiInst* dst) {
+        if (m_lsra && m_lsra->hasRegister(dst)) {
+            loadValueToReg(*src, m_lsra->getRegister(dst));
+        } else {
+            loadValueToReg(*src, "rax");
+            storeRegToValue("rax", *dst);
+        }
+    };
+
     if (pending.size() == 1) {
-        loadValueToReg(*pending[0].src, "rax");
-        storeRegToValue("rax", *pending[0].dst);
+        emitDirectCopy(pending[0].src, pending[0].dst);
         return;
     }
 
-    // Parallel copy resolution with cycle breaking
-    std::unordered_map<const IRValue*, int32_t> scratchMap;
+    // Parallel copy resolution with cycle breaking keyed by physical location
+    std::unordered_map<std::string, int32_t> scratchMap;
     int32_t scratchCounter = 0;
 
     while (!pending.empty()) {
-        // Find a copy whose dst is not needed as src by any other pending copy
         auto it = std::find_if(pending.begin(), pending.end(), [&](const CopyItem& item) {
             for (const auto& other : pending) {
-                if (other.src == item.dst) {
+                if (&other != &item && !other.srcLoc.empty() && other.srcLoc == item.dstLoc) {
                     return false;
                 }
             }
@@ -619,34 +820,43 @@ void X86_64CodeGen::emitParallelPhiCopies(const IRBasicBlock& target, const IRBa
 
         if (it != pending.end()) {
             const auto* srcVal = it->src;
-            auto scIt = scratchMap.find(srcVal);
+            auto scIt = !it->srcLoc.empty() ? scratchMap.find(it->srcLoc) : scratchMap.end();
             if (scIt != scratchMap.end()) {
-                m_out << "  mov rax, [rbp - " << scIt->second << "]\n";
+                if (m_lsra && m_lsra->hasRegister(it->dst)) {
+                    m_out << "  mov " << m_lsra->getRegister(it->dst) << ", " << memRef(scIt->second) << "\n";
+                } else {
+                    m_out << "  mov rax, " << memRef(scIt->second) << "\n";
+                    storeRegToValue("rax", *it->dst);
+                }
             } else {
-                loadValueToReg(*srcVal, "rax");
+                emitDirectCopy(srcVal, it->dst);
             }
-            storeRegToValue("rax", *it->dst);
             pending.erase(it);
         } else {
-            // Cycle detected! Break cycle by staging destination's current value to scratch
+            // Cycle detected! Stage cycleDst's pre-overwrite value by physical location
             const auto* cycleDst = pending[0].dst;
-            int32_t scratchSlot = m_tcoScratchOffset + (scratchCounter % 6) * 8;
+            const std::string cycleDstLoc = pending[0].dstLoc;
             scratchCounter++;
+            int32_t scratchSlot = m_tcoScratchOffset + scratchCounter * 8;
 
-            // Save the value that is about to be overwritten into scratch
             loadValueToReg(*cycleDst, "rax");
-            m_out << "  mov [rbp - " << scratchSlot << "], rax\n";
-            scratchMap[cycleDst] = scratchSlot;
-
-            // Now perform the copy dst = src
-            const auto* cycleSrc = pending[0].src;
-            auto scIt = scratchMap.find(cycleSrc);
-            if (scIt != scratchMap.end()) {
-                m_out << "  mov rax, [rbp - " << scIt->second << "]\n";
-            } else {
-                loadValueToReg(*cycleSrc, "rax");
+            storeRegToSlot("rax", scratchSlot);
+            if (!cycleDstLoc.empty()) {
+                scratchMap[cycleDstLoc] = scratchSlot;
             }
-            storeRegToValue("rax", *cycleDst);
+
+            const auto* cycleSrc = pending[0].src;
+            auto scIt = !pending[0].srcLoc.empty() ? scratchMap.find(pending[0].srcLoc) : scratchMap.end();
+            if (scIt != scratchMap.end()) {
+                if (m_lsra && m_lsra->hasRegister(cycleDst)) {
+                    m_out << "  mov " << m_lsra->getRegister(cycleDst) << ", " << memRef(scIt->second) << "\n";
+                } else {
+                    m_out << "  mov rax, " << memRef(scIt->second) << "\n";
+                    storeRegToValue("rax", *cycleDst);
+                }
+            } else {
+                emitDirectCopy(cycleSrc, cycleDst);
+            }
             pending.erase(pending.begin());
         }
     }
@@ -668,6 +878,32 @@ bool X86_64CodeGen::tryDirectRegisterBinaryOp(const BinaryInst& binInst) {
 
     bool rhsInDst = (m_lsra->hasRegister(rhs) && m_lsra->getRegister(rhs) == dstReg);
     bool lhsInDst = (m_lsra->hasRegister(lhs) && m_lsra->getRegister(lhs) == dstReg);
+
+    // Non-destructive 3-operand lea lowering when enabled (-O1+)
+    if (m_optLevel >= OptimizationLevel::O1 && !lhsInDst && !rhsInDst) {
+        if ((op == IROpcode::Add || op == IROpcode::Sub) && m_lsra->hasRegister(lhs)) {
+            const std::string& lhsReg = m_lsra->getRegister(lhs);
+            int64_t immVal = 0;
+            if (isImm32Value(rhs, immVal)) {
+                if (op == IROpcode::Add || immVal > -2147483648LL) {
+                    int64_t adj = (op == IROpcode::Add) ? immVal : -immVal;
+                    if (adj == 0) {
+                        m_out << "  mov " << dstReg << ", " << lhsReg << "\n";
+                    } else if (adj > 0) {
+                        m_out << "  lea " << dstReg << ", [" << lhsReg << " + " << adj << "]\n";
+                    } else {
+                        m_out << "  lea " << dstReg << ", [" << lhsReg << " - " << (-adj) << "]\n";
+                    }
+                    return true;
+                }
+            }
+            if (op == IROpcode::Add && m_lsra->hasRegister(rhs)) {
+                const std::string& rhsReg = m_lsra->getRegister(rhs);
+                m_out << "  lea " << dstReg << ", [" << lhsReg << " + " << rhsReg << "]\n";
+                return true;
+            }
+        }
+    }
 
     if (rhsInDst && !lhsInDst) {
         if (op == IROpcode::Add || op == IROpcode::Mul ||
@@ -715,11 +951,11 @@ bool X86_64CodeGen::tryDirectRegisterBinaryOp(const BinaryInst& binInst) {
     }
 
     int32_t offset = getSlotOffset(*rhs);
-    m_out << "  " << opName << " " << dstReg << ", [rbp - " << offset << "]\n";
+    m_out << "  " << opName << " " << dstReg << ", " << memRef(offset) << "\n";
     return true;
 }
 
-void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunction& fn) {
+void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunction& fn, const IRBasicBlock* nextBlock) {
     if (m_debugInfo && inst.getLocation().isValid()) {
         if (inst.getLocation() != m_lastEmittedLoc) {
             m_out << "  .loc " << inst.getLocation().fileId << " "
@@ -747,13 +983,13 @@ void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunct
                 if (structSize > 8) {
                     if (isAlloca) {
                         int32_t ptrOffset = getSlotOffset(*storeInst.getPointer());
-                        m_out << "  lea rdx, [rbp - " << ptrOffset << "]\n";
+                        m_out << "  lea rdx, " << memRef(ptrOffset) << "\n";
                     } else {
                         loadValueToReg(*storeInst.getPointer(), "rdx");
                     }
                     for (int32_t off = 0; off < structSize; off += 8) {
-                        m_out << "  mov r10, [rax + " << off << "]\n";
-                        m_out << "  mov [rdx + " << off << "], r10\n";
+                        m_out << "  mov rcx, [rax + " << off << "]\n";
+                        m_out << "  mov [rdx + " << off << "], rcx\n";
                     }
                     break;
                 }
@@ -765,6 +1001,7 @@ void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunct
                 loadValueToReg(*storeInst.getPointer(), "rdx");
                 bool isPtrVal = storeInst.getValue()->getType()->isPointer() ||
                     storeInst.getValue()->getType()->isRc() ||
+                    storeInst.getValue()->getType()->isArc() ||
                     storeInst.getValue()->getType()->isBox() ||
                     storeInst.getValue()->getType()->isArena() ||
                     storeInst.getValue()->getType()->isVector() ||
@@ -791,13 +1028,13 @@ void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunct
                 std::static_pointer_cast<StructType>(loadInst.getType())->getSize() > 8) {
                 if (isAlloca) {
                     int32_t ptrOffset = getSlotOffset(*loadInst.getPointer());
-                    m_out << "  lea rax, [rbp - " << ptrOffset << "]\n";
+                    m_out << "  lea rax, " << memRef(ptrOffset) << "\n";
                 } else {
                     loadValueToReg(*loadInst.getPointer(), "rax");
                 }
             } else if (isAlloca) {
                 int32_t ptrOffset = getSlotOffset(*loadInst.getPointer());
-                m_out << "  mov rax, [rbp - " << ptrOffset << "]\n";
+                m_out << "  mov rax, " << memRef(ptrOffset) << "\n";
             } else {
                 loadValueToReg(*loadInst.getPointer(), "rdx");
                 if (loadInst.getType()->isBoolean()) {
@@ -825,7 +1062,7 @@ void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunct
             if (isAlloca || isCall) {
                 int32_t baseOffset = getSlotOffset(*gfp.getBasePtr());
                 int32_t fieldStackOffset = baseOffset - static_cast<int32_t>(gfp.getByteOffset());
-                m_out << "  lea rax, [rbp - " << fieldStackOffset << "]\n";
+                m_out << "  lea rax, " << memRef(fieldStackOffset) << "\n";
             } else {
                 loadValueToReg(*gfp.getBasePtr(), "rax");
                 if (gfp.getByteOffset() != 0) {
@@ -837,15 +1074,64 @@ void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunct
         }
         case IROpcode::GetElementPtr: {
             const auto& gep = static_cast<const GetElementPtrInst&>(inst);
-            loadValueToReg(*gep.getIndex(), "rax");
-            if (gep.getElementSize() != 1) {
-                m_out << "  imul rax, " << gep.getElementSize() << "\n";
-            }
             bool isAlloca = gep.getBasePtr()->isInstruction() &&
                 static_cast<const IRInstruction*>(gep.getBasePtr().get())->getOpcode() == IROpcode::Alloca;
+            size_t elemSize = gep.getElementSize();
+            bool validScale = (elemSize == 1 || elemSize == 2 || elemSize == 4 || elemSize == 8);
+
+            if (!isAlloca && validScale) {
+                std::string bReg = (m_lsra && m_lsra->hasRegister(gep.getBasePtr().get()))
+                    ? m_lsra->getRegister(gep.getBasePtr().get()) : "rdx";
+                if (bReg == "rdx") {
+                    loadValueToReg(*gep.getBasePtr(), "rdx");
+                }
+                int64_t constIdx = 0;
+                if (isImm32Value(gep.getIndex().get(), constIdx)) {
+                    int64_t byteOff = constIdx * static_cast<int64_t>(elemSize);
+                    std::string dstReg = (m_lsra && m_lsra->hasRegister(&gep))
+                        ? m_lsra->getRegister(&gep) : "rdx";
+                    if (byteOff == 0) {
+                        if (dstReg != bReg) m_out << "  mov " << dstReg << ", " << bReg << "\n";
+                    } else if (byteOff > 0 && byteOff <= 2147483647LL) {
+                        m_out << "  lea " << dstReg << ", [" << bReg << " + " << byteOff << "]\n";
+                    } else if (byteOff < 0 && -byteOff <= 2147483647LL) {
+                        m_out << "  lea " << dstReg << ", [" << bReg << " - " << (-byteOff) << "]\n";
+                    } else {
+                        loadValueToReg(*gep.getIndex(), "rax");
+                        if (elemSize > 1) m_out << "  imul rax, " << elemSize << "\n";
+                        m_out << "  lea " << dstReg << ", [" << bReg << " + rax]\n";
+                    }
+                    if (!m_lsra || !m_lsra->hasRegister(&gep)) {
+                        storeRegToValue(dstReg, gep);
+                    }
+                    break;
+                }
+                std::string iReg = (m_lsra && m_lsra->hasRegister(gep.getIndex().get()) &&
+                                    m_lsra->getRegister(gep.getIndex().get()) != bReg)
+                    ? m_lsra->getRegister(gep.getIndex().get()) : "rax";
+                if (iReg == "rax") {
+                    loadValueToReg(*gep.getIndex(), "rax");
+                }
+                std::string dstReg = (m_lsra && m_lsra->hasRegister(&gep))
+                    ? m_lsra->getRegister(&gep) : "rdx";
+                if (elemSize == 1) {
+                    m_out << "  lea " << dstReg << ", [" << bReg << " + " << iReg << "]\n";
+                } else {
+                    m_out << "  lea " << dstReg << ", [" << bReg << " + " << iReg << " * " << elemSize << "]\n";
+                }
+                if (!m_lsra || !m_lsra->hasRegister(&gep)) {
+                    storeRegToValue(dstReg, gep);
+                }
+                break;
+            }
+
+            loadValueToReg(*gep.getIndex(), "rax");
+            if (elemSize != 1) {
+                m_out << "  imul rax, " << elemSize << "\n";
+            }
             if (isAlloca) {
                 int32_t baseOffset = getSlotOffset(*gep.getBasePtr());
-                m_out << "  lea rdx, [rbp - " << baseOffset << "]\n";
+                m_out << "  lea rdx, " << memRef(baseOffset) << "\n";
                 m_out << "  add rdx, rax\n";
             } else {
                 loadValueToReg(*gep.getBasePtr(), "rdx");
@@ -931,10 +1217,10 @@ void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunct
         case IROpcode::Greater:
         case IROpcode::GreaterEqual: {
             const auto& binInst = static_cast<const BinaryInst&>(inst);
-            loadValueToReg(*binInst.getLhs(), "rax");
-            loadValueToReg(*binInst.getRhs(), "rcx");
 
             if (binInst.getLhs()->getType()->isFloatingPoint()) {
+                loadValueToReg(*binInst.getLhs(), "rax");
+                loadValueToReg(*binInst.getRhs(), "rcx");
                 if (binInst.getLhs()->getType()->isF32()) {
                     m_out << "  movd xmm0, eax\n";
                     m_out << "  movd xmm1, ecx\n";
@@ -976,7 +1262,23 @@ void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunct
                         break;
                 }
             } else {
-                m_out << "  cmp rax, rcx\n";
+                const IRValue* lhs = binInst.getLhs().get();
+                const IRValue* rhs = binInst.getRhs().get();
+                std::string lhsOp = "rax";
+                if (m_lsra && m_lsra->hasRegister(lhs)) {
+                    lhsOp = m_lsra->getRegister(lhs);
+                } else {
+                    loadValueToReg(*lhs, "rax");
+                }
+                int64_t rhsImm = 0;
+                if (isImm32Value(rhs, rhsImm)) {
+                    m_out << "  cmp " << lhsOp << ", " << rhsImm << "\n";
+                } else if (m_lsra && m_lsra->hasRegister(rhs)) {
+                    m_out << "  cmp " << lhsOp << ", " << m_lsra->getRegister(rhs) << "\n";
+                } else {
+                    loadValueToReg(*rhs, "rcx");
+                    m_out << "  cmp " << lhsOp << ", rcx\n";
+                }
                 std::string setInst;
                 switch (binInst.getOpcode()) {
                     case IROpcode::Equal:        setInst = "sete"; break;
@@ -1020,6 +1322,20 @@ void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunct
         case IROpcode::ShiftLeft:
         case IROpcode::ShiftRight: {
             const auto& binInst = static_cast<const BinaryInst&>(inst);
+            int64_t shiftImm = 0;
+            if (isImm32Value(binInst.getRhs().get(), shiftImm) && shiftImm >= 0 && shiftImm < 64) {
+                const char* shiftOp = (binInst.getOpcode() == IROpcode::ShiftLeft) ? "shl" : "sar";
+                if (m_lsra && m_lsra->hasRegister(&binInst)) {
+                    std::string dstReg = m_lsra->getRegister(&binInst);
+                    loadValueToReg(*binInst.getLhs(), dstReg);
+                    m_out << "  " << shiftOp << " " << dstReg << ", " << shiftImm << "\n";
+                } else {
+                    loadValueToReg(*binInst.getLhs(), "rax");
+                    m_out << "  " << shiftOp << " rax, " << shiftImm << "\n";
+                    storeRegToValue("rax", binInst);
+                }
+                break;
+            }
             loadValueToReg(*binInst.getRhs(), "rcx");
             loadValueToReg(*binInst.getLhs(), "rax");
 
@@ -1095,7 +1411,7 @@ void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunct
             if (retInst.hasValue()) {
                 loadValueToReg(*retInst.getValue(), "rax");
                 if (m_currentFnReturnsSret) {
-                    m_out << "  mov r11, [rbp - " << m_currentFnSretSlot << "]\n";
+                    m_out << "  mov r11, " << memRef(m_currentFnSretSlot) << "\n";
                     for (int32_t off = 0; off < m_currentFnSretSize; off += 8) {
                         m_out << "  mov r10, [rax + " << off << "]\n";
                         m_out << "  mov [r11 + " << off << "], r10\n";
@@ -1117,13 +1433,20 @@ void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunct
             if (brInst.getTarget()) {
                 emitParallelPhiCopies(*brInst.getTarget(), *inst.getParent());
             }
-            m_out << "  jmp " << getLabel(*brInst.getTarget(), fn) << "\n";
+            if (brInst.getTarget() != nextBlock) {
+                m_out << "  jmp " << getLabel(*brInst.getTarget(), fn) << "\n";
+            }
             break;
         }
         case IROpcode::CondBr: {
             const auto& condBr = static_cast<const CondBranchInst&>(inst);
-            loadValueToReg(*condBr.getCondition(), "rax");
-            m_out << "  cmp rax, 0\n";
+            if (m_lsra && m_lsra->hasRegister(condBr.getCondition().get())) {
+                const std::string& condReg = m_lsra->getRegister(condBr.getCondition().get());
+                m_out << "  test " << condReg << ", " << condReg << "\n";
+            } else {
+                loadValueToReg(*condBr.getCondition(), "rax");
+                m_out << "  cmp rax, 0\n";
+            }
             bool trueHasPhis = false;
             if (condBr.getTrueTarget()) {
                 for (const auto& tInst : condBr.getTrueTarget()->getInstructions()) {
@@ -1138,8 +1461,14 @@ void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunct
             }
 
             if (!trueHasPhis && !falseHasPhis) {
-                m_out << "  jne " << getLabel(*condBr.getTrueTarget(), fn) << "\n";
-                m_out << "  jmp " << getLabel(*condBr.getFalseTarget(), fn) << "\n";
+                if (condBr.getTrueTarget() == nextBlock && condBr.getFalseTarget() != nextBlock) {
+                    m_out << "  je " << getLabel(*condBr.getFalseTarget(), fn) << "\n";
+                } else {
+                    m_out << "  jne " << getLabel(*condBr.getTrueTarget(), fn) << "\n";
+                    if (condBr.getFalseTarget() != nextBlock) {
+                        m_out << "  jmp " << getLabel(*condBr.getFalseTarget(), fn) << "\n";
+                    }
+                }
             } else {
                 static size_t condEdgeCounter = 0;
                 std::string falseEdge = ".L_edge_f_" + std::to_string(condEdgeCounter++);
@@ -1152,7 +1481,9 @@ void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunct
                 if (condBr.getFalseTarget()) {
                     emitParallelPhiCopies(*condBr.getFalseTarget(), *inst.getParent());
                 }
-                m_out << "  jmp " << getLabel(*condBr.getFalseTarget(), fn) << "\n";
+                if (condBr.getFalseTarget() != nextBlock) {
+                    m_out << "  jmp " << getLabel(*condBr.getFalseTarget(), fn) << "\n";
+                }
             }
             break;
         }
@@ -1168,12 +1499,12 @@ void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunct
                     for (size_t aIdx = 0; aIdx < count; ++aIdx) {
                         loadValueToReg(*args[aIdx], "rax");
                         int32_t slotOff = m_tcoScratchOffset + static_cast<int32_t>((aIdx + 1) * 8);
-                        m_out << "  mov [rbp - " << slotOff << "], rax\n";
+                        storeRegToSlot("rax", slotOff);
                     }
                     // Phase 2: Copy from scratch slots into destination parameter registers/slots
                     for (size_t aIdx = 0; aIdx < count; ++aIdx) {
                         int32_t slotOff = m_tcoScratchOffset + static_cast<int32_t>((aIdx + 1) * 8);
-                        m_out << "  mov rax, [rbp - " << slotOff << "]\n";
+                        m_out << "  mov rax, " << memRef(slotOff) << "\n";
                         storeRegToValue("rax", *fnParams[aIdx]);
                     }
                     m_out << "  jmp ." << fn.getName() << "_entry_loop\n";
@@ -1184,7 +1515,7 @@ void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunct
             bool isSret = callInst.getType()->isStruct() &&
                 std::static_pointer_cast<StructType>(callInst.getType())->getSize() > 8 &&
                 callInst.getCallee().rfind("sph_", 0) != 0;
-            int32_t dstOffset = getSlotOffset(callInst);
+            int32_t dstOffset = isSret ? getSlotOffset(callInst) : 0;
 
             size_t maxRegs = getMaxRegisterParams();
 
@@ -1208,7 +1539,7 @@ void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunct
                 intIdx = isSret ? 1 : 0;
                 floatIdx = 0;
                 if (isSret) {
-                    m_out << "  lea " << getParamReg(0) << ", [rbp - " << dstOffset << "]\n";
+                    m_out << "  lea " << getParamReg(0) << ", " << memRef(dstOffset) << "\n";
                 }
                 for (size_t i = 0; i < args.size(); ++i) {
                     bool isFloat = args[i]->getType()->isFloatingPoint();
@@ -1237,7 +1568,7 @@ void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunct
                 }
 
                 if (isSret) {
-                    m_out << "  lea " << getParamReg(0) << ", [rbp - " << dstOffset << "]\n";
+                    m_out << "  lea " << getParamReg(0) << ", " << memRef(dstOffset) << "\n";
                 }
 
                 // Load arguments into register parameters according to calling convention
@@ -1313,6 +1644,25 @@ void X86_64CodeGen::generateInstruction(const IRInstruction& inst, const IRFunct
             const auto& rcRelease = static_cast<const RcReleaseInst&>(inst);
             loadValueToReg(*rcRelease.getPtr(), getParamReg(0));
             m_out << "  call sph_rc_release\n";
+            break;
+        }
+        case IROpcode::ArcAlloc: {
+            const auto& arcAlloc = static_cast<const ArcAllocInst&>(inst);
+            m_out << "  mov " << getParamReg(0) << ", " << arcAlloc.getAllocSize() << "\n";
+            m_out << "  call sph_arc_alloc\n";
+            storeRegToValue("rax", arcAlloc);
+            break;
+        }
+        case IROpcode::ArcRetain: {
+            const auto& arcRetain = static_cast<const ArcRetainInst&>(inst);
+            loadValueToReg(*arcRetain.getPtr(), getParamReg(0));
+            m_out << "  call sph_arc_retain\n";
+            break;
+        }
+        case IROpcode::ArcRelease: {
+            const auto& arcRelease = static_cast<const ArcReleaseInst&>(inst);
+            loadValueToReg(*arcRelease.getPtr(), getParamReg(0));
+            m_out << "  call sph_arc_release\n";
             break;
         }
         case IROpcode::SetJmp: {

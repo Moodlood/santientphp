@@ -36,10 +36,14 @@ public:
     [[nodiscard]] const IRInstruction* getTerminator() const noexcept;
     [[nodiscard]] IRInstruction* getTerminator() noexcept;
 
+    [[nodiscard]] bool isLoopUnrolled() const noexcept { return m_loopUnrolled; }
+    void setLoopUnrolled(bool unrolled) noexcept { m_loopUnrolled = unrolled; }
+
 private:
     std::string m_name;
     IRFunction* m_parent;
     std::vector<std::shared_ptr<IRInstruction>> m_instructions;
+    bool m_loopUnrolled = false;
 };
 
 } // namespace sph

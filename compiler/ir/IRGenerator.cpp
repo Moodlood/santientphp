@@ -67,6 +67,10 @@ void IRGenerator::popScope() {
                     auto loadVal = std::make_shared<LoadInst>(slot, nextTemp());
                     emitInst(loadVal);
                     emitInst(std::make_shared<RcReleaseInst>(loadVal));
+                } else if (slot->getType()->isArc()) {
+                    auto loadVal = std::make_shared<LoadInst>(slot, nextTemp());
+                    emitInst(loadVal);
+                    emitInst(std::make_shared<ArcReleaseInst>(loadVal));
                 }
             }
             if (!m_activeBoxes.empty()) {
@@ -196,6 +200,18 @@ std::shared_ptr<Type> IRGenerator::resolveType(const std::string& rawName) const
         auto innerType = resolveType(inner);
         if (innerType) {
             return RcType::get(innerType);
+        }
+        return Type::getVoid();
+    }
+
+    // Check if Arc type: e.g. Arc<Point>
+    if (name.size() >= 5 && name.substr(0, 4) == "Arc<" && name.back() == '>') {
+        std::string inner = name.substr(4, name.size() - 5);
+        while (!inner.empty() && (inner.front() == ' ' || inner.front() == '\t')) inner.erase(0, 1);
+        while (!inner.empty() && (inner.back() == ' ' || inner.back() == '\t')) inner.pop_back();
+        auto innerType = resolveType(inner);
+        if (innerType) {
+            return ArcType::get(innerType);
         }
         return Type::getVoid();
     }
@@ -510,6 +526,12 @@ void IRGenerator::visit(FunctionDecl& node) {
             auto allocaInst = std::make_shared<AllocaInst>(param->getType(), "%var_" + origName);
             emitInst(allocaInst);
             emitInst(std::make_shared<RcRetainInst>(param));
+            emitInst(std::make_shared<StoreInst>(param, allocaInst));
+            setVariable(origName, allocaInst);
+        } else if (param->getType()->isArc()) {
+            auto allocaInst = std::make_shared<AllocaInst>(param->getType(), "%var_" + origName);
+            emitInst(allocaInst);
+            emitInst(std::make_shared<ArcRetainInst>(param));
             emitInst(std::make_shared<StoreInst>(param, allocaInst));
             setVariable(origName, allocaInst);
         } else if (param->getType()->isBox()) {
@@ -901,6 +923,10 @@ void IRGenerator::visit(VarDeclStmt& node) {
         if (dynamic_cast<VariableExpr*>(&node.getInitializer())) {
             emitInst(std::make_shared<RcRetainInst>(initVal));
         }
+    } else if (varType->isArc()) {
+        if (dynamic_cast<VariableExpr*>(&node.getInitializer())) {
+            emitInst(std::make_shared<ArcRetainInst>(initVal));
+        }
     }
 
     if (varType->isBox()) {
@@ -951,7 +977,7 @@ void IRGenerator::visit(ReturnStmt& node) {
     // Execute all deferred statements across all active scopes in LIFO order
     executeDeferredAcrossAllScopes();
 
-    // Release all Rc variables in all active scopes (except the returned variable if any)
+    // Release all Rc/Arc variables in all active scopes (except the returned variable if any)
     for (auto it = m_variableScopes.rbegin(); it != m_variableScopes.rend(); ++it) {
         for (const auto& [name, slot] : *it) {
             if (slot->getType()->isRc()) {
@@ -961,6 +987,13 @@ void IRGenerator::visit(ReturnStmt& node) {
                 auto loadVal = std::make_shared<LoadInst>(slot, nextTemp());
                 emitInst(loadVal);
                 emitInst(std::make_shared<RcReleaseInst>(loadVal));
+            } else if (slot->getType()->isArc()) {
+                if (!returnedVarName.empty() && name == returnedVarName) {
+                    continue;
+                }
+                auto loadVal = std::make_shared<LoadInst>(slot, nextTemp());
+                emitInst(loadVal);
+                emitInst(std::make_shared<ArcReleaseInst>(loadVal));
             }
         }
     }
@@ -1795,6 +1828,14 @@ void IRGenerator::visit(AssignExpr& node) {
                 emitInst(oldVal);
                 emitInst(std::make_shared<RcReleaseInst>(oldVal));
                 emitInst(std::make_shared<StoreInst>(val, slot));
+            } else if (slot->getType()->isArc()) {
+                if (dynamic_cast<VariableExpr*>(&node.getValue())) {
+                    emitInst(std::make_shared<ArcRetainInst>(val));
+                }
+                auto oldVal = std::make_shared<LoadInst>(slot, nextTemp());
+                emitInst(oldVal);
+                emitInst(std::make_shared<ArcReleaseInst>(oldVal));
+                emitInst(std::make_shared<StoreInst>(val, slot));
             } else if (slot->getType()->isBox()) {
                 auto oldVal = std::make_shared<LoadInst>(slot, nextTemp());
                 emitInst(oldVal);
@@ -1851,6 +1892,9 @@ void IRGenerator::visit(AssignExpr& node) {
             if (basePtr->getType()->isRc()) {
                 auto rcType = std::static_pointer_cast<RcType>(basePtr->getType());
                 structType = std::static_pointer_cast<StructType>(rcType->getInnerType());
+            } else if (basePtr->getType()->isArc()) {
+                auto arcType = std::static_pointer_cast<ArcType>(basePtr->getType());
+                structType = std::static_pointer_cast<StructType>(arcType->getInnerType());
             } else if (basePtr->getType()->isBox()) {
                 auto boxType = std::static_pointer_cast<BoxType>(basePtr->getType());
                 structType = std::static_pointer_cast<StructType>(boxType->getInnerType());
@@ -2060,6 +2104,9 @@ void IRGenerator::visit(MemberAccessExpr& node) {
     if (baseVal->getType()->isRc()) {
         auto rcType = std::static_pointer_cast<RcType>(baseVal->getType());
         structType = std::static_pointer_cast<StructType>(rcType->getInnerType());
+    } else if (baseVal->getType()->isArc()) {
+        auto arcType = std::static_pointer_cast<ArcType>(baseVal->getType());
+        structType = std::static_pointer_cast<StructType>(arcType->getInnerType());
     } else if (baseVal->getType()->isBox()) {
         auto boxType = std::static_pointer_cast<BoxType>(baseVal->getType());
         structType = std::static_pointer_cast<StructType>(boxType->getInnerType());
@@ -3445,6 +3492,12 @@ void IRGenerator::visit(ClassDecl& node) {
             emitInst(std::make_shared<RcRetainInst>(param));
             emitInst(std::make_shared<StoreInst>(param, allocaInst));
             setVariable(origName, allocaInst);
+        } else if (param->getType()->isArc()) {
+            auto allocaInst = std::make_shared<AllocaInst>(param->getType(), "%var_" + origName);
+            emitInst(allocaInst);
+            emitInst(std::make_shared<ArcRetainInst>(param));
+            emitInst(std::make_shared<StoreInst>(param, allocaInst));
+            setVariable(origName, allocaInst);
         } else if (param->getType()->isBox()) {
             auto allocaInst = std::make_shared<AllocaInst>(param->getType(), "%var_" + origName);
             emitInst(allocaInst);
@@ -4233,6 +4286,67 @@ void IRGenerator::visit(RcCountExpr& node) {
     auto callInst = std::make_shared<CallInst>("sph_rc_count", std::vector<std::shared_ptr<IRValue>>{ptrVal}, Type::getI64(), nextTemp());
     emitInst(callInst);
     m_lastValue = callInst;
+}
+
+void IRGenerator::visit(ArcNewExpr& node) {
+    auto innerType = node.getValue().getInferredType();
+    if (!innerType) {
+        innerType = Type::getVoid();
+    }
+    size_t allocSize = innerType->getSize();
+    if (allocSize == 0) allocSize = 1;
+
+    auto arcPtr = std::make_shared<ArcAllocInst>(innerType, allocSize, nextTemp());
+    emitInst(arcPtr);
+
+    if (auto* structInit = dynamic_cast<StructInitExpr*>(&node.getValue())) {
+        auto structType = std::static_pointer_cast<StructType>(innerType);
+        for (auto& f : structInit->getFields()) {
+            const auto* member = structType->findMember(f.first);
+            int fieldIdx = structType->getMemberIndex(f.first);
+            f.second->accept(*this);
+            auto val = m_lastValue;
+
+            auto fieldPtr = std::make_shared<GetFieldPtrInst>(arcPtr, fieldIdx, member->offset, member->type, nextTemp());
+            emitInst(fieldPtr);
+            emitInst(std::make_shared<StoreInst>(val, fieldPtr));
+        }
+    } else {
+        node.getValue().accept(*this);
+        auto val = m_lastValue;
+        if (innerType->isStruct() || innerType->isClass()) {
+            auto structType = std::static_pointer_cast<StructType>(innerType);
+            for (size_t i = 0; i < structType->getMembers().size(); ++i) {
+                const auto& m = structType->getMembers()[i];
+                auto srcPtr = std::make_shared<GetFieldPtrInst>(val, i, m.offset, m.type, nextTemp());
+                emitInst(srcPtr);
+                auto fVal = std::make_shared<LoadInst>(srcPtr, nextTemp());
+                emitInst(fVal);
+                auto dstPtr = std::make_shared<GetFieldPtrInst>(arcPtr, i, m.offset, m.type, nextTemp());
+                emitInst(dstPtr);
+                emitInst(std::make_shared<StoreInst>(fVal, dstPtr));
+            }
+        } else {
+            emitInst(std::make_shared<StoreInst>(val, arcPtr));
+        }
+    }
+
+    m_lastValue = arcPtr;
+}
+
+void IRGenerator::visit(ArcCountExpr& node) {
+    node.getPointer().accept(*this);
+    auto ptrVal = m_lastValue;
+    auto callInst = std::make_shared<CallInst>("sph_arc_count", std::vector<std::shared_ptr<IRValue>>{ptrVal}, Type::getI64(), nextTemp());
+    emitInst(callInst);
+    m_lastValue = callInst;
+}
+
+void IRGenerator::visit(ArcCloneExpr& node) {
+    node.getPointer().accept(*this);
+    auto ptrVal = m_lastValue;
+    emitInst(std::make_shared<ArcRetainInst>(ptrVal));
+    m_lastValue = ptrVal;
 }
 
 void IRGenerator::visit(BoxNewExpr& node) {

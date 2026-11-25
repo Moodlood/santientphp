@@ -47,6 +47,20 @@ void sph_rc_release(void* ptr);
 int64_t sph_rc_count(void* ptr);
 
 // ============================================================================
+// Atomic Reference Counted Smart Pointers (Arc<T>)
+// ============================================================================
+
+typedef struct {
+    int64_t ref_count;
+    int64_t _reserved;
+} sph_arc_header;
+
+void* sph_arc_alloc(int64_t size);
+void sph_arc_retain(void* ptr);
+void sph_arc_release(void* ptr);
+int64_t sph_arc_count(void* ptr);
+
+// ============================================================================
 // Arena Region Allocator
 // ============================================================================
 

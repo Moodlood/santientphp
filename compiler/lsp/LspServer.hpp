@@ -53,17 +53,23 @@ private:
     JsonValue handleCompletion(const JsonValue& id, const JsonValue& params);
     JsonValue handleDefinition(const JsonValue& id, const JsonValue& params);
     JsonValue handleDocumentSymbol(const JsonValue& id, const JsonValue& params);
+    JsonValue handlePrepareRename(const JsonValue& id, const JsonValue& params);
+    JsonValue handleRename(const JsonValue& id, const JsonValue& params);
+    JsonValue handleSignatureHelp(const JsonValue& id, const JsonValue& params);
 
     // Diagnostics publication
     void publishDiagnostics(const std::string& uri, const std::string& text, std::ostream* out);
 
     // Helpers
+    [[nodiscard]] std::vector<std::pair<std::string, std::string>> collectWorkspaceDocuments(const std::string& primaryUri) const;
     static void sendFramedMessage(std::ostream& out, const std::string& payload);
     static std::string formatResponse(const JsonValue& id, const JsonValue& result);
     static std::string formatError(const JsonValue& id, int code, const std::string& message);
     static std::string formatNotification(const std::string& method, const JsonValue& params);
 
     static std::string getWordAtPosition(const std::string& text, int line, int character);
+    static bool getWordRangeAtPosition(const std::string& text, int line, int character,
+                                       std::string& outWord, int& outStartChar, int& outEndChar);
     static std::string getLine(const std::string& text, int line);
 };
 

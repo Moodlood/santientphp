@@ -5,13 +5,21 @@
 
 [CmdletBinding()]
 param(
-    [string]$Version = "0.2.1",
+    [string]$Version = "",
     [string]$OutputDir = "dist"
 )
 
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = (Get-Item $PSScriptRoot).Parent.FullName
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    $VersionFile = Join-Path $RepoRoot "VERSION"
+    if (Test-Path $VersionFile) {
+        $Version = (Get-Content $VersionFile -TotalCount 1).Trim()
+    } else {
+        $Version = "0.2.2"
+    }
+}
 $SphcBin = Join-Path $RepoRoot "build\bin\sphc.exe"
 
 if (-not (Test-Path $SphcBin)) {

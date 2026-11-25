@@ -1,8 +1,22 @@
 cmake_minimum_required(VERSION 3.20)
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" SPH_PROJECT_VERSION LIMIT_COUNT 1)
+string(STRIP "${SPH_PROJECT_VERSION}" SPH_PROJECT_VERSION)
 project(SantientPHP
-    VERSION 0.2.1
+    VERSION ${SPH_PROJECT_VERSION}
     DESCRIPTION "SantientPHP Compiler"
     LANGUAGES C CXX
+)
+
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/compiler/Version.hpp.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/compiler/Version.hpp"
+    @ONLY
+)
+set(SPH_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/sphc.ico")
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/sphc/sphc.rc.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/sphc.rc"
+    @ONLY
 )
 
 set(CMAKE_CXX_STANDARD 20)
@@ -14,11 +28,22 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
+set(SPH_SANITIZE "" CACHE STRING "Enable sanitizers: address (ASan+UBSan), thread (TSan)")
+
 if(MSVC)
     add_compile_options(/W4 /permissive-)
 else()
     add_compile_options(-Wall -Wextra)
     add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-Wpedantic>)
+    if(SPH_SANITIZE STREQUAL "address")
+        add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer -O1)
+        add_link_options(-fsanitize=address,undefined)
+        add_compile_definitions(SPH_SANITIZE_LINK_FLAGS="-fsanitize=address,undefined")
+    elseif(SPH_SANITIZE STREQUAL "thread")
+        add_compile_options(-fsanitize=thread -fno-omit-frame-pointer -O1)
+        add_link_options(-fsanitize=thread)
+        add_compile_definitions(SPH_SANITIZE_LINK_FLAGS="-fsanitize=thread")
+    endif()
 endif()
 
 find_package(Threads)
@@ -60,6 +85,20 @@ target_include_directories(sph_runtime_compat PUBLIC
 )
 set_target_properties(sph_runtime_compat PROPERTIES OUTPUT_NAME "sph_compat")
 
+# 3b. Networking & HTTP Runtime (libsph_net.a: net, websocket, epoll)
+add_library(sph_runtime_net STATIC
+    runtime/net/net.c
+    runtime/net/websocket.h
+    runtime/net/websocket.c
+    runtime/net/epoll_engine.h
+    runtime/net/epoll_engine.c
+)
+target_include_directories(sph_runtime_net PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/runtime
+)
+set_target_properties(sph_runtime_net PROPERTIES OUTPUT_NAME "sph_net")
+
 # 4. Aggregate SPH Runtime Library (libsph_runtime.a)
 add_library(sph_runtime STATIC
     runtime/core/runtime.h
@@ -71,7 +110,7 @@ target_include_directories(sph_runtime PUBLIC
 )
 set_target_properties(sph_runtime PROPERTIES OUTPUT_NAME "sph_runtime")
 
-# 5. Native GUI Runtime (libsph_gui.a: Win32 controls, SIMD canvas, WebView bridge, WinMain shim)
+# 5. Native GUI Runtime (libsph_gui.a: Win32 controls, X11/GLX backend, SIMD canvas, WebView bridge)
 add_library(sph_runtime_gui STATIC
     runtime/gui/gui.h
     runtime/gui/gui.c
@@ -81,6 +120,32 @@ target_include_directories(sph_runtime_gui PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/runtime
 )
 set_target_properties(sph_runtime_gui PROPERTIES OUTPUT_NAME "sph_gui")
+
+if(UNIX AND NOT APPLE)
+    find_package(X11 QUIET)
+    find_package(OpenGL QUIET)
+    if(X11_FOUND)
+        target_compile_definitions(sph_runtime_gui PUBLIC SPH_HAS_X11=1)
+        target_include_directories(sph_runtime_gui PUBLIC ${X11_INCLUDE_DIR})
+        target_link_libraries(sph_runtime_gui PUBLIC ${X11_LIBRARIES})
+    endif()
+    if(OPENGL_FOUND)
+        target_compile_definitions(sph_runtime_gui PUBLIC SPH_HAS_GLX=1)
+        target_include_directories(sph_runtime_gui PUBLIC ${OPENGL_INCLUDE_DIR})
+        target_link_libraries(sph_runtime_gui PUBLIC ${OPENGL_LIBRARIES})
+    endif()
+endif()
+
+# Enable section-level dead-code stripping & fast runtime execution for all runtime archives
+if(NOT MSVC)
+    foreach(_rt_target sph_runtime_core sph_runtime_async sph_runtime_compat sph_runtime_net sph_runtime sph_runtime_gui)
+        target_compile_options(${_rt_target} PRIVATE
+            -ffunction-sections
+            -fdata-sections
+            $<$<NOT:$<CONFIG:Debug>>:-O2>
+        )
+    endforeach()
+endif()
 
 # Core compiler static library
 add_library(sphc_core STATIC
@@ -162,6 +227,8 @@ add_library(sphc_core STATIC
     compiler/optimizer/StrengthReductionPass.cpp
     compiler/optimizer/LoopInvariantCodeMotionPass.hpp
     compiler/optimizer/LoopInvariantCodeMotionPass.cpp
+    compiler/optimizer/LoopUnrollPass.hpp
+    compiler/optimizer/LoopUnrollPass.cpp
     compiler/optimizer/CommonSubexpressionEliminationPass.hpp
     compiler/optimizer/CommonSubexpressionEliminationPass.cpp
     compiler/optimizer/ControlFlowOptimizationPass.hpp
@@ -198,12 +265,13 @@ add_library(sphc_core STATIC
 
 target_include_directories(sphc_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_BINARY_DIR}/generated
 )
 
 # Compiler CLI driver: sphc
 set(SPHC_EXTRA_SOURCES "")
 if(WIN32)
-    set(SPHC_EXTRA_SOURCES tools/sphc/sphc.rc)
+    set(SPHC_EXTRA_SOURCES "${CMAKE_CURRENT_BINARY_DIR}/generated/sphc.rc")
 endif()
 
 add_executable(sphc
@@ -215,7 +283,17 @@ target_link_libraries(sphc PRIVATE sphc_core)
 if(UNIX AND NOT APPLE)
     target_link_libraries(sphc PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
 endif()
-add_dependencies(sphc sph_runtime sph_runtime_core sph_runtime_async sph_runtime_compat sph_runtime_gui)
+add_dependencies(sphc sph_runtime sph_runtime_core sph_runtime_async sph_runtime_compat sph_runtime_net sph_runtime_gui)
+
+# Differential IR & Codegen Fuzzer
+add_executable(sph_diff_fuzz
+    tools/fuzz/fuzz_ir_diff.cpp
+)
+target_link_libraries(sph_diff_fuzz PRIVATE sphc_core)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(sph_diff_fuzz PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+endif()
+add_dependencies(sph_diff_fuzz sph_runtime_core)
 
 # Test Suite
 enable_testing()
@@ -274,6 +352,12 @@ if(WIN32)
 endif()
 if(UNIX AND NOT APPLE)
     target_link_libraries(sph_tests PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+    if(X11_FOUND)
+        target_link_libraries(sph_tests PRIVATE ${X11_LIBRARIES})
+    endif()
+    if(OPENGL_FOUND)
+        target_link_libraries(sph_tests PRIVATE ${OPENGL_LIBRARIES})
+    endif()
 endif()
 target_include_directories(sph_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 add_dependencies(sph_tests sph_runtime sph_runtime_gui)
@@ -290,7 +374,7 @@ install(TARGETS sphc
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
-install(TARGETS sph_runtime sph_runtime_core sph_runtime_async sph_runtime_compat sph_runtime_gui sphc_core
+install(TARGETS sph_runtime sph_runtime_core sph_runtime_async sph_runtime_compat sph_runtime_net sph_runtime_gui sphc_core
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )

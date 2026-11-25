@@ -238,6 +238,15 @@ bool IRVerifier::verify(const IRBasicBlock& bb, const IRFunction& fn, std::vecto
                 }
                 break;
             }
+            case IROpcode::Alloca: {
+                const auto& allocaInst = static_cast<const AllocaInst&>(*inst);
+                if (!allocaInst.getAllocatedType() || allocaInst.getAllocatedType()->isVoid()) {
+                    errors.push_back("alloca instruction in block '" + bb.getName() +
+                                     "' must have a non-void allocated type");
+                    ok = false;
+                }
+                break;
+            }
             case IROpcode::AddressOf: {
                 const auto& addrInst = static_cast<const AddressOfInst&>(*inst);
                 if (!addrInst.getTarget()) {
@@ -269,6 +278,30 @@ bool IRVerifier::verify(const IRBasicBlock& bb, const IRFunction& fn, std::vecto
                 const auto& rcRelease = static_cast<const RcReleaseInst&>(*inst);
                 if (!rcRelease.getPtr()) {
                     errors.push_back("rc_release instruction has null pointer");
+                    ok = false;
+                }
+                break;
+            }
+            case IROpcode::ArcAlloc: {
+                const auto& arcAlloc = static_cast<const ArcAllocInst&>(*inst);
+                if (!arcAlloc.getType()->isArc()) {
+                    errors.push_back("arc_alloc instruction result type must be Arc<T>");
+                    ok = false;
+                }
+                break;
+            }
+            case IROpcode::ArcRetain: {
+                const auto& arcRetain = static_cast<const ArcRetainInst&>(*inst);
+                if (!arcRetain.getPtr()) {
+                    errors.push_back("arc_retain instruction has null pointer");
+                    ok = false;
+                }
+                break;
+            }
+            case IROpcode::ArcRelease: {
+                const auto& arcRelease = static_cast<const ArcReleaseInst&>(*inst);
+                if (!arcRelease.getPtr()) {
+                    errors.push_back("arc_release instruction has null pointer");
                     ok = false;
                 }
                 break;

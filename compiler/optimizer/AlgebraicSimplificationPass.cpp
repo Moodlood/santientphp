@@ -1,5 +1,6 @@
 #include "AlgebraicSimplificationPass.hpp"
 #include <bit>
+#include <unordered_map>
 
 namespace sph {
 
@@ -183,9 +184,91 @@ std::shared_ptr<IRValue> AlgebraicSimplificationPass::simplifyBinary(BinaryInst&
 bool AlgebraicSimplificationPass::runOnFunction(IRFunction& fn) {
     bool changed = false;
 
+    // Count instruction uses across the function to avoid duplicating shared multipliers.
+    std::unordered_map<const IRValue*, size_t> useCounts;
+    for (const auto& bb : fn.getBlocks()) {
+        for (const auto& inst : bb->getInstructions()) {
+            for (const auto* op : getInstructionOperands(*inst)) {
+                if (op) useCounts[op]++;
+            }
+        }
+    }
+
+    auto matchScaled = [](const std::shared_ptr<IRValue>& v,
+                          std::shared_ptr<IRValue>& outTerm,
+                          std::shared_ptr<IRValue>& outScale,
+                          bool& outIsShift) -> bool {
+        auto* bin = dynamic_cast<BinaryInst*>(v.get());
+        if (!bin || !bin->getType() || !bin->getType()->isInteger() || bin->getType()->isBoolean()) {
+            return false;
+        }
+        if (bin->getOpcode() == IROpcode::Mul) {
+            outTerm = bin->getLhs();
+            outScale = bin->getRhs();
+            outIsShift = false;
+            return outTerm && outScale;
+        }
+        if (bin->getOpcode() == IROpcode::ShiftLeft) {
+            if (auto* ci = dynamic_cast<const ConstantInt*>(bin->getRhs().get())) {
+                outTerm = bin->getLhs();
+                outScale = bin->getRhs();
+                outIsShift = true;
+                return outTerm && ci != nullptr;
+            }
+        }
+        return false;
+    };
+
+    size_t factorCounter = 0;
+
     for (auto& bb : fn.getBlocks()) {
         auto& instructions = bb->getInstructions();
-        for (auto& inst : instructions) {
+        for (size_t idx = 0; idx < instructions.size(); ++idx) {
+            auto& inst = instructions[idx];
+
+            // Factor distributive integer patterns:
+            //   (a * k) + (b * k) -> (a + b) * k (including commutative operand orders)
+            //   (a << c) + (b << c) -> (a + b) << c
+            if (inst->getOpcode() == IROpcode::Add && inst->getType() &&
+                inst->getType()->isInteger() && !inst->getType()->isBoolean()) {
+                auto bin = std::static_pointer_cast<BinaryInst>(inst);
+                auto lhsVal = bin->getLhs();
+                auto rhsVal = bin->getRhs();
+                std::shared_ptr<IRValue> x1, y1, x2, y2;
+                bool shift1 = false, shift2 = false;
+                if (matchScaled(lhsVal, x1, y1, shift1) && matchScaled(rhsVal, x2, y2, shift2) &&
+                    shift1 == shift2 && lhsVal.get() != rhsVal.get() &&
+                    useCounts[lhsVal.get()] <= 1 && useCounts[rhsVal.get()] <= 1) {
+                    std::shared_ptr<IRValue> a, b, common;
+                    if (!shift1) {
+                        if (x1.get() == x2.get())      { a = y1; b = y2; common = x1; }
+                        else if (x1.get() == y2.get()) { a = y1; b = x2; common = x1; }
+                        else if (y1.get() == x2.get()) { a = x1; b = y2; common = y1; }
+                        else if (y1.get() == y2.get()) { a = x1; b = x2; common = y1; }
+                    } else {
+                        auto* c1 = dynamic_cast<const ConstantInt*>(y1.get());
+                        auto* c2 = dynamic_cast<const ConstantInt*>(y2.get());
+                        if (c1 && c2 && c1->getValue() == c2->getValue()) {
+                            a = x1; b = x2; common = y1;
+                        }
+                    }
+
+                    if (common && a && b) {
+                        auto sumInst = std::make_shared<BinaryInst>(
+                            IROpcode::Add, a, b, bin->getType(),
+                            ".factor." + std::to_string(factorCounter++));
+                        sumInst->setParent(bb.get());
+                        bin->setOpcode(shift1 ? IROpcode::ShiftLeft : IROpcode::Mul);
+                        bin->setLhs(sumInst);
+                        bin->setRhs(common);
+                        bb->insertInstruction(idx, sumInst);
+                        ++idx; // Advance past inserted sumInst
+                        changed = true;
+                        continue;
+                    }
+                }
+            }
+
             if (inst->getOpcode() >= IROpcode::Add && inst->getOpcode() <= IROpcode::ShiftRight) {
                 auto bin = std::static_pointer_cast<BinaryInst>(inst);
                 bool inPlaceChanged = false;

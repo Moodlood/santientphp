@@ -36,6 +36,8 @@ static bool isCloneableInstruction(const IRInstruction& inst) noexcept {
         case IROpcode::Ret:
         case IROpcode::RcRetain:
         case IROpcode::RcAlloc:
+        case IROpcode::ArcRetain:
+        case IROpcode::ArcAlloc:
             return true;
         default:
             return false;
@@ -203,6 +205,18 @@ bool FunctionInliningPass::inlineFunctionCall(IRFunction& caller, size_t blockId
             case IROpcode::RcAlloc: {
                 const auto& orig = static_cast<const RcAllocInst&>(*cInst);
                 cloned = std::make_shared<RcAllocInst>(orig.getInnerType(), orig.getAllocSize(), newName);
+                break;
+            }
+            case IROpcode::ArcRetain: {
+                const auto& orig = static_cast<const ArcRetainInst&>(*cInst);
+                auto ptr = orig.getPtr();
+                if (valueMap.count(ptr.get())) ptr = valueMap[ptr.get()];
+                cloned = std::make_shared<ArcRetainInst>(ptr);
+                break;
+            }
+            case IROpcode::ArcAlloc: {
+                const auto& orig = static_cast<const ArcAllocInst&>(*cInst);
+                cloned = std::make_shared<ArcAllocInst>(orig.getInnerType(), orig.getAllocSize(), newName);
                 break;
             }
             default:

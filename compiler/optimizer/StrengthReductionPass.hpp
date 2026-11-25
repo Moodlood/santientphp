@@ -14,6 +14,8 @@ public:
 
 private:
     std::shared_ptr<IRValue> reduceBinary(BinaryInst& bin, bool& inPlaceChanged);
+    bool reduceLoopInductionVars(IRFunction& fn);
+    size_t m_lsrCounter = 0;
 };
 
 } // namespace sph

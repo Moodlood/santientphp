@@ -59,15 +59,81 @@ bool Mem2RegPass::runOnFunction(IRFunction& function) {
     IRBasicBlock* entry = function.getEntryBlock();
     if (!entry) entry = function.getBlocks().front().get();
 
+    auto isPromotableType = [](const std::shared_ptr<Type>& allocType) {
+        return allocType && (allocType->isInteger() || allocType->isFloatingPoint() ||
+                             allocType->isBoolean() || allocType->isPointer() ||
+                             allocType->isBox() || allocType->isString());
+    };
+
+    // Hoist non-escaped promotable AllocaInsts emitted inside non-entry blocks (e.g. loop bodies)
+    // to the entry block when the defining block initializes them before any load, so Mem2Reg can
+    // promote them to SSA values across -O1..-O3.
+    DominatorTree preDomTree(function);
+    for (const auto& bb : function.getBlocks()) {
+        if (!bb || bb.get() == entry || !preDomTree.isReachable(bb.get())) continue;
+        auto& insts = bb->getInstructions();
+        for (size_t idx = 0; idx < insts.size(); ) {
+            if (insts[idx] && insts[idx]->getOpcode() == IROpcode::Alloca) {
+                auto allocaInst = std::static_pointer_cast<AllocaInst>(insts[idx]);
+                if (!escapedAllocas.count(allocaInst.get()) && isPromotableType(allocaInst->getAllocatedType())) {
+                    // Verify all uses of this alloca are dominated by bb and a Store in bb precedes any Load in bb
+                    bool seenStoreInBB = false;
+                    bool safeToHoist = true;
+                    for (size_t j = idx + 1; j < insts.size(); ++j) {
+                        if (!insts[j]) continue;
+                        if (insts[j]->getOpcode() == IROpcode::Store) {
+                            auto* st = static_cast<const StoreInst*>(insts[j].get());
+                            if (st->getPointer().get() == allocaInst.get()) {
+                                seenStoreInBB = true;
+                            }
+                        } else if (insts[j]->getOpcode() == IROpcode::Load) {
+                            auto* ld = static_cast<const LoadInst*>(insts[j].get());
+                            if (ld->getPointer().get() == allocaInst.get() && !seenStoreInBB) {
+                                safeToHoist = false;
+                                break;
+                            }
+                        }
+                    }
+                    if (safeToHoist && seenStoreInBB) {
+                        for (const auto& otherBb : function.getBlocks()) {
+                            if (!otherBb || otherBb.get() == bb.get()) continue;
+                            for (const auto& otherInst : otherBb->getInstructions()) {
+                                if (!otherInst) continue;
+                                for (const auto* op : getInstructionOperands(*otherInst)) {
+                                    if (op == allocaInst.get() && !preDomTree.dominates(bb.get(), otherBb.get())) {
+                                        safeToHoist = false;
+                                        break;
+                                    }
+                                }
+                                if (!safeToHoist) break;
+                            }
+                            if (!safeToHoist) break;
+                        }
+                    } else {
+                        safeToHoist = false;
+                    }
+
+                    if (safeToHoist) {
+                        size_t insertPos = 0;
+                        const auto& entryInsts = entry->getInstructions();
+                        while (insertPos < entryInsts.size() && entryInsts[insertPos]->getOpcode() == IROpcode::Alloca) {
+                            ++insertPos;
+                        }
+                        bb->moveInstructionTo(*entry, idx, insertPos);
+                        continue; // insts[idx] is now the next instruction
+                    }
+                }
+            }
+            ++idx;
+        }
+    }
+
     for (const auto& inst : entry->getInstructions()) {
         if (inst->getOpcode() == IROpcode::Alloca) {
             auto* alloca = static_cast<AllocaInst*>(inst.get());
             if (!escapedAllocas.count(alloca)) {
                 // Must be scalar or pointer (not big struct/array)
-                auto allocType = alloca->getAllocatedType();
-                if (allocType->isInteger() || allocType->isFloatingPoint() ||
-                    allocType->isBoolean() || allocType->isPointer() ||
-                    allocType->isBox()) {
+                if (isPromotableType(alloca->getAllocatedType())) {
                     candidates.push_back(alloca);
                 }
             }
@@ -84,19 +150,49 @@ bool Mem2RegPass::runOnFunction(IRFunction& function) {
 
     for (auto* alloca : candidates) {
         std::unordered_set<IRBasicBlock*> defBlocks;
+        std::unordered_set<IRBasicBlock*> upwardUseBlocks;
+
         for (const auto& bb : function.getBlocks()) {
+            if (!bb || !domTree.isReachable(bb.get())) continue;
+            bool killedBeforeLoad = false;
             for (const auto& inst : bb->getInstructions()) {
-                if (inst->getOpcode() == IROpcode::Store) {
+                if (!inst) continue;
+                if (inst->getOpcode() == IROpcode::Load) {
+                    auto* load = static_cast<const LoadInst*>(inst.get());
+                    if (load->getPointer().get() == alloca && !killedBeforeLoad) {
+                        upwardUseBlocks.insert(bb.get());
+                    }
+                } else if (inst->getOpcode() == IROpcode::Store) {
                     auto* store = static_cast<const StoreInst*>(inst.get());
                     if (store->getPointer().get() == alloca) {
                         defBlocks.insert(bb.get());
+                        killedBeforeLoad = true;
                     }
+                }
+            }
+        }
+
+        // Compute blocks where this alloca is live-in (Pruned SSA)
+        std::unordered_set<IRBasicBlock*> liveInBlocks;
+        std::vector<IRBasicBlock*> liveWorklist(upwardUseBlocks.begin(), upwardUseBlocks.end());
+        for (auto* ub : upwardUseBlocks) {
+            liveInBlocks.insert(ub);
+        }
+        while (!liveWorklist.empty()) {
+            auto* cur = liveWorklist.back();
+            liveWorklist.pop_back();
+            for (auto* pred : getPredecessors(*cur, function)) {
+                if (!pred || !domTree.isReachable(pred)) continue;
+                // Live-in to cur means live-out of pred; if pred doesn't kill (define) alloca, it's live-in to pred
+                if (!defBlocks.count(pred) && liveInBlocks.insert(pred).second) {
+                    liveWorklist.push_back(pred);
                 }
             }
         }
 
         auto idf = domTree.computeIDF(defBlocks);
         for (auto* bb : idf) {
+            if (!liveInBlocks.count(bb)) continue; // Prune dead Phis
             auto phi = std::make_shared<PhiInst>(
                 alloca->getAllocatedType(),
                 alloca->getName().empty() ? "phi" : (alloca->getName() + ".phi"));

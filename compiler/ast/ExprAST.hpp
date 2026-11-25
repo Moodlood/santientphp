@@ -456,6 +456,48 @@ private:
     std::unique_ptr<ExprAST> m_pointer;
 };
 
+class ArcNewExpr : public ExprAST {
+public:
+    ArcNewExpr(std::unique_ptr<ExprAST> value, SourceSpan span)
+        : ExprAST(span), m_value(std::move(value)) {}
+
+    [[nodiscard]] const ExprAST& getValue() const noexcept { return *m_value; }
+    [[nodiscard]] ExprAST& getValue() noexcept { return *m_value; }
+
+    void accept(ASTVisitor& visitor) override { visitor.visit(*this); }
+
+private:
+    std::unique_ptr<ExprAST> m_value;
+};
+
+class ArcCountExpr : public ExprAST {
+public:
+    ArcCountExpr(std::unique_ptr<ExprAST> pointer, SourceSpan span)
+        : ExprAST(span), m_pointer(std::move(pointer)) {}
+
+    [[nodiscard]] const ExprAST& getPointer() const noexcept { return *m_pointer; }
+    [[nodiscard]] ExprAST& getPointer() noexcept { return *m_pointer; }
+
+    void accept(ASTVisitor& visitor) override { visitor.visit(*this); }
+
+private:
+    std::unique_ptr<ExprAST> m_pointer;
+};
+
+class ArcCloneExpr : public ExprAST {
+public:
+    ArcCloneExpr(std::unique_ptr<ExprAST> pointer, SourceSpan span)
+        : ExprAST(span), m_pointer(std::move(pointer)) {}
+
+    [[nodiscard]] const ExprAST& getPointer() const noexcept { return *m_pointer; }
+    [[nodiscard]] ExprAST& getPointer() noexcept { return *m_pointer; }
+
+    void accept(ASTVisitor& visitor) override { visitor.visit(*this); }
+
+private:
+    std::unique_ptr<ExprAST> m_pointer;
+};
+
 class BoxNewExpr : public ExprAST {
 public:
     BoxNewExpr(std::unique_ptr<ExprAST> value, SourceSpan span)

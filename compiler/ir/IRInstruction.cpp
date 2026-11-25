@@ -40,6 +40,9 @@ const char* opcodeToString(IROpcode op) noexcept {
         case IROpcode::RcAlloc:      return "rc_alloc";
         case IROpcode::RcRetain:     return "rc_retain";
         case IROpcode::RcRelease:    return "rc_release";
+        case IROpcode::ArcAlloc:     return "arc_alloc";
+        case IROpcode::ArcRetain:    return "arc_retain";
+        case IROpcode::ArcRelease:   return "arc_release";
         case IROpcode::SetJmp:       return "setjmp";
     }
     return "unknown";
@@ -201,6 +204,22 @@ bool replaceOperandInInstruction(IRInstruction& inst, const IRValue* oldVal, std
             }
             break;
         }
+        case IROpcode::ArcRetain: {
+            auto& arc = static_cast<ArcRetainInst&>(inst);
+            if (arc.getPtr().get() == oldVal) {
+                arc.setPtr(newVal);
+                replaced = true;
+            }
+            break;
+        }
+        case IROpcode::ArcRelease: {
+            auto& arc = static_cast<ArcReleaseInst&>(inst);
+            if (arc.getPtr().get() == oldVal) {
+                arc.setPtr(newVal);
+                replaced = true;
+            }
+            break;
+        }
         case IROpcode::SetJmp: {
             auto& sj = static_cast<SetJmpInst&>(inst);
             if (sj.getFramePtr().get() == oldVal) {
@@ -317,6 +336,16 @@ std::vector<const IRValue*> getInstructionOperands(const IRInstruction& inst) {
         case IROpcode::RcRelease: {
             const auto& rc = static_cast<const RcReleaseInst&>(inst);
             if (rc.getPtr()) operands.push_back(rc.getPtr().get());
+            break;
+        }
+        case IROpcode::ArcRetain: {
+            const auto& arc = static_cast<const ArcRetainInst&>(inst);
+            if (arc.getPtr()) operands.push_back(arc.getPtr().get());
+            break;
+        }
+        case IROpcode::ArcRelease: {
+            const auto& arc = static_cast<const ArcReleaseInst&>(inst);
+            if (arc.getPtr()) operands.push_back(arc.getPtr().get());
             break;
         }
         case IROpcode::SetJmp: {

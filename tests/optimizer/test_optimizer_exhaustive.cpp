@@ -12,6 +12,8 @@
 #include "compiler/optimizer/DeadStoreEliminationPass.hpp"
 #include "compiler/optimizer/FunctionInliningPass.hpp"
 #include "compiler/optimizer/LoopInvariantCodeMotionPass.hpp"
+#include "compiler/optimizer/LoopUnrollPass.hpp"
+#include "compiler/optimizer/Mem2RegPass.hpp"
 #include "compiler/optimizer/PassManager.hpp"
 #include "compiler/optimizer/StoreToLoadForwardingPass.hpp"
 #include "compiler/optimizer/StrengthReductionPass.hpp"
@@ -905,5 +907,66 @@ TEST_CASE("OptimizerExhaustive: 550 Bitwise OR of identical variable x | x") {
     CHECK(mod != nullptr);
     auto pm = sph::PassManager::createForLevel(sph::OptimizationLevel::O2);
     CHECK(pm.run(*mod));
+}
+
+TEST_CASE("OptimizerExhaustive: 551 Distributive factoring (a * k) + (b * k) -> (a + b) * k") {
+    auto mod = compileToIR("<?php fn test(a: i32, b: i32, k: i32): i32 { return (a * k) + (b * k); }");
+    CHECK(mod != nullptr);
+    auto* fn = mod->getFunction("test");
+    CHECK(fn != nullptr);
+    sph::Mem2RegPass mem2reg;
+    mem2reg.runOnFunction(*fn);
+    sph::AlgebraicSimplificationPass pass;
+    CHECK(pass.runOnFunction(*fn));
+}
+
+TEST_CASE("OptimizerExhaustive: 552 Loop Strength Reduction eliminates induction-var multiply") {
+    auto mod = compileToIR(
+        "<?php\n"
+        "fn sum_scaled(n: i32, scale: i32): i32 {\n"
+        "    mut total: i32 = 0;\n"
+        "    mut i: i32 = 0;\n"
+        "    while (i < n) {\n"
+        "        total = total + (i * scale);\n"
+        "        i = i + 1;\n"
+        "    }\n"
+        "    return total;\n"
+        "}");
+    CHECK(mod != nullptr);
+    auto pm = sph::PassManager::createForLevel(sph::OptimizationLevel::O2);
+    pm.setVerifyEachPass(true);
+    CHECK(pm.run(*mod));
+    auto* fn = mod->getFunction("sum_scaled");
+    CHECK(fn != nullptr);
+    int mulCount = 0;
+    for (const auto& bb : fn->getBlocks()) {
+        for (const auto& inst : bb->getInstructions()) {
+            if (inst->getOpcode() == sph::IROpcode::Mul) mulCount++;
+        }
+    }
+    CHECK_EQ(mulCount, 0);
+}
+
+TEST_CASE("OptimizerExhaustive: 553 LoopUnrollPass 4x partial unrolling is idempotent at -O3") {
+    auto mod = compileToIR(
+        "<?php\n"
+        "fn accum(n: i32): i32 {\n"
+        "    mut s: i32 = 0;\n"
+        "    mut i: i32 = 0;\n"
+        "    while (i < n) {\n"
+        "        s = s + i;\n"
+        "        i = i + 1;\n"
+        "    }\n"
+        "    return s;\n"
+        "}");
+    CHECK(mod != nullptr);
+    auto pm = sph::PassManager::createForLevel(sph::OptimizationLevel::O2);
+    pm.run(*mod);
+    auto* fn = mod->getFunction("accum");
+    CHECK(fn != nullptr);
+    sph::LoopUnrollPass unroll(4);
+    CHECK(unroll.runOnFunction(*fn));
+    // Second run must be a strict no-op (idempotent)
+    CHECK(!unroll.runOnFunction(*fn));
 }
 

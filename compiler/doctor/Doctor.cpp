@@ -1,4 +1,5 @@
 #include "Doctor.hpp"
+#include "compiler/Version.hpp"
 #include <array>
 #include <cstdio>
 #include <filesystem>
@@ -244,6 +245,23 @@ std::vector<ToolchainCheck> Doctor::runChecks() const {
     checks.push_back(ToolchainCheck{
         "Libraries", "Windows GUI Subsystems", guiLibDetails, guiLibsOk, false
     });
+#elif defined(__linux__)
+    bool hasX11Header = std::filesystem::exists("/usr/include/X11/Xlib.h") ||
+                        std::filesystem::exists("/usr/local/include/X11/Xlib.h");
+    bool hasGlxHeader = std::filesystem::exists("/usr/include/GL/glx.h") ||
+                        std::filesystem::exists("/usr/local/include/GL/glx.h");
+    std::string linuxGuiDetails;
+    if (hasX11Header) linuxGuiDetails += "libX11 (X11/Xlib.h)";
+    if (hasGlxHeader) {
+        if (!linuxGuiDetails.empty()) linuxGuiDetails += ", ";
+        linuxGuiDetails += "libGL/GLX (GL/glx.h)";
+    }
+    if (linuxGuiDetails.empty()) {
+        linuxGuiDetails = "libx11-dev / libgl1-mesa-dev not found (optional for headless CLI builds)";
+    }
+    checks.push_back(ToolchainCheck{
+        "Libraries", "Linux GUI Subsystems", linuxGuiDetails, hasX11Header, true
+    });
 #endif
 
     // 7. SantientPHP Runtime Sources
@@ -384,7 +402,7 @@ std::vector<ToolchainCheck> Doctor::runChecks() const {
 int Doctor::report(std::ostream& out) const {
     auto checks = runChecks();
 
-    out << "SantientPHP Doctor [v0.1.0]\n";
+    out << "SantientPHP Doctor [v" << SPH_VERSION_STRING << "]\n";
     out << "===========================\n";
 
     bool allRequiredHealthy = true;

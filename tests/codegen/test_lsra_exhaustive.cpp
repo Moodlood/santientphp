@@ -172,6 +172,42 @@ struct LsraExhaustiveRegistrar {
                 CHECK(lsra.hasRegister(base.get()) || lsra.isSpilled(base.get()));
             });
         }
+
+        // Loop Phi backedge copy coalescing verification
+        testing::TestRegistry::instance().registerTest(
+            "LsraExhaustive: Loop induction Phi coalesces with step value",
+            []() {
+                IRFunction fn("fn_lsra_phi_coalesce", Type::getI32());
+                auto entry = fn.createBlock("entry");
+                auto hdr = fn.createBlock("hdr");
+                auto body = fn.createBlock("body");
+                auto exitBb = fn.createBlock("exit");
+
+                entry->addInstruction(std::make_shared<BranchInst>(hdr));
+                auto phi = std::make_shared<PhiInst>(Type::getI32(), "iv");
+                hdr->addInstruction(phi);
+                auto bound = ConstantInt::get(100, Type::getI32());
+                auto cmp = std::make_shared<BinaryInst>(IROpcode::Less, phi, bound, Type::getBool(), "cmp");
+                hdr->addInstruction(cmp);
+                hdr->addInstruction(std::make_shared<CondBranchInst>(cmp, body, exitBb));
+
+                auto one = ConstantInt::get(1, Type::getI32());
+                auto next = std::make_shared<BinaryInst>(IROpcode::Add, phi, one, Type::getI32(), "next");
+                body->addInstruction(next);
+                body->addInstruction(std::make_shared<BranchInst>(hdr));
+
+                phi->addIncoming(entry, ConstantInt::get(0, Type::getI32()));
+                phi->addIncoming(body, next);
+
+                exitBb->addInstruction(std::make_shared<RetInst>(phi));
+
+                LinearScanAllocator lsra(fn, false);
+                lsra.allocate();
+
+                CHECK(lsra.hasRegister(phi.get()));
+                CHECK(lsra.hasRegister(next.get()));
+                CHECK_EQ(lsra.getRegister(phi.get()), lsra.getRegister(next.get()));
+            });
     }
 };
 

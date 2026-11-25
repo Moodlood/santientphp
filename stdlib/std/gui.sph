@@ -117,11 +117,10 @@ fn button_get_text(btn: Button): string {
     return sph_gui_get_text(btn.hwnd);
 }
 
-extern "C" fn SendMessageA(hwnd: *void, msg: i32, wparam: i64, lparam: i64): i64;
+extern "C" fn sph_gui_button_is_pushed(ctrl: *void): i32;
 
 fn button_is_pushed(btn: Button): bool {
-    let state: i64 = SendMessageA(btn.hwnd, 242, 0 as i64, 0 as i64);
-    return (state & (4 as i64)) != (0 as i64);
+    return sph_gui_button_is_pushed(btn.hwnd) != 0;
 }
 
 struct Label {

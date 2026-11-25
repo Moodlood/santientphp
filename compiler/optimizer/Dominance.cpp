@@ -162,7 +162,8 @@ IRBasicBlock* DominatorTree::getIdom(const IRBasicBlock* bb) const {
 }
 
 bool DominatorTree::dominates(const IRBasicBlock* a, const IRBasicBlock* b) const {
-    if (!a || !b) return false;
+    if (!a || !b || m_rpoBlocks.empty()) return false;
+    if (!isReachable(a) || !isReachable(b)) return false;
     if (a == b) return true;
     const auto* curr = b;
     while (curr && curr != m_rpoBlocks[0]) {
@@ -212,6 +213,77 @@ const std::vector<IRBasicBlock*>& DominatorTree::getChildren(const IRBasicBlock*
     auto it = m_domChildren.find(bb);
     if (it != m_domChildren.end()) return it->second;
     return m_emptyVec;
+}
+
+std::vector<NaturalLoop> findNaturalLoops(const IRFunction& fn, const DominatorTree& dt) {
+    std::vector<NaturalLoop> loops;
+    const auto& bbs = fn.getBlocks();
+    if (bbs.size() < 2) return loops;
+
+    std::unordered_map<IRBasicBlock*, size_t> headerToIndex;
+
+    for (const auto& bbPtr : bbs) {
+        if (!bbPtr) continue;
+        IRBasicBlock* bb = bbPtr.get();
+        if (!dt.isReachable(bb)) continue;
+
+        for (IRBasicBlock* succ : getSuccessors(*bb)) {
+            if (!succ || !dt.dominates(succ, bb)) continue;
+
+            size_t loopIdx = 0;
+            auto hIt = headerToIndex.find(succ);
+            if (hIt == headerToIndex.end()) {
+                NaturalLoop loop;
+                loop.header = succ;
+                loop.blocks.insert(succ);
+                loopIdx = loops.size();
+                headerToIndex[succ] = loopIdx;
+                loops.push_back(std::move(loop));
+            } else {
+                loopIdx = hIt->second;
+            }
+
+            NaturalLoop& loop = loops[loopIdx];
+            if (std::find(loop.latches.begin(), loop.latches.end(), bb) == loop.latches.end()) {
+                loop.latches.push_back(bb);
+            }
+
+            if (bb != succ && loop.blocks.insert(bb).second) {
+                std::vector<IRBasicBlock*> worklist;
+                worklist.push_back(bb);
+                while (!worklist.empty()) {
+                    IRBasicBlock* cur = worklist.back();
+                    worklist.pop_back();
+                    for (IRBasicBlock* pred : getPredecessors(*cur, fn)) {
+                        if (pred && dt.isReachable(pred) && loop.blocks.insert(pred).second) {
+                            worklist.push_back(pred);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    for (auto& loop : loops) {
+        std::vector<IRBasicBlock*> outsidePreds;
+        for (IRBasicBlock* pred : getPredecessors(*loop.header, fn)) {
+            if (pred && dt.isReachable(pred) && loop.blocks.find(pred) == loop.blocks.end()) {
+                outsidePreds.push_back(pred);
+            }
+        }
+        if (outsidePreds.size() == 1) {
+            IRBasicBlock* p = outsidePreds[0];
+            if (const auto* term = p->getTerminator()) {
+                if (const auto* br = dynamic_cast<const BranchInst*>(term)) {
+                    if (br->getTarget() == loop.header) {
+                        loop.preheader = p;
+                    }
+                }
+            }
+        }
+    }
+
+    return loops;
 }
 
 } // namespace sph

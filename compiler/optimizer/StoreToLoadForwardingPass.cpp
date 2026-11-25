@@ -92,7 +92,8 @@ bool StoreToLoadForwardingPass::runOnFunction(IRFunction& function) {
                         currentVal[ptr.get()] = load;
                     }
                 }
-            } else if (inst->getOpcode() == IROpcode::Call || inst->getOpcode() == IROpcode::RcRelease) {
+            } else if (inst->getOpcode() == IROpcode::Call || inst->getOpcode() == IROpcode::RcRelease ||
+                       inst->getOpcode() == IROpcode::ArcRelease) {
                 // Function calls and RcRelease can invoke arbitrary code or callbacks that read/write
                 // any escaped memory or global state. Invalidate all escaped allocas!
                 for (auto it = currentVal.begin(); it != currentVal.end(); ) {

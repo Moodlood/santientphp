@@ -37,6 +37,7 @@ enum class TokenKind {
     KwExtern,
     KwAs,
     KwRc,
+    KwArc,
     KwBox,
     KwArena,
     KwVec,

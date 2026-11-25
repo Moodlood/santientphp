@@ -662,7 +662,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     return exit_code;
 }
 
-#endif // _WIN32
+int32_t sph_gui_button_is_pushed(void* ctrl_hwnd) {
+    if (!ctrl_hwnd) return 0;
+    LRESULT state = SendMessageA((HWND)ctrl_hwnd, BM_GETSTATE, 0, 0);
+    return (state & BST_PUSHED) ? 1 : 0;
+}
 
 void sph_gui_window_toggle_fullscreen(void* hwnd) {
     if (!hwnd) return;
@@ -703,3 +707,5 @@ void sph_gui_window_toggle_fullscreen(void* hwnd) {
         ShowWindow(h, SW_RESTORE);
     }
 }
+
+#endif // _WIN32

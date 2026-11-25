@@ -523,3 +523,52 @@ TEST_CASE("Stress 20: Full pipeline stress matrix alloc TCO defer combined") {
         "}\n";
     CHECK(compileAndRunSPH(code, {"300", "42"}, "20_full_pipeline"));
 }
+
+TEST_CASE("Stress 21: Differential PassManager verifyEachPass and -O0 vs -O3 parity") {
+    std::string code =
+        "<?php\n"
+        "struct Acc {\n"
+        "    x: i32,\n"
+        "    y: i32,\n"
+        "}\n"
+        "fn eval_matrix(n: i32, k: i32): i32 {\n"
+        "    mut sum: i32 = 0;\n"
+        "    mut i: i32 = 0;\n"
+        "    while (i < n) {\n"
+        "        let box_acc = Box::new(Acc { x: i + 1, y: i * k });\n"
+        "        mut j: i32 = 0;\n"
+        "        while (j < 6) {\n"
+        "            sum = sum + ((box_acc.x * k) + (j * k));\n"
+        "            j = j + 1;\n"
+        "        }\n"
+        "        i = i + 1;\n"
+        "    }\n"
+        "    return sum;\n"
+        "}\n"
+        "fn main(): i32 {\n"
+        "    println(eval_matrix(8, 3));\n"
+        "    return 0;\n"
+        "}\n";
+
+    sph::SourceManager sm;
+    uint32_t fileId = sm.addSource("stress_diff_21.sph", code);
+    sph::DiagnosticEmitter emitter(sm);
+    sph::Parser parser(fileId, sm, &emitter);
+    auto prog = parser.parseProgram();
+    CHECK(prog != nullptr);
+    sph::SemanticAnalyzer analyzer(emitter);
+    CHECK(analyzer.analyze(*prog));
+
+    for (auto opt : {sph::OptimizationLevel::O0, sph::OptimizationLevel::O1,
+                     sph::OptimizationLevel::O2, sph::OptimizationLevel::O3}) {
+        sph::IRGenerator irGen;
+        auto mod = irGen.generate(*prog, "stress_diff_21");
+        CHECK(mod != nullptr);
+        auto pm = sph::PassManager::createForLevel(opt);
+        pm.setVerifyEachPass(true);
+        (void)pm.run(*mod);
+        CHECK(!pm.hasVerificationErrors());
+    }
+
+    CHECK(compileAndRunSPH(code, {"1008"}, "21_diff_parity"));
+}

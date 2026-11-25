@@ -12,6 +12,18 @@ namespace sph {
 std::vector<IRBasicBlock*> getPredecessors(const IRBasicBlock& bb, const IRFunction& fn);
 std::vector<IRBasicBlock*> getSuccessors(const IRBasicBlock& bb);
 
+class DominatorTree;
+
+struct NaturalLoop {
+    IRBasicBlock* header = nullptr;
+    IRBasicBlock* preheader = nullptr;
+    std::vector<IRBasicBlock*> latches;
+    std::unordered_set<IRBasicBlock*> blocks;
+};
+
+// Discover natural loops (merged by loop header) using the DominatorTree
+std::vector<NaturalLoop> findNaturalLoops(const IRFunction& fn, const DominatorTree& dt);
+
 class DominatorTree {
 public:
     explicit DominatorTree(const IRFunction& fn);

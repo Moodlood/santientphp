@@ -5,6 +5,7 @@
 #include "compiler/ir/IRFunction.hpp"
 #include "compiler/ir/IRInstruction.hpp"
 #include "compiler/ir/IRModule.hpp"
+#include "compiler/optimizer/Pass.hpp"
 #include "compiler/target/Target.hpp"
 #include <iosfwd>
 #include <memory>
@@ -24,12 +25,15 @@ public:
     void setDebugInfo(bool enable) noexcept { m_debugInfo = enable; }
     [[nodiscard]] bool isDebugInfo() const noexcept { return m_debugInfo; }
 
+    void setOptimizationLevel(OptimizationLevel level) noexcept { m_optLevel = level; }
+    [[nodiscard]] OptimizationLevel getOptimizationLevel() const noexcept { return m_optLevel; }
+
     void generate(const IRModule& module);
 
 private:
     void generateFunction(const IRFunction& fn);
-    void generateBasicBlock(const IRBasicBlock& bb, const IRFunction& fn);
-    void generateInstruction(const IRInstruction& inst, const IRFunction& fn);
+    void generateBasicBlock(const IRBasicBlock& bb, const IRFunction& fn, const IRBasicBlock* nextBlock);
+    void generateInstruction(const IRInstruction& inst, const IRFunction& fn, const IRBasicBlock* nextBlock);
 
     // Calling Convention Helpers
     [[nodiscard]] bool isSysV() const noexcept {
@@ -44,6 +48,10 @@ private:
     [[nodiscard]] const char* getParamReg(size_t index) const noexcept;
     [[nodiscard]] std::string getReg32(const std::string& reg64) const;
 
+    // Frame addressing helpers
+    [[nodiscard]] std::string memRef(int32_t localOffset) const;
+    [[nodiscard]] std::string argStackRef(int32_t rbpPlusOffset) const;
+
     // Helpers
     int32_t getSlotOffset(const IRValue& val);
     void loadValueToReg(const IRValue& val, const std::string& reg);
@@ -57,6 +65,10 @@ private:
     std::ostream& m_out;
     std::ostream* m_pOut;
     Target m_target;
+    OptimizationLevel m_optLevel = OptimizationLevel::O0;
+    bool m_useFramePointer = true;
+    int32_t m_rspAllocSize = 0;
+    size_t m_calleePushCount = 0;
     std::unique_ptr<LinearScanAllocator> m_lsra;
     std::unordered_map<const IRValue*, int32_t> m_slots;
     std::unordered_map<std::string, std::string> m_stringLabels;

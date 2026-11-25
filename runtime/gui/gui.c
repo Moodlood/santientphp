@@ -11,6 +11,10 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include "gui_win32.c"
+#elif defined(__linux__) || (defined(__unix__) && !defined(__APPLE__))
+#include <pthread.h>
+#include <unistd.h>
+#include "gui_x11.c"
 #endif
 
 #include "gui_canvas.c"
@@ -43,6 +47,8 @@ static void ensure_dispatch_cs(void) {
         g_dispatch_cs_init = 1;
     }
 }
+#elif defined(__linux__) || (defined(__unix__) && !defined(__APPLE__))
+static pthread_mutex_t g_dispatch_mutex = PTHREAD_MUTEX_INITIALIZER;
 #endif
 
 void sph_gui_post_to_main(sph_gui_task_fn fn, void* arg) {
@@ -60,6 +66,16 @@ void sph_gui_post_to_main(sph_gui_task_fn fn, void* arg) {
     }
 
     LeaveCriticalSection(&g_dispatch_cs);
+#elif defined(__linux__) || (defined(__unix__) && !defined(__APPLE__))
+    pthread_mutex_lock(&g_dispatch_mutex);
+    int32_t next_head = (g_dispatch_head + 1) % SPH_DISPATCH_QUEUE_CAPACITY;
+    if (next_head != g_dispatch_tail) {
+        g_dispatch_queue[g_dispatch_head].fn = fn;
+        g_dispatch_queue[g_dispatch_head].arg = arg;
+        g_dispatch_head = next_head;
+    }
+    pthread_mutex_unlock(&g_dispatch_mutex);
+    sph_x11_wake_event_loop();
 #else
     int32_t next_head = (g_dispatch_head + 1) % SPH_DISPATCH_QUEUE_CAPACITY;
     if (next_head != g_dispatch_tail) {
@@ -87,6 +103,18 @@ void sph_gui_dispatch_posted_tasks(void) {
     }
 
     LeaveCriticalSection(&g_dispatch_cs);
+#elif defined(__linux__) || (defined(__unix__) && !defined(__APPLE__))
+    pthread_mutex_lock(&g_dispatch_mutex);
+    while (g_dispatch_tail != g_dispatch_head) {
+        sph_dispatch_task task = g_dispatch_queue[g_dispatch_tail];
+        g_dispatch_tail = (g_dispatch_tail + 1) % SPH_DISPATCH_QUEUE_CAPACITY;
+        pthread_mutex_unlock(&g_dispatch_mutex);
+        if (task.fn) {
+            task.fn(task.arg);
+        }
+        pthread_mutex_lock(&g_dispatch_mutex);
+    }
+    pthread_mutex_unlock(&g_dispatch_mutex);
 #else
     while (g_dispatch_tail != g_dispatch_head) {
         sph_dispatch_task task = g_dispatch_queue[g_dispatch_tail];
@@ -115,6 +143,10 @@ int32_t sph_gui_pump_events(void) {
     }
     sph_gui_dispatch_posted_tasks();
     return g_gui_running;
+#elif defined(__linux__) || (defined(__unix__) && !defined(__APPLE__))
+    sph_x11_pump_events(&g_gui_running);
+    sph_gui_dispatch_posted_tasks();
+    return g_gui_running;
 #else
     sph_gui_dispatch_posted_tasks();
     return g_gui_running;
@@ -125,6 +157,8 @@ void sph_gui_quit(void) {
     g_gui_running = 0;
 #if defined(_WIN32)
     PostQuitMessage(0);
+#elif defined(__linux__) || (defined(__unix__) && !defined(__APPLE__))
+    sph_x11_wake_event_loop();
 #endif
 }
 
@@ -151,6 +185,17 @@ void sph_gui_run_event_loop(void) {
 
         // 3. Wait briefly or process fiber coroutines
         MsgWaitForMultipleObjectsEx(0, NULL, 10, QS_ALLINPUT, MWMO_ALERTABLE);
+    }
+#elif defined(__linux__) || (defined(__unix__) && !defined(__APPLE__))
+    while (g_gui_running) {
+        if (!sph_gui_pump_events()) {
+            break;
+        }
+        sph_gui_dispatch_posted_tasks();
+        if (!g_gui_running) {
+            break;
+        }
+        sph_x11_wait_events(10);
     }
 #endif
 }

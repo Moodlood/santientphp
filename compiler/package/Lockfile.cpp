@@ -86,6 +86,9 @@ std::string Lockfile::toString() const {
         out << "name = \"" << pkg.name << "\"\n";
         out << "version = \"" << pkg.version << "\"\n";
         out << "source = \"" << pkg.source << "\"\n";
+        if (!pkg.commit.empty()) {
+            out << "commit = \"" << pkg.commit << "\"\n";
+        }
         out << "checksum = \"" << pkg.checksum << "\"\n";
         out << "dependencies = [";
         for (size_t i = 0; i < pkg.dependencies.size(); ++i) {
@@ -138,6 +141,8 @@ std::optional<Lockfile> Lockfile::fromString(const std::string& content) {
                 currentPkg->version = extractQuoted(trimmed);
             } else if (trimmed.rfind("source = ", 0) == 0) {
                 currentPkg->source = extractQuoted(trimmed);
+            } else if (trimmed.rfind("commit = ", 0) == 0) {
+                currentPkg->commit = extractQuoted(trimmed);
             } else if (trimmed.rfind("checksum = ", 0) == 0) {
                 currentPkg->checksum = extractQuoted(trimmed);
             } else if (trimmed.rfind("dependencies = ", 0) == 0) {

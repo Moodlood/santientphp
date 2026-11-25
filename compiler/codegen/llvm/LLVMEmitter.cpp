@@ -33,6 +33,7 @@ std::string LLVMEmitter::mapType(const Type& type) {
         }
         case TypeKind::Pointer:
         case TypeKind::Rc:
+        case TypeKind::Arc:
         case TypeKind::Box:
         case TypeKind::Arena:
         case TypeKind::Vector:
@@ -98,6 +99,10 @@ void LLVMEmitter::emit(const IRModule& module) {
     m_out << "declare void @sph_rc_retain(ptr)\n";
     m_out << "declare void @sph_rc_release(ptr)\n";
     m_out << "declare i64 @sph_rc_count(ptr)\n";
+    m_out << "declare ptr @sph_arc_alloc(i64)\n";
+    m_out << "declare void @sph_arc_retain(ptr)\n";
+    m_out << "declare void @sph_arc_release(ptr)\n";
+    m_out << "declare i64 @sph_arc_count(ptr)\n";
     m_out << "declare ptr @sph_file_read(ptr)\n";
     m_out << "declare i32 @sph_file_write(ptr, ptr)\n";
     m_out << "declare i32 @sph_file_append(ptr, ptr)\n";
@@ -565,6 +570,21 @@ void LLVMEmitter::emitInstruction(const IRInstruction& inst) {
         case IROpcode::RcRelease: {
             const auto& rcRelease = static_cast<const RcReleaseInst&>(inst);
             m_out << "call void @sph_rc_release(ptr " << formatValue(*rcRelease.getPtr()) << ")";
+            break;
+        }
+        case IROpcode::ArcAlloc: {
+            const auto& arcAlloc = static_cast<const ArcAllocInst&>(inst);
+            m_out << formatValue(arcAlloc) << " = call ptr @sph_arc_alloc(i64 " << arcAlloc.getAllocSize() << ")";
+            break;
+        }
+        case IROpcode::ArcRetain: {
+            const auto& arcRetain = static_cast<const ArcRetainInst&>(inst);
+            m_out << "call void @sph_arc_retain(ptr " << formatValue(*arcRetain.getPtr()) << ")";
+            break;
+        }
+        case IROpcode::ArcRelease: {
+            const auto& arcRelease = static_cast<const ArcReleaseInst&>(inst);
+            m_out << "call void @sph_arc_release(ptr " << formatValue(*arcRelease.getPtr()) << ")";
             break;
         }
         case IROpcode::SetJmp: {

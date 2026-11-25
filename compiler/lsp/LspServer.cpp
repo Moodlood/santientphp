@@ -1,7 +1,12 @@
 #include "LspServer.hpp"
+#include "compiler/Version.hpp"
+#include "compiler/lexer/Lexer.hpp"
 #include <cctype>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <sstream>
+#include <unordered_set>
 
 namespace sph::lsp {
 
@@ -103,6 +108,15 @@ std::string LspServer::handleMessage(const std::string& rawJson, std::ostream* o
     if (method == "textDocument/documentSymbol") {
         return formatResponse(id, handleDocumentSymbol(id, params));
     }
+    if (method == "textDocument/prepareRename") {
+        return formatResponse(id, handlePrepareRename(id, params));
+    }
+    if (method == "textDocument/rename") {
+        return formatResponse(id, handleRename(id, params));
+    }
+    if (method == "textDocument/signatureHelp") {
+        return formatResponse(id, handleSignatureHelp(id, params));
+    }
 
     // Unhandled request with ID -> MethodNotFound
     if (!id.isNull()) {
@@ -127,12 +141,18 @@ JsonValue LspServer::handleInitialize(const JsonValue& /*id*/, const JsonValue& 
             {"triggerCharacters", JsonValue(triggerChars)}
         }},
         {"definitionProvider", JsonValue(true)},
-        {"documentSymbolProvider", JsonValue(true)}
+        {"documentSymbolProvider", JsonValue(true)},
+        {"renameProvider", JsonValue::Object{
+            {"prepareProvider", JsonValue(true)}
+        }},
+        {"signatureHelpProvider", JsonValue::Object{
+            {"triggerCharacters", JsonValue::Array{JsonValue("("), JsonValue(",")}}
+        }}
     };
 
     JsonValue serverInfo = JsonValue::Object{
         {"name", JsonValue("sphc-lsp")},
-        {"version", JsonValue("0.1.0")}
+        {"version", JsonValue(SPH_VERSION_STRING)}
     };
 
     return JsonValue::Object{
@@ -246,25 +266,49 @@ void LspServer::publishDiagnostics(const std::string& uri, const std::string& te
     sendFramedMessage(*out, formatNotification("textDocument/publishDiagnostics", notificationParams));
 }
 
-std::string LspServer::getWordAtPosition(const std::string& text, int line, int character) {
+bool LspServer::getWordRangeAtPosition(const std::string& text, int line, int character,
+                                       std::string& outWord, int& outStartChar, int& outEndChar) {
     std::string lineStr = getLine(text, line);
-    if (lineStr.empty() || character < 0 || character >= static_cast<int>(lineStr.size())) {
-        return "";
+    if (lineStr.empty() || character < 0 || character > static_cast<int>(lineStr.size())) {
+        return false;
+    }
+    int probe = character;
+    if (probe == static_cast<int>(lineStr.size()) && probe > 0) {
+        --probe;
+    }
+    auto isIdentChar = [](unsigned char c) {
+        return std::isalnum(c) || c == '_' || c == '$';
+    };
+    if (!isIdentChar(static_cast<unsigned char>(lineStr[probe]))) {
+        if (probe > 0 && isIdentChar(static_cast<unsigned char>(lineStr[probe - 1]))) {
+            --probe;
+        } else {
+            return false;
+        }
     }
 
-    int start = character;
-    while (start > 0 && (std::isalnum(static_cast<unsigned char>(lineStr[start - 1])) || lineStr[start - 1] == '_' || lineStr[start - 1] == '$')) {
+    int start = probe;
+    while (start > 0 && isIdentChar(static_cast<unsigned char>(lineStr[start - 1]))) {
         --start;
     }
-
-    int end = character;
-    while (end < static_cast<int>(lineStr.size()) &&
-           (std::isalnum(static_cast<unsigned char>(lineStr[end])) || lineStr[end] == '_' || lineStr[end] == '$')) {
+    int end = probe;
+    while (end < static_cast<int>(lineStr.size()) && isIdentChar(static_cast<unsigned char>(lineStr[end]))) {
         ++end;
     }
+    if (start >= end) return false;
+    outWord = lineStr.substr(start, end - start);
+    outStartChar = start;
+    outEndChar = end;
+    return true;
+}
 
-    if (start >= end) return "";
-    return lineStr.substr(start, end - start);
+std::string LspServer::getWordAtPosition(const std::string& text, int line, int character) {
+    std::string word;
+    int s = 0, e = 0;
+    if (!getWordRangeAtPosition(text, line, character, word, s, e)) {
+        return "";
+    }
+    return word;
 }
 
 std::string LspServer::getLine(const std::string& text, int targetLine) {
@@ -541,6 +585,110 @@ JsonValue LspServer::handleCompletion(const JsonValue& /*id*/, const JsonValue& 
     return JsonValue(std::move(items));
 }
 
+namespace {
+
+std::filesystem::path uriToFilesystemPath(const std::string& uri) {
+    std::string pathStr = uri;
+    if (pathStr.rfind("file:///", 0) == 0) {
+        pathStr = pathStr.substr(8);
+#if !defined(_WIN32)
+        pathStr = "/" + pathStr;
+#endif
+    } else if (pathStr.rfind("file://", 0) == 0) {
+        pathStr = pathStr.substr(7);
+    }
+    return std::filesystem::path(pathStr);
+}
+
+std::string filesystemPathToUri(const std::filesystem::path& p) {
+    std::error_code ec;
+    std::filesystem::path norm = std::filesystem::weakly_canonical(p, ec);
+    std::string s = (ec ? p.lexically_normal() : norm).generic_string();
+    if (!s.empty() && s[0] != '/') {
+        return "file:///" + s;
+    }
+    return "file://" + s;
+}
+
+JsonValue makeLocationJson(const std::string& uri, const SourceSpan& span, size_t len) {
+    int defLine = span.start.line > 0 ? static_cast<int>(span.start.line - 1) : 0;
+    int defCol = span.start.column > 0 ? static_cast<int>(span.start.column - 1) : 0;
+    return JsonValue::Object{
+        {"uri", JsonValue(uri)},
+        {"range", JsonValue::Object{
+            {"start", JsonValue::Object{{"line", JsonValue(defLine)}, {"character", JsonValue(defCol)}}},
+            {"end", JsonValue::Object{{"line", JsonValue(defLine)}, {"character", JsonValue(defCol + static_cast<int>(len))}}}
+        }}
+    };
+}
+
+} // namespace
+
+std::vector<std::pair<std::string, std::string>> LspServer::collectWorkspaceDocuments(const std::string& primaryUri) const {
+    std::vector<std::pair<std::string, std::string>> docs;
+    std::unordered_set<std::string> seen;
+
+    auto pushDoc = [&](const std::string& u, const std::string& text) {
+        if (seen.insert(u).second) {
+            docs.emplace_back(u, text);
+        }
+    };
+
+    auto primaryIt = m_documents.find(primaryUri);
+    if (primaryIt != m_documents.end()) {
+        pushDoc(primaryIt->first, primaryIt->second.text);
+    }
+
+    for (const auto& [u, docState] : m_documents) {
+        pushDoc(u, docState.text);
+    }
+
+    // Recursively resolve on-disk imports from queued documents
+    std::error_code ec;
+    for (size_t idx = 0; idx < docs.size() && docs.size() < 64; ++idx) {
+        SourceManager sm;
+        uint32_t fid = sm.addSource(docs[idx].first, docs[idx].second);
+        DiagnosticEmitter emitter(sm, nullptr);
+        Parser parser(fid, sm, &emitter);
+        auto prog = parser.parseProgram();
+        if (!prog) continue;
+
+        std::filesystem::path baseDir = uriToFilesystemPath(docs[idx].first).parent_path();
+        for (const auto& imp : prog->getImports()) {
+            if (!imp) continue;
+            std::string rel = imp->getPath();
+            std::vector<std::filesystem::path> candidates;
+            if (!baseDir.empty()) candidates.push_back(baseDir / rel);
+            candidates.push_back(std::filesystem::path("stdlib") / rel);
+            candidates.push_back(std::filesystem::path("stdlib/std") / rel);
+
+            // Also match open in-memory document ending with the imported filename
+            for (const auto& [openUri, openState] : m_documents) {
+                if (openUri.size() >= rel.size() &&
+                    openUri.compare(openUri.size() - rel.size(), rel.size(), rel) == 0) {
+                    pushDoc(openUri, openState.text);
+                }
+            }
+
+            for (const auto& cand : candidates) {
+                if (std::filesystem::exists(cand, ec) && std::filesystem::is_regular_file(cand, ec)) {
+                    std::string resolvedUri = filesystemPathToUri(cand);
+                    if (m_documents.find(resolvedUri) == m_documents.end() && seen.find(resolvedUri) == seen.end()) {
+                        std::ifstream ifs(cand);
+                        if (ifs.is_open()) {
+                            std::string content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+                            pushDoc(resolvedUri, std::move(content));
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    return docs;
+}
+
 JsonValue LspServer::handleDefinition(const JsonValue& /*id*/, const JsonValue& params) {
     std::string uri = params["textDocument"]["uri"].asString();
     int line = static_cast<int>(params["position"]["line"].asInt(0));
@@ -556,77 +704,279 @@ JsonValue LspServer::handleDefinition(const JsonValue& /*id*/, const JsonValue& 
         return JsonValue();
     }
 
-    SourceManager sm;
-    uint32_t fileId = sm.addSource(uri, it->second.text);
-    DiagnosticEmitter emitter(sm, nullptr);
-    Parser parser(fileId, sm, &emitter);
-    auto program = parser.parseProgram();
+    auto docs = collectWorkspaceDocuments(uri);
+    for (const auto& [docUri, docText] : docs) {
+        SourceManager sm;
+        uint32_t fileId = sm.addSource(docUri, docText);
+        DiagnosticEmitter emitter(sm, nullptr);
+        Parser parser(fileId, sm, &emitter);
+        auto program = parser.parseProgram();
+        if (!program) continue;
 
-    if (!program) {
-        return JsonValue();
-    }
-
-    // Check functions
-    for (const auto& fn : program->getFunctions()) {
-        if (fn->getName() == word) {
-            int defLine = fn->getSpan().start.line > 0 ? static_cast<int>(fn->getSpan().start.line - 1) : 0;
-            int defCol = fn->getSpan().start.column > 0 ? static_cast<int>(fn->getSpan().start.column - 1) : 0;
-            return JsonValue::Object{
-                {"uri", JsonValue(uri)},
-                {"range", JsonValue::Object{
-                    {"start", JsonValue::Object{{"line", JsonValue(defLine)}, {"character", JsonValue(defCol)}}},
-                    {"end", JsonValue::Object{{"line", JsonValue(defLine)}, {"character", JsonValue(defCol + static_cast<int>(word.size()))}}}
-                }}
-            };
+        for (const auto& fn : program->getFunctions()) {
+            if (fn->getName() == word) {
+                return makeLocationJson(docUri, fn->getSpan(), word.size());
+            }
         }
-    }
-
-    // Check structs
-    for (const auto& st : program->getStructs()) {
-        if (st->getName() == word) {
-            int defLine = st->getSpan().start.line > 0 ? static_cast<int>(st->getSpan().start.line - 1) : 0;
-            int defCol = st->getSpan().start.column > 0 ? static_cast<int>(st->getSpan().start.column - 1) : 0;
-            return JsonValue::Object{
-                {"uri", JsonValue(uri)},
-                {"range", JsonValue::Object{
-                    {"start", JsonValue::Object{{"line", JsonValue(defLine)}, {"character", JsonValue(defCol)}}},
-                    {"end", JsonValue::Object{{"line", JsonValue(defLine)}, {"character", JsonValue(defCol + static_cast<int>(word.size()))}}}
-                }}
-            };
+        for (const auto& st : program->getStructs()) {
+            if (st->getName() == word) {
+                return makeLocationJson(docUri, st->getSpan(), word.size());
+            }
         }
-    }
-
-    // Check classes
-    for (const auto& cl : program->getClasses()) {
-        if (cl->getName() == word) {
-            int defLine = cl->getSpan().start.line > 0 ? static_cast<int>(cl->getSpan().start.line - 1) : 0;
-            int defCol = cl->getSpan().start.column > 0 ? static_cast<int>(cl->getSpan().start.column - 1) : 0;
-            return JsonValue::Object{
-                {"uri", JsonValue(uri)},
-                {"range", JsonValue::Object{
-                    {"start", JsonValue::Object{{"line", JsonValue(defLine)}, {"character", JsonValue(defCol)}}},
-                    {"end", JsonValue::Object{{"line", JsonValue(defLine)}, {"character", JsonValue(defCol + static_cast<int>(word.size()))}}}
-                }}
-            };
+        for (const auto& cl : program->getClasses()) {
+            if (cl->getName() == word) {
+                return makeLocationJson(docUri, cl->getSpan(), word.size());
+            }
+            for (const auto& m : cl->getMethods()) {
+                if (m && m->getName() == word) {
+                    return makeLocationJson(docUri, m->getSpan(), word.size());
+                }
+            }
         }
-    }
-
-    // Check enums
-    for (const auto& en : program->getEnums()) {
-        if (en->getName() == word) {
-            int defLine = en->getSpan().start.line > 0 ? static_cast<int>(en->getSpan().start.line - 1) : 0;
-            int defCol = en->getSpan().start.column > 0 ? static_cast<int>(en->getSpan().start.column - 1) : 0;
-            return JsonValue::Object{
-                {"uri", JsonValue(uri)},
-                {"range", JsonValue::Object{
-                    {"start", JsonValue::Object{{"line", JsonValue(defLine)}, {"character", JsonValue(defCol)}}},
-                    {"end", JsonValue::Object{{"line", JsonValue(defLine)}, {"character", JsonValue(defCol + static_cast<int>(word.size()))}}}
-                }}
-            };
+        for (const auto& iface : program->getInterfaces()) {
+            if (iface->getName() == word) {
+                return makeLocationJson(docUri, iface->getSpan(), word.size());
+            }
+        }
+        for (const auto& en : program->getEnums()) {
+            if (en->getName() == word) {
+                return makeLocationJson(docUri, en->getSpan(), word.size());
+            }
         }
     }
 
     return JsonValue(); // null
+}
+
+JsonValue LspServer::handlePrepareRename(const JsonValue& /*id*/, const JsonValue& params) {
+    std::string uri = params["textDocument"]["uri"].asString();
+    int line = static_cast<int>(params["position"]["line"].asInt(0));
+    int character = static_cast<int>(params["position"]["character"].asInt(0));
+
+    auto it = m_documents.find(uri);
+    if (it == m_documents.end()) {
+        return JsonValue();
+    }
+
+    std::string word;
+    int startChar = 0, endChar = 0;
+    if (!getWordRangeAtPosition(it->second.text, line, character, word, startChar, endChar)) {
+        return JsonValue();
+    }
+
+    SourceManager sm;
+    uint32_t fid = sm.addSource(uri, it->second.text);
+    DiagnosticEmitter emitter(sm, nullptr);
+    Lexer lexer(fid, sm, &emitter);
+    while (true) {
+        auto tok = lexer.nextToken();
+        if (tok.is(TokenKind::EndOfFile)) break;
+        int tokLine = tok.span.start.line > 0 ? static_cast<int>(tok.span.start.line - 1) : 0;
+        int tokStart = tok.span.start.column > 0 ? static_cast<int>(tok.span.start.column - 1) : 0;
+        if (tokLine == line && tokStart == startChar) {
+            if (!tok.is(TokenKind::Identifier)) {
+                return JsonValue(); // Cannot rename keywords or literals
+            }
+            return JsonValue::Object{
+                {"range", JsonValue::Object{
+                    {"start", JsonValue::Object{{"line", JsonValue(line)}, {"character", JsonValue(startChar)}}},
+                    {"end", JsonValue::Object{{"line", JsonValue(line)}, {"character", JsonValue(endChar)}}}
+                }},
+                {"placeholder", JsonValue(word)}
+            };
+        }
+    }
+
+    return JsonValue();
+}
+
+JsonValue LspServer::handleRename(const JsonValue& /*id*/, const JsonValue& params) {
+    std::string uri = params["textDocument"]["uri"].asString();
+    int line = static_cast<int>(params["position"]["line"].asInt(0));
+    int character = static_cast<int>(params["position"]["character"].asInt(0));
+    std::string newName = params["newName"].asString();
+
+    auto it = m_documents.find(uri);
+    if (it == m_documents.end() || newName.empty()) {
+        return JsonValue();
+    }
+
+    std::string targetWord = getWordAtPosition(it->second.text, line, character);
+    if (targetWord.empty()) {
+        return JsonValue();
+    }
+
+    JsonValue::Object changes;
+    auto docs = collectWorkspaceDocuments(uri);
+    for (const auto& [docUri, docText] : docs) {
+        SourceManager sm;
+        uint32_t fid = sm.addSource(docUri, docText);
+        DiagnosticEmitter emitter(sm, nullptr);
+        Lexer lexer(fid, sm, &emitter);
+        JsonValue::Array edits;
+        while (true) {
+            auto tok = lexer.nextToken();
+            if (tok.is(TokenKind::EndOfFile)) break;
+            if (tok.is(TokenKind::Identifier) && tok.text == targetWord) {
+                int tLine = tok.span.start.line > 0 ? static_cast<int>(tok.span.start.line - 1) : 0;
+                int tStart = tok.span.start.column > 0 ? static_cast<int>(tok.span.start.column - 1) : 0;
+                int tEnd = tStart + static_cast<int>(targetWord.size());
+                edits.push_back(JsonValue::Object{
+                    {"range", JsonValue::Object{
+                        {"start", JsonValue::Object{{"line", JsonValue(tLine)}, {"character", JsonValue(tStart)}}},
+                        {"end", JsonValue::Object{{"line", JsonValue(tLine)}, {"character", JsonValue(tEnd)}}}
+                    }},
+                    {"newText", JsonValue(newName)}
+                });
+            }
+        }
+        if (!edits.empty()) {
+            changes[docUri] = JsonValue(std::move(edits));
+        }
+    }
+
+    return JsonValue::Object{
+        {"changes", JsonValue(std::move(changes))}
+    };
+}
+
+JsonValue LspServer::handleSignatureHelp(const JsonValue& /*id*/, const JsonValue& params) {
+    std::string uri = params["textDocument"]["uri"].asString();
+    int line = static_cast<int>(params["position"]["line"].asInt(0));
+    int character = static_cast<int>(params["position"]["character"].asInt(0));
+
+    auto it = m_documents.find(uri);
+    if (it == m_documents.end()) {
+        return JsonValue();
+    }
+
+    // Compute byte offset corresponding to (line, character)
+    const std::string& text = it->second.text;
+    size_t offset = 0;
+    int curLine = 0;
+    while (offset < text.size() && curLine < line) {
+        if (text[offset] == '\n') ++curLine;
+        ++offset;
+    }
+    int curCol = 0;
+    while (offset < text.size() && curCol < character && text[offset] != '\n') {
+        ++offset;
+        ++curCol;
+    }
+
+    // Walk backwards to locate the enclosing unmatched '(' and active comma index
+    int parenDepth = 0;
+    int activeParam = 0;
+    size_t openParenPos = std::string::npos;
+    for (size_t pos = offset; pos > 0; --pos) {
+        char ch = text[pos - 1];
+        if (ch == ')') {
+            ++parenDepth;
+        } else if (ch == '(') {
+            if (parenDepth == 0) {
+                openParenPos = pos - 1;
+                break;
+            }
+            --parenDepth;
+        } else if (ch == ',' && parenDepth == 0) {
+            ++activeParam;
+        } else if (ch == ';' || ch == '{' || ch == '}') {
+            break;
+        }
+    }
+
+    if (openParenPos == std::string::npos) {
+        return JsonValue();
+    }
+
+    size_t nameEnd = openParenPos;
+    while (nameEnd > 0 && std::isspace(static_cast<unsigned char>(text[nameEnd - 1]))) {
+        --nameEnd;
+    }
+    size_t nameStart = nameEnd;
+    while (nameStart > 0 && (std::isalnum(static_cast<unsigned char>(text[nameStart - 1])) || text[nameStart - 1] == '_')) {
+        --nameStart;
+    }
+    if (nameStart >= nameEnd) {
+        return JsonValue();
+    }
+    std::string callee = text.substr(nameStart, nameEnd - nameStart);
+
+    JsonValue::Array signatures;
+    auto pushFunctionSig = [&](const FunctionDecl& fn) {
+        std::string label = "fn " + fn.getName() + "(";
+        JsonValue::Array paramInfos;
+        const auto& fnParams = fn.getParams();
+        for (size_t i = 0; i < fnParams.size(); ++i) {
+            std::string pStr = fnParams[i].name + ": " + fnParams[i].type;
+            if (i > 0) label += ", ";
+            label += pStr;
+            paramInfos.push_back(JsonValue::Object{{"label", JsonValue(pStr)}});
+        }
+        label += "): " + fn.getReturnType();
+        signatures.push_back(JsonValue::Object{
+            {"label", JsonValue(label)},
+            {"parameters", JsonValue(std::move(paramInfos))}
+        });
+    };
+
+    auto docs = collectWorkspaceDocuments(uri);
+    for (const auto& [docUri, docText] : docs) {
+        SourceManager sm;
+        uint32_t fid = sm.addSource(docUri, docText);
+        DiagnosticEmitter emitter(sm, nullptr);
+        Parser parser(fid, sm, &emitter);
+        auto prog = parser.parseProgram();
+        if (!prog) continue;
+        for (const auto& fn : prog->getFunctions()) {
+            if (fn && fn->getName() == callee) {
+                pushFunctionSig(*fn);
+            }
+        }
+        for (const auto& cl : prog->getClasses()) {
+            if (!cl) continue;
+            for (const auto& m : cl->getMethods()) {
+                if (m && m->getName() == callee) {
+                    pushFunctionSig(*m);
+                }
+            }
+        }
+    }
+
+    if (signatures.empty()) {
+        struct BuiltinSig { const char* name; const char* sig; std::vector<const char*> args; };
+        const std::vector<BuiltinSig> builtins = {
+            {"println", "fn println(val: any): void", {"val: any"}},
+            {"print", "fn print(val: any): void", {"val: any"}},
+            {"count", "fn count(arr: dynamic): i32", {"arr: dynamic"}},
+            {"array_push", "fn array_push(&arr: dynamic, val: any): void", {"&arr: dynamic", "val: any"}},
+            {"explode", "fn explode(delim: string, str: string): dynamic", {"delim: string", "str: string"}},
+            {"implode", "fn implode(glue: string, pieces: dynamic): string", {"glue: string", "pieces: dynamic"}},
+            {"strlen", "fn strlen(s: string): i32", {"s: string"}}
+        };
+        for (const auto& b : builtins) {
+            if (callee == b.name) {
+                JsonValue::Array paramInfos;
+                for (const char* a : b.args) {
+                    paramInfos.push_back(JsonValue::Object{{"label", JsonValue(a)}});
+                }
+                signatures.push_back(JsonValue::Object{
+                    {"label", JsonValue(b.sig)},
+                    {"parameters", JsonValue(std::move(paramInfos))}
+                });
+            }
+        }
+    }
+
+    if (signatures.empty()) {
+        return JsonValue();
+    }
+
+    return JsonValue::Object{
+        {"signatures", JsonValue(std::move(signatures))},
+        {"activeSignature", JsonValue(0)},
+        {"activeParameter", JsonValue(activeParam)}
+    };
 }
 
 JsonValue LspServer::handleDocumentSymbol(const JsonValue& /*id*/, const JsonValue& params) {

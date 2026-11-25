@@ -8,6 +8,7 @@
 #include "EscapeAnalysisPass.hpp"
 #include "FunctionInliningPass.hpp"
 #include "LoopInvariantCodeMotionPass.hpp"
+#include "LoopUnrollPass.hpp"
 #include "Mem2RegPass.hpp"
 #include "StoreToLoadForwardingPass.hpp"
 #include "StrengthReductionPass.hpp"
@@ -34,9 +35,9 @@ PassManager PassManager::createForLevel(OptimizationLevel level) {
     }
 
     if (level == OptimizationLevel::O1) {
-        pm.addFunctionPass(std::make_unique<EscapeAnalysisPass>());
         pm.addFunctionPass(std::make_unique<Mem2RegPass>());
         pm.addFunctionPass(std::make_unique<StoreToLoadForwardingPass>());
+        pm.addFunctionPass(std::make_unique<EscapeAnalysisPass>());
         pm.addFunctionPass(std::make_unique<ConstantFoldingPass>());
         pm.addFunctionPass(std::make_unique<AlgebraicSimplificationPass>());
         pm.addFunctionPass(std::make_unique<StrengthReductionPass>());
@@ -47,14 +48,14 @@ PassManager PassManager::createForLevel(OptimizationLevel level) {
     }
 
     if (level == OptimizationLevel::O2 || level == OptimizationLevel::Os) {
-        pm.addFunctionPass(std::make_unique<EscapeAnalysisPass>());
         pm.addFunctionPass(std::make_unique<Mem2RegPass>());
         pm.addFunctionPass(std::make_unique<StoreToLoadForwardingPass>());
+        pm.addFunctionPass(std::make_unique<EscapeAnalysisPass>());
         pm.addFunctionPass(std::make_unique<ConstantFoldingPass>());
         pm.addFunctionPass(std::make_unique<AlgebraicSimplificationPass>());
-        pm.addFunctionPass(std::make_unique<StrengthReductionPass>());
         pm.addFunctionPass(std::make_unique<CommonSubexpressionEliminationPass>());
         pm.addFunctionPass(std::make_unique<LoopInvariantCodeMotionPass>());
+        pm.addFunctionPass(std::make_unique<StrengthReductionPass>());
         pm.addFunctionPass(std::make_unique<ControlFlowOptimizationPass>());
         pm.addFunctionPass(std::make_unique<TailCallPass>());
         pm.addFunctionPass(std::make_unique<DeadStoreEliminationPass>());
@@ -64,9 +65,9 @@ PassManager PassManager::createForLevel(OptimizationLevel level) {
 
     if (level == OptimizationLevel::Oz) {
         // Size-constrained: no inlining, maximum dead store and dead code removal
-        pm.addFunctionPass(std::make_unique<EscapeAnalysisPass>());
         pm.addFunctionPass(std::make_unique<Mem2RegPass>());
         pm.addFunctionPass(std::make_unique<StoreToLoadForwardingPass>());
+        pm.addFunctionPass(std::make_unique<EscapeAnalysisPass>());
         pm.addFunctionPass(std::make_unique<ConstantFoldingPass>());
         pm.addFunctionPass(std::make_unique<CommonSubexpressionEliminationPass>());
         pm.addFunctionPass(std::make_unique<ControlFlowOptimizationPass>());
@@ -78,14 +79,15 @@ PassManager PassManager::createForLevel(OptimizationLevel level) {
 
     if (level == OptimizationLevel::O3) {
         pm.addModulePass(std::make_unique<FunctionInliningPass>(16));
-        pm.addFunctionPass(std::make_unique<EscapeAnalysisPass>());
         pm.addFunctionPass(std::make_unique<Mem2RegPass>());
         pm.addFunctionPass(std::make_unique<StoreToLoadForwardingPass>());
+        pm.addFunctionPass(std::make_unique<EscapeAnalysisPass>());
         pm.addFunctionPass(std::make_unique<ConstantFoldingPass>());
         pm.addFunctionPass(std::make_unique<AlgebraicSimplificationPass>());
-        pm.addFunctionPass(std::make_unique<StrengthReductionPass>());
         pm.addFunctionPass(std::make_unique<CommonSubexpressionEliminationPass>());
         pm.addFunctionPass(std::make_unique<LoopInvariantCodeMotionPass>());
+        pm.addFunctionPass(std::make_unique<StrengthReductionPass>());
+        pm.addFunctionPass(std::make_unique<LoopUnrollPass>(4));
         pm.addFunctionPass(std::make_unique<ControlFlowOptimizationPass>());
         pm.addFunctionPass(std::make_unique<TailCallPass>());
         pm.addFunctionPass(std::make_unique<DeadStoreEliminationPass>());
@@ -97,6 +99,7 @@ PassManager PassManager::createForLevel(OptimizationLevel level) {
 }
 
 bool PassManager::run(IRModule& module) {
+    m_verificationFailed = false;
     if (m_level == OptimizationLevel::O0 && m_functionPasses.empty() && m_modulePasses.empty()) {
         return false;
     }
@@ -106,6 +109,7 @@ bool PassManager::run(IRModule& module) {
         std::vector<std::string> verifierErrors;
         IRVerifier verifier;
         if (!verifier.verify(module, verifierErrors)) {
+            m_verificationFailed = true;
             std::cerr << "[PassManager Error] IR verification failed after " << passName
                       << " on " << context << " (" << verifierErrors.size() << " errors):\n";
             for (const auto& err : verifierErrors) {

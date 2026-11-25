@@ -19,7 +19,7 @@ namespace sph {
 
 namespace {
 
-bool compileAndRunNative(const IRModule& module, const std::string& tag, std::vector<std::string>& outLines) {
+bool compileAndRunNative(const IRModule& module, OptimizationLevel optLevel, const std::string& tag, std::vector<std::string>& outLines) {
     std::filesystem::path tempAsm = "test_parity_" + tag + ".s";
     std::filesystem::path tempExe = "test_parity_" + tag + ".exe";
     std::filesystem::path runtimeLib = "build/lib/libsph_runtime.a";
@@ -30,6 +30,7 @@ bool compileAndRunNative(const IRModule& module, const std::string& tag, std::ve
     {
         std::ofstream asmFile(tempAsm);
         X86_64CodeGen codegen(asmFile);
+        codegen.setOptimizationLevel(optLevel);
         codegen.generate(module);
     }
 
@@ -99,11 +100,12 @@ bool verifyBackendParity(const std::string& code, const std::vector<std::string>
         if (!irMod) return false;
 
         auto pm = PassManager::createForLevel(lvl);
+        pm.setVerifyEachPass(true);
         pm.run(*irMod);
 
         // Native backend execution
         std::vector<std::string> nativeLines;
-        if (!compileAndRunNative(*irMod, tag, nativeLines)) {
+        if (!compileAndRunNative(*irMod, lvl, tag, nativeLines)) {
             return false;
         }
 
@@ -258,6 +260,104 @@ TEST_CASE("Backend Parity: Heap Box Allocations and Determinisitic Deallocations
         "}\n";
 
     CHECK(verifyBackendParity(code, {"777"}, "box_heap_parity"));
+}
+
+TEST_CASE("Backend Parity: Loop-Scoped Box Allocations Stack Reuse across -O0 to -O3") {
+    std::string code =
+        "<?php\n"
+        "struct Node {\n"
+        "    value: i32,\n"
+        "}\n"
+        "fn main(): i32 {\n"
+        "    mut i: i32 = 0;\n"
+        "    mut sum: i32 = 0;\n"
+        "    while (i < 100) {\n"
+        "        let b: Box<Node> = Box::new(Node { value: i });\n"
+        "        if (i % 2 == 0) {\n"
+        "            sum = sum + b.value;\n"
+        "        }\n"
+        "        i = i + 1;\n"
+        "    }\n"
+        "    println(sum);\n"
+        "    return 0;\n"
+        "}\n";
+
+    CHECK(verifyBackendParity(code, {"2450"}, "loop_box_stack_reuse"));
+}
+
+TEST_CASE("Backend Parity: Nested Loop LSR, Factoring, and 4x Unrolling across -O0 to -O3") {
+    std::string code =
+        "<?php\n"
+        "fn sum_grid(n: i32): i32 {\n"
+        "    mut total: i32 = 0;\n"
+        "    mut i: i32 = 0;\n"
+        "    while (i < n) {\n"
+        "        mut j: i32 = 0;\n"
+        "        while (j < n) {\n"
+        "            mut k: i32 = 0;\n"
+        "            while (k < n) {\n"
+        "                total = total + (i * k + k * j);\n"
+        "                k = k + 1;\n"
+        "            }\n"
+        "            j = j + 1;\n"
+        "        }\n"
+        "        i = i + 1;\n"
+        "    }\n"
+        "    return total;\n"
+        "}\n"
+        "fn main(): i32 {\n"
+        "    println(sum_grid(0));\n"
+        "    println(sum_grid(3));\n"
+        "    println(sum_grid(11));\n"
+        "    return 0;\n"
+        "}\n";
+
+    // n=3: 3*3*(0+1+2)*... -> sum_{i,j,k=0..n-1} (i+j)*k = n^2 * (n-1) * (n*(n-1)/2)
+    // n=3: 9 * 2 * 3 = 54; n=11: 121 * 10 * 55 = 66550
+    CHECK(verifyBackendParity(code, {"0", "54", "66550"}, "lsr_unroll_parity"));
+}
+
+TEST_CASE("Backend Parity: String Concatenation MRU Fast Path across -O0 to -O3") {
+    std::string code =
+        "<?php\n"
+        "fn main(): i32 {\n"
+        "    mut s: string = \"start\";\n"
+        "    mut i: i32 = 0;\n"
+        "    while (i < 120) {\n"
+        "        s = s . \"a\";\n"
+        "        i = i + 1;\n"
+        "    }\n"
+        "    println(strlen(s));\n"
+        "    return 0;\n"
+        "}\n";
+
+    CHECK(verifyBackendParity(code, {"125"}, "string_mru_parity"));
+}
+
+TEST_CASE("Backend Parity: Atomic Arc<T> Retain, Clone, Count, and Release across -O0 to -O3") {
+    std::string code =
+        "<?php\n"
+        "struct Payload {\n"
+        "    val: i32,\n"
+        "}\n"
+        "fn inspect_arc(p: Arc<Payload>): i32 {\n"
+        "    println(Arc::count(p));\n"
+        "    return p.val;\n"
+        "}\n"
+        "fn main(): i32 {\n"
+        "    let a = Arc::new(Payload { val: 99 });\n"
+        "    println(Arc::count(a));\n"
+        "    let b = a;\n"
+        "    println(Arc::count(a));\n"
+        "    let c = Arc::clone(a);\n"
+        "    println(Arc::count(a));\n"
+        "    println(inspect_arc(b));\n"
+        "    println(Arc::count(a));\n"
+        "    return 0;\n"
+        "}\n";
+
+    // a(1) -> b=a(2) -> c=clone(a)(3) -> inspect_arc(b) retains param on entry(4) & releases on exit(3)
+    CHECK(verifyBackendParity(code, {"1", "2", "3", "4", "99", "3"}, "arc_parity"));
 }
 
 } // namespace sph

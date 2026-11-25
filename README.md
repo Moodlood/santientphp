@@ -7,7 +7,7 @@
 <p align="center">
   <a href="https://github.com/Moodlood/santientphp/actions/workflows/ci.yml"><img src="https://github.com/Moodlood/santientphp/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="https://github.com/Moodlood/santientphp/releases/latest"><img src="https://img.shields.io/github/v/release/Moodlood/santientphp?logo=github&color=blue" alt="Latest Release" /></a>
-  <a href="tests/"><img src="https://img.shields.io/badge/tests-6627%20passed%20(100%25)-brightgreen.svg" alt="Tests" /></a>
+  <a href="tests/"><img src="https://img.shields.io/badge/tests-6700%20passed%20(100%25)-brightgreen.svg" alt="Tests" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
   <a href="compiler/"><img src="https://img.shields.io/badge/compiler-C%2B%2B20-00599C?logo=c%2B%2B" alt="C++20" /></a>
   <a href="docs/compiler/architecture.md"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey.svg" alt="Platform" /></a>
@@ -26,7 +26,7 @@
   - **Systems Mode & Bare-Metal FFI**: C-compatible structs (`#[repr(C)] struct`), C-compatible unions (`#[repr(C)] union`), typed raw pointers (`*T`, `ptr<T>`), compile-time `sizeof(T)`, Win64 FFI passing, native C callback function pointers (`&fn_name`), external library flags (`-l<lib>`, `-L<dir>`), and null-byte safe binary buffers (`ByteBuffer`).
   - **Dynamic PHP Compatibility Mode**: First-class `dynamic` values (`sph_value`), associative arrays (`sph_array`), loose coercions, PHP object models, WinHTTP cURL, and SQLite PDO.
 - **Native GUI & Hardware-Accelerated Rendering**:
-  - **Native OS Controls**: Direct Win32 bindings (buttons, text inputs, progress bars, dialogs, ComCtl32 v6, Per-Monitor High-DPI V2) with suppressed console window (`--gui`). *(Linux GUI backend planned; see [Platform Compatibility Matrix](docs/compiler/architecture.md#7-platform-support--compatibility-matrix).)*
+  - **Native OS Controls**: Direct Win32 bindings on Windows and pure X11 + GLX + `epoll` backend on Linux (`runtime/gui/gui_x11.c`, zero GTK/Qt dependencies) with suppressed console window (`--gui`).
   - **SIMD Framebuffer Canvas**: 32-bit RGBA pixel surface accelerated by 128-bit SIMD vectors (SSE2/AVX) and OpenGL context support.
   - **Async EventLoop Fusion**: Non-blocking message pump integrated with cooperative Fiber coroutines and thread-safe UI task queues (`sph_gui_post_to_main`).
 - **Hardware Concurrency & Networking**:
@@ -41,7 +41,7 @@
   - LLVM IR emitter (`LLVMEmitter`) with target data layout and triple normalization.
   - **Compare-Branch Fusion**: Emits conditional jumps (`cmp` + `jcc`) directly, bypassing intermediate `setcc`, register zero-extension, and stack reloads.
   - **Assembly Peephole Optimizer**: Eliminates redundant store-followed-by-load cycles and dead 64-bit register self-moves.
-  - **Fast Slab Allocator**: Thread-local memory recycler for objects $\le 64$ bytes to bypass heap mutex contention.
+  - **Multi-Size Fast Slab Allocator & `Arc<T>`**: Thread-local 5-tier slab recycler (`32B`–`512B`) with lock-free cross-thread remote frees, TLS cleanup, magic canaries, and thread-safe `Arc<T>`.
   - **Amortized $O(1)$ String Appends**: Geometric buffer capacity doubling eliminating quadratic heap reallocation overhead.
 - **Custom Typed IR & Optimization Pipeline**:
   - Verifiable intermediate representation (`SPHIR`).
@@ -50,67 +50,66 @@
   - **Code Formatter (`sphc fmt`)**: Indentation, operator alignment, and comment preservation.
   - **Documentation Generator (`sphc doc`)**: Extracts docblocks to GitHub Markdown or responsive, search-enabled standalone HTML.
   - **Package & Project Manager (`sphc new`, `sphc init`, `sphc pkg`)**: Project scaffolding and dependency tracking via `sph.toml`.
-  - **Language Server Protocol (`sphc lsp`)**: Standalone JSON-RPC 2.0 LSP 3.17 engine providing real-time diagnostics, hover signatures, autocompletion, go-to-definition, and symbol outlines.
+  - **Language Server Protocol (`sphc lsp`)**: Standalone JSON-RPC 2.0 LSP 3.17 engine providing real-time diagnostics, hover signatures, autocompletion, cross-file go-to-definition, prepareRename/rename, signature help, and symbol outlines.
   - **Health Diagnostics (`sphc doctor`)**: Local toolchain and system library verification.
   - **Visual Studio Code Extension**: Syntax highlighting, `.sph` file iconography, and integrated LSP client.
 
 ---
 
-## What's New in v0.2.1
+## What's New in v0.2.2
 
-SantientPHP v0.2.1 is an engineering hardening and performance stabilization release focused on compiler correctness, memory safety guarantees, and architecture-specific optimizations:
+SantientPHP v0.2.2 focuses on **Performance Parity, Loop-Safe Memory & Platform Completeness** while preserving strict SPHIR invariants and 100% test pass rate:
 
-- **Centralized SPHIR Ownership & Pass Hardening**: Refactored `IRBasicBlock` with centralized instruction mutation primitives (`appendInstruction`, `insertInstruction`, `replaceInstruction`, `removeInstruction`, `moveInstructionTo`) that maintain strict instruction-parent block and function invariants. Extended `IRVerifier` with parent-hierarchy validation and introduced per-pass diagnostic verification in `PassManager`.
-- **Direct-Register Instruction Selection**: Implemented direct register reuse (`tryDirectRegisterBinaryOp`) in `X86_64CodeGen.cpp` for binary operations (`add`, `sub`, `mul`, `and`, `or`, `xor`), eliminating redundant `mov` copies when an operand's live range ends at the operation.
-- **Windows x64 Non-Volatile Register Allocation**: Updated `LinearScanAllocator.cpp` to classify `rsi` and `rdi` as non-volatile (callee-saved) registers under the Windows x64 ABI (`!m_isSysV`). This expands the non-volatile register pool from 5 to 7 registers (`rbx`, `r12`–`r15`, `rsi`, `rdi`), significantly reducing spill overhead across call-crossing live intervals.
-- **Thread-Safe Fast Allocator with Magic Canaries**: Migrated the 512-slot freed-pointer history cache in `runtime/core/core.c` to thread-local storage (`__thread`), backed by 8-byte alignment verification, bounds provenance validation, and `SPH_SLAB_MAGIC_ALLOC` / `SPH_SLAB_MAGIC_FREE` integrity canaries to prevent cross-thread data races and double-free vulnerabilities.
-- **Strict Escape Analysis Invariants**: Hardened `EscapeAnalysisPass.cpp` with transitive alias analysis across casts, field pointers, and phi nodes, guaranteeing that allocations stored into memory, passed to thread spawns, or bounded within cyclic loops are never unsafely demoted to stack.
-- **Dual-Backend Parity Across Optimization Levels**: Verified bitwise-exact parity between native x86_64 machine code generation and the LLVM backend across `-O0`, `-O1`, `-O2`, and `-O3`.
-- **6,627 Automated Tests (100% Passing)**: The regression test suite expanded to 6,627 automated tests with zero failures.
+- **Loop-Scoped Escape Analysis & Stack Slot Reuse (M1)**: Iteration-local `Box::new(...)` allocations that do not escape across backedges or calls reuse a single entry-block stack `AllocaInst`, verified with `PassManager::setVerifyEachPass(true)`.
+- **x86_64 Instruction Selection & Loop Optimization (M2)**: Added immediate operand folding (`add/sub/cmp reg, imm32`), 3-operand/scaled `lea` lowering, minimal callee-save tracking + frame-pointer omission (`-O1+`), LSRA Phi/two-address copy coalescing, Loop Strength Reduction (`StrengthReductionPass`), small-loop 4x unrolling (`LoopUnrollPass` at `-O3`), algebraic distributive factoring, and `sph_string_append` MRU fast-path.
+- **Multi-Size Slab Allocator, Cross-Thread Reclamation & `Arc<T>` (M3)**: Expanded thread-local slab tiers (`32B`-`512B`) with lock-free `remote_free` lists + TLS retirement cleanup, added thread-safe atomic `Arc<T>`, and statically rejected sharing non-atomic `Rc<T>` across `Thread::spawn`.
+- **Selective Modular Runtime Linking (M4)**: `sphc` statically analyzes SPHIR imports and links strictly needed modular archives (`libsph_core.a`, `libsph_async.a`, `libsph_compat.a`, `libsph_net.a`, `libsph_gui.a`) with `-ffunction-sections -fdata-sections` and `-s -Wl,--gc-sections`.
+- **Linux Native X11/GLX GUI Backend (M5)**: Pure `libX11` + `libGL` + `epoll`/`eventfd` GUI backend (`runtime/gui/gui_x11.c`) with zero GTK/Qt dependencies and unified `sph_gui_button_is_pushed` stdlib FFI.
+- **Sanitizer CI & Differential Fuzzing (M6)**: Added Linux `ASan+UBSan`, `TSan`, and `xvfb-run` GUI smoke jobs plus standalone/LibFuzzer differential verifier `tools/fuzz/fuzz_ir_diff.cpp` (`sph_diff_fuzz`).
+- **Tooling & Release Completeness (M7)**: Cross-file LSP `definition`, `prepareRename`/`rename`, and `signatureHelp`; `sph.lock` git commit pinning; and unified `VERSION` (`0.2.2`) across compiler, doctor, installer, and VS Code extension.
 
-*(For detailed architectural specifications and benchmark logs, see [v0.2.1 Release Notes](docs/release_notes/v0.2.1.md), [IR Hardening](docs/releases/v0.2.1/IR_HARDENING.md), [Allocator Hardening](docs/releases/v0.2.1/ALLOCATOR_HARDENING.md), and [Benchmark Analysis](docs/releases/v0.2.1/BENCHMARKS.md).)*
-
+*(See [v0.2.2 Benchmark Analysis](docs/releases/v0.2.2/BENCHMARKS.md) and [v0.2.1 Release Notes](docs/release_notes/v0.2.1.md).)*
 ---
 
 ## Performance Benchmarks
 
 SantientPHP is engineered for raw bare-metal execution speed. The repository includes an automated, reproducible multi-language benchmark suite (`tools/benchmarks/run_benchmarks.py`) testing across 5 languages: **SantientPHP (`sphc -O3`)**, **C (`gcc -O3`)**, **Rust (`rustc -O3`)**, **Go (`go build`)**, and **PHP 8.2 (Zend)**.
 
-### Execution Time (milliseconds, lower is faster)
+<!-- BENCHMARKS_START -->
+### Execution Time (milliseconds, warmed median — lower is faster)
 
-| Benchmark | Workload / Category | SantientPHP (-O3) | C (GCC -O3) | Rust (-O3) | Go (go build) | PHP 8.2 (Zend) | SPH vs PHP Speedup | SPH vs Rust |
+| Benchmark | Workload / Category | SantientPHP (-O3) | C (GCC -O3) | Rust (-O3) | Go (go build) | PHP 8.2 (Zend) | SPH vs PHP | SPH vs Rust |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| [**Fibonacci (N=35)**](benchmarks/fibonacci/) | CPU / Deep Recursion | **479.86 ms** | 112.08 ms | 132.50 ms | 188.01 ms | 3,971.10 ms | **8.3x faster** | 3.6x slower |
-| [**Matrix Multi (200x200)**](benchmarks/matrix_mult/) | Arithmetic & Loops | **116.51 ms** | 16.36 ms | 20.02 ms | 107.95 ms | 1,743.27 ms | **15.0x faster** | 5.8x slower |
-| [**String Concat (50k)**](benchmarks/string_concat/) | String Manipulation | **72.67 ms** | 20.71 ms | 21.52 ms | 81.32 ms | 416.39 ms | **5.7x faster** *(beats Go)* | 3.4x slower |
-| [**Heap Alloc (1M items)**](benchmarks/memory_alloc/) | Allocator & Memory | **733.81 ms** | 21.11 ms | 43.81 ms | 38.64 ms | 1,102.84 ms | **1.5x faster** | 16.7x slower |
+| [**Fibonacci (N=35)**](benchmarks/fibonacci/) | CPU / Deep Recursion | **194.71 ms** | 66.38 ms | 83.84 ms | 144.05 ms | 5,887.10 ms | **30.2x faster** | 2.3x slower |
+| [**Matrix Multi (200x200)**](benchmarks/matrix_mult/) | Arithmetic & Loops | **35.99 ms** | 19.69 ms | 24.61 ms | 36.46 ms | 1,473.41 ms | **40.9x faster** | 1.5x slower |
+| [**String Concat (50k)**](benchmarks/string_concat/) | String Manipulation | **37.62 ms** | 19.94 ms | 24.20 ms | 25.57 ms | 242.05 ms | **6.4x faster** | 1.6x slower |
+| [**Heap Alloc (1M items)**](benchmarks/memory_alloc/) | Allocator & Memory | **28.61 ms** | 20.28 ms | 27.34 ms | 26.70 ms | 844.28 ms | **29.5x faster** | 1.0x slower |
 
-*Environment: x86_64, Windows 11. Compiler optimizations: `-O3` / Release mode.*
+*Environment: Windows x86_64. Warmed median across 5 runs. Generated automatically from `benchmarks/results.json` via `python tools/benchmarks/run_benchmarks.py --update-docs`.*
+
+### Executable Binary Footprint & Single-File Compile Time (`-O3`)
+
+| Benchmark | SantientPHP Binary | Compile Time (`-O3`) | C (`gcc -O3 -s`) Binary | Rust Binary | Go Binary |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Fibonacci (N=35)** | **37.0 KB** | **633.7 ms** | 19.0 KB | 4946.0 KB | 2436.0 KB |
+| **Matrix Multi (200x200)** | **37.5 KB** | **801.4 ms** | 18.5 KB | 4946.0 KB | 2435.5 KB |
+| **String Concat (50k)** | **37.0 KB** | **820.1 ms** | 18.5 KB | 4946.8 KB | 2437.5 KB |
+| **Heap Alloc (1M items)** | **37.5 KB** | **894.4 ms** | 18.5 KB | 4946.0 KB | 2436.0 KB |
+<!-- BENCHMARKS_END -->
 
 #### Workload Implementation & Fairness Notes
 
-- **[Matrix Multi (200x200)](benchmarks/matrix_mult/)**: Evaluates integer arithmetic via a naive $O(N^3)$ triple-nested loop accumulating `total += (i * k + k * j)` over $200^3 = 8,000,000$ iterations without cache tiling, SIMD, or external BLAS. SantientPHP achieves 116.51 ms through SPHIR compare-branch fusion (`cmp` + `jcc` bypassing `setcc`), loop-invariant code motion hoisting induction expressions, direct-register arithmetic selection, and tight register-allocated inner loops without bounds checks or stack spills.
-- **[String Concat (50k)](benchmarks/string_concat/)**: Evaluates iterative single-character appending (`s = s . "a"`, `s.push_str("a")`, `realloc`) across 50,000 iterations starting from an unpadded 5-byte string without preallocated capacity. SantientPHP (72.67 ms) outperforms Go (81.32 ms) by utilizing its runtime string cache with amortized $O(1)$ geometric capacity doubling (`cap *= 2`) and in-place buffer mutation in `sph_string_append`.
-- **[Fibonacci (N=35)](benchmarks/fibonacci/)**: Evaluates deep call-tree recursion, testing function call frame setup, stack teardown, and branch prediction overhead.
-- **[Heap Alloc (1M items)](benchmarks/memory_alloc/)**: Evaluates allocator throughput via sequential creation and immediate dereference of 1,000,000 boxed nodes; SPH leverages its hardened thread-local fast slab allocator with a 512-slot history table and magic block validation to bypass OS heap lock contention safely.
-
-### Executable Binary Footprint (Statically Linked)
-
-SantientPHP produces lean, standalone native executables with an integrated runtime:
-
-| Language / Toolchain | Standalone Binary Size | Relative Footprint |
-| :--- | :--- | :--- |
-| **SantientPHP (`sphc`)** | **~286 KB** | **1.0x (Baseline)** |
-| **C (`gcc -O3 -s`)** | ~58 KB | 0.20x |
-| **Go (`go build`)** | ~2,436 KB (2.4 MB) | **8.5x larger** |
-| **Rust (`rustc -O3`)** | ~4,946 KB (4.9 MB) | **17.3x larger** |
+- **[Matrix Multi (200x200)](benchmarks/matrix_mult/)**: Evaluates integer arithmetic via a naive $O(N^3)$ triple-nested loop accumulating `total += (i * k + k * j)` over $200^3 = 8,000,000$ iterations without cache tiling, SIMD, or external BLAS. SantientPHP leverages loop-invariant code motion, Loop Strength Reduction (LSR), 4x inner-loop unrolling (`-O3`), algebraic factoring, register coalescing, and compare-branch fusion.
+- **[String Concat (50k)](benchmarks/string_concat/)**: Evaluates iterative single-character appending (`s = s . "a"`, `s.push_str("a")`, `realloc`) across 50,000 iterations starting from an unpadded 5-byte string without preallocated capacity using amortized $O(1)$ geometric capacity doubling plus an MRU TLS cache and 1-byte suffix fast-path in `sph_string_append`.
+- **[Fibonacci (N=35)](benchmarks/fibonacci/)**: Evaluates deep call-tree recursion with omitted frame pointers (`-O1+`), minimal callee-save registers, and direct immediate operands (`sub`/`cmp reg, imm`).
+- **[Heap Alloc (1M items)](benchmarks/memory_alloc/)**: Evaluates loop-scoped escape analysis (`EscapeAnalysisPass`), which reuses a single entry-block stack slot across loop iterations when `Box::new` does not escape, alongside a 5-tier thread-local slab allocator (`32B`–`512B`) with lock-free remote-free reclamation.
 
 ### Reproducing Benchmarks
 
 Run the automated benchmark suite from the repository root:
 
 ```powershell
-python tools/benchmarks/run_benchmarks.py
+python tools/benchmarks/run_benchmarks.py --update-docs
 ```
 
 ---
@@ -121,9 +120,9 @@ python tools/benchmarks/run_benchmarks.py
 
 Precompiled standalone binaries and the official VS Code extension are available directly from **[GitHub Releases](https://github.com/Moodlood/santientphp/releases/latest)**:
 
-- **Windows x64**: `santientphp-v0.1.0-windows-x64.zip`
-- **Linux x64**: `santientphp-v0.1.0-linux-x64.tar.gz`
-- **VS Code Extension**: `santientphp-0.1.0.vsix`
+- **Windows x64**: `santientphp-v0.2.2-windows-x64.zip`
+- **Linux x64**: `santientphp-v0.2.2-linux-x64.tar.gz`
+- **VS Code Extension**: `santientphp-0.2.2.vsix`
 
 Extract the Windows archive and run `install.bat` (or `install.ps1`) to automatically configure `sphc.exe` in your system `PATH` and register file associations.
 
@@ -141,7 +140,7 @@ Extract the Windows archive and run `install.bat` (or `install.ps1`) to automati
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 ninja -C build
 
-# Verify full test suite (6,627 tests)
+# Verify full test suite (6,700 tests)
 .\build\bin\sph_tests.exe
 ```
 
@@ -157,7 +156,7 @@ This configures:
 - Primary location: `C:\Program Files\SantientPHP\` (Windows) or `/usr/local/` (Linux/macOS)
 - Drive C alias: `C:\SantientPHP\` (NTFS directory junction on Windows)
 - Executables & wrappers in `bin/`: `sphc`, `sph`, `santientphp`
-- Precompiled runtime in `lib/`: `libsph_runtime.a`
+- Precompiled modular runtimes in `lib/`: `libsph_core.a`, `libsph_async.a`, `libsph_net.a`, `libsph_compat.a`, `libsph_gui.a`, `libsph_runtime.a`
 - Standard library modules, documentation, and examples
 - PHP-like configuration: `sph.ini` (`sph.ini-development`, `sph.ini-production`)
 - System `PATH` and `SPH_HOME` / `SANTIENTPHP_HOME` environment variables
@@ -175,7 +174,7 @@ To manage resources, repair, or uninstall at any time:
 ```
 
 ```text
-SantientPHP Doctor [v0.1.0]
+SantientPHP Doctor [v0.2.2]
 ===========================
   [OK] Operating System: Microsoft Windows (x86_64)
   [OK] Host C/C++ Compiler (gcc): gcc 15.2.0
@@ -183,7 +182,7 @@ SantientPHP Doctor [v0.1.0]
   [OK] Debugger (gdb): GNU gdb 17.1
   [OK] Version Control (git): git version 2.47.1
   [OK] Windows Native Subsystems: kernel32.dll, winhttp.dll, winsqlite3.dll
-  [OK] SantientPHP Core Runtime: Precompiled runtime libraries present (libsph_runtime.a)
+  [OK] SantientPHP Core Runtime: Precompiled runtime libraries present (libsph_runtime.a / libsph_core.a)
   [OK] SantientPHP Standard Library (stdlib/): Found at stdlib/
 ```
 
@@ -398,7 +397,7 @@ The official Visual Studio Code extension is located in [editors/vscode](editors
 
 Install the packaged `.vsix` (from [GitHub Releases](https://github.com/Moodlood/santientphp/releases/latest)):
 ```powershell
-code --install-extension santientphp-0.1.0.vsix
+code --install-extension santientphp-0.2.2.vsix
 ```
 
 Or build and package from source:
@@ -406,7 +405,7 @@ Or build and package from source:
 cd editors/vscode
 npm install
 npx @vscode/vsce package
-code --install-extension santientphp-0.1.0.vsix
+code --install-extension santientphp-0.2.2.vsix
 ```
 
 ---
@@ -454,7 +453,7 @@ santientphp/
 │   └── vscode/            # Official VS Code extension and LSP client
 ├── docs/                  # Language specification (1.0 Freeze), architecture, tutorials
 ├── examples/              # Positive language examples and feature demonstrations
-├── tests/                 # 6,627 automated unit and integration tests (100% pass)
+├── tests/                 # 6,700 automated unit and integration tests (100% pass)
 ├── tools/                 # Compiler CLI and release packaging
 │   ├── benchmarks/        # Automated multi-language benchmark suite runner
 │   ├── sphc/              # Main compiler CLI driver
@@ -471,7 +470,8 @@ santientphp/
 ## Documentation Index
 
 - [Getting Started Tutorial](docs/tutorials/getting_started.md) - Build your first native app, SIMD physics, formatting, docgen.
-- [Language Specification 1.0](docs/specification/sph_1.0_spec.md) - Formal grammar, types, memory model, semantics (syntax and grammar frozen at 1.0; reference compiler implementation currently at v0.1.0).
+- [Language Specification 1.0](docs/specification/sph_1.0_spec.md) - Formal grammar, types, memory model, semantics (syntax and grammar frozen at 1.0; reference compiler implementation currently at v0.2.2).
+- [v0.2.2 Benchmark Analysis](docs/releases/v0.2.2/BENCHMARKS.md) - Loop-safe escape analysis, x86_64 instruction selection, modular linking, and benchmark results.
 - [v0.2.1 Release Notes](docs/release_notes/v0.2.1.md) - Compiler reliability, runtime hardening, and v0.2.1 benchmarks.
 - [v0.2.1 Engineering Deliverables](docs/releases/v0.2.1/) - Baseline, IR hardening, allocator hardening, and benchmark reports.
 - [Compiler Architecture](docs/compiler/architecture.md) - Frontend, SPHIR IR, optimization passes, x86_64/LLVM codegen.

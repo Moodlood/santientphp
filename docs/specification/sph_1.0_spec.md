@@ -2,7 +2,7 @@
 
 **Document Status:** Normative Reference Specification (Milestone 4.3 Baseline)  
 **Specification Version:** 1.0.0-rc1 (Language Specification 1.0 Freeze)  
-**Compiler Implementation:** `sphc` v0.1.0  
+**Compiler Implementation:** `sphc` v0.2.2  
 **Target Architectures:** Windows x86_64 (`x86_64-pc-windows-gnu`), Linux x86_64 (`x86_64-unknown-linux-gnu`), macOS ARM64 (`aarch64-apple-darwin`)  
 **Standard Library Version:** 1.0.0  
 **Compiler:** `sphc`  
@@ -15,12 +15,12 @@
 SantientPHP (SPH) is a dual-nature systems and application programming language designed to unite the ergonomic expressiveness of PHP with the deterministic safety, low overhead, and direct compilation of modern systems languages (C++, Rust, Zig).
 
 > [!NOTE]
-> **Specification Freeze vs. Implementation Release Version**: The SantientPHP grammar, syntax rules, and type system are frozen at **Language Specification 1.0** to guarantee semantic stability and code portability. The reference compiler implementation (`sphc`) and accompanying toolchain are versioned at release **v0.1.0**, reflecting ongoing development on backend optimization passes, platform backends, and developer tooling.
+> **Specification Freeze vs. Implementation Release Version**: The SantientPHP grammar, syntax rules, and type system are frozen at **Language Specification 1.0** to guarantee semantic stability and code portability. The reference compiler implementation (`sphc`) and accompanying toolchain are versioned at release **v0.2.2**, reflecting ongoing development on backend optimization passes, platform backends, and developer tooling.
 
 ### 1.1 Conformance Classes
 A conforming SantientPHP implementation consists of:
 1. **The Compiler (`sphc`)**: An executable toolchain capable of lexing, parsing, analyzing, optimizing (SPHIR), and emitting valid native machine code (either directly via `X86_64CodeGen` or via LLVM IR).
-2. **The Modular Runtime (`libsph_runtime.a`)**: A C runtime partitioned into `libsph_core.a` (memory, arenas, strings, formatting, panics), `libsph_async.a` (stackful fibers, event loop, timer callbacks), and `libsph_compat.a` (WinHTTP/cURL networking, SQLite/PDO database engine).
+2. **The Modular Runtime (`libsph_runtime.a`)**: A C runtime partitioned into `libsph_core.a` (memory, arenas, strings, formatting, panics), `libsph_async.a` (stackful fibers, event loop, timer callbacks), `libsph_net.a` (TCP, HTTP, WebSocket, epoll), `libsph_compat.a` (WinHTTP/cURL networking, SQLite/PDO database engine), and `libsph_gui.a` (Win32 and X11/GLX native GUI subsystems).
 3. **The Standard Library (`stdlib/`)**: Normative source packages exposing fundamental primitives, I/O abstractions, collections, and asynchronous fibers.
 
 ### 1.2 File Structure & Opening Tag
@@ -256,11 +256,13 @@ typedef struct sph_fiber {
 
 ## 7. Modular Runtime Architecture
 
-The SantientPHP runtime is split into four distinct archives:
-1. `libsph_core.a`: Minimal runtime footprint (< 200 KB). Provides memory management, arenas, string formatting, panic handling, and math intrinsics.
+The SantientPHP runtime is modularly split into focused static archives:
+1. `libsph_core.a`: Minimal runtime footprint (< 120 KB linked binaries). Provides multi-tier slab memory management, `Rc`/`Arc`, arenas, strings, formatting, panic handling, and math intrinsics.
 2. `libsph_async.a`: Fiber context switcher, thread pool, atomic synchronization, and event loop.
-3. `libsph_compat.a`: Legacy PHP dynamic runtime, array hashing table, WinHTTP/cURL client, and SQLite3 engine.
-4. `libsph_runtime.a`: Aggregate static library containing `core + async + compat`.
+3. `libsph_net.a`: Non-blocking sockets, HTTP server, RFC 6455 WebSocket engine, and `epoll` engine.
+4. `libsph_compat.a`: Legacy PHP dynamic runtime, array hashing table, WinHTTP/cURL client, and SQLite3 engine.
+5. `libsph_gui.a`: Cross-platform native GUI abstraction (`Win32` on Windows, `X11`/`GLX`/`epoll` on Linux) and SIMD RGBA canvas.
+6. `libsph_runtime.a`: Aggregate static library containing `core + async + net + compat`.
 
 ---
 

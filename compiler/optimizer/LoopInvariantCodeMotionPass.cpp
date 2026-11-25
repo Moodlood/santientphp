@@ -11,73 +11,6 @@ namespace sph {
 
 namespace {
 
-struct LoopInfo {
-    IRBasicBlock* header = nullptr;
-    IRBasicBlock* preheader = nullptr;
-    std::unordered_set<IRBasicBlock*> blocks;
-};
-
-// Find natural loops using DominatorTree
-std::vector<LoopInfo> findLoops(IRFunction& fn, const DominatorTree& dt) {
-    std::vector<LoopInfo> loops;
-    const auto& bbs = fn.getBlocks();
-    if (bbs.size() < 2) return loops;
-
-    for (const auto& bbPtr : bbs) {
-        if (!bbPtr) continue;
-        IRBasicBlock* bb = bbPtr.get();
-        for (IRBasicBlock* succ : getSuccessors(*bb)) {
-            // A back-edge is an edge bb -> succ where succ dominates bb
-            if (dt.dominates(succ, bb)) {
-                LoopInfo loop;
-                loop.header = succ;
-                loop.blocks.insert(succ);
-
-                // Natural loop blocks: walk predecessors backwards from bb until reaching succ
-                if (bb != succ) {
-                    loop.blocks.insert(bb);
-                    std::vector<IRBasicBlock*> worklist;
-                    worklist.push_back(bb);
-                    while (!worklist.empty()) {
-                        IRBasicBlock* cur = worklist.back();
-                        worklist.pop_back();
-                        for (IRBasicBlock* pred : getPredecessors(*cur, fn)) {
-                            if (loop.blocks.insert(pred).second) {
-                                worklist.push_back(pred);
-                            }
-                        }
-                    }
-                }
-
-                // Determine preheader:
-                // Predecessors of loop.header that are NOT in loop.blocks
-                std::vector<IRBasicBlock*> outsidePreds;
-                for (IRBasicBlock* pred : getPredecessors(*loop.header, fn)) {
-                    if (loop.blocks.find(pred) == loop.blocks.end()) {
-                        outsidePreds.push_back(pred);
-                    }
-                }
-
-                // A valid dedicated preheader must be unique and branch directly to the header
-                if (outsidePreds.size() == 1) {
-                    IRBasicBlock* p = outsidePreds[0];
-                    if (auto* term = p->getTerminator()) {
-                        if (auto* br = dynamic_cast<BranchInst*>(term)) {
-                            if (br->getTarget() == loop.header) {
-                                loop.preheader = p;
-                            }
-                        }
-                    }
-                }
-
-                loops.push_back(std::move(loop));
-            }
-        }
-    }
-
-    return loops;
-}
-
 bool isValueDefinedOutsideLoop(const IRValue* val, const std::unordered_set<IRBasicBlock*>& loopBlocks) {
     if (!val || val->isConstant()) return true;
     for (auto* bb : loopBlocks) {
@@ -94,7 +27,7 @@ bool isValueDefinedOutsideLoop(const IRValue* val, const std::unordered_set<IRBa
 
 bool LoopInvariantCodeMotionPass::runOnFunction(IRFunction& fn) {
     DominatorTree dt(fn);
-    auto loops = findLoops(fn, dt);
+    auto loops = findNaturalLoops(fn, dt);
     if (loops.empty()) return false;
 
     bool anyChanged = false;
