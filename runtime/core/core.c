@@ -1,6 +1,7 @@
 #define SPH_CORE_INCLUDED 1
 #include "core.h"
 #include "../pal.h"
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -486,6 +487,11 @@ void sph_free(void* ptr) {
 
     // Pointer provenance & alignment validation: managed blocks are at least 8-byte aligned
     if (((uintptr_t)ptr & 0x7) != 0 || (uintptr_t)ptr < 4096) {
+        return;
+    }
+
+    // Check freed-pointer history BEFORE reading block header (prevents ASan UAF on large double-free)
+    if (is_in_freed_history(ptr)) {
         return;
     }
 

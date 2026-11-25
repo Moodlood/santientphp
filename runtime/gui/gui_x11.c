@@ -16,6 +16,7 @@
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 #if defined(SPH_HAS_X11)
@@ -113,6 +114,14 @@ static char* sph_x11_strdup(const char* s) {
     return out;
 }
 
+static void sph_x11_sleep_us(long usec) {
+    if (usec <= 0) return;
+    struct timespec ts;
+    ts.tv_sec = usec / 1000000L;
+    ts.tv_nsec = (usec % 1000000L) * 1000L;
+    nanosleep(&ts, NULL);
+}
+
 static void sph_x11_ensure_epoll(void) {
     if (g_x11_wake_fd < 0) {
         g_x11_wake_fd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
@@ -168,8 +177,9 @@ static void sph_x11_ensure_display(void) {
 static void sph_x11_wake_event_loop(void) {
     if (g_x11_wake_fd >= 0) {
         uint64_t val = 1;
-        ssize_t n = write(g_x11_wake_fd, &val, sizeof(val));
-        (void)n;
+        if (write(g_x11_wake_fd, &val, sizeof(val)) < 0) {
+            /* non-blocking wakeup best effort */
+        }
     }
 }
 
@@ -746,7 +756,7 @@ const char* sph_gui_clipboard_get_text(void) {
                     }
                     break;
                 }
-                usleep(2000);
+                sph_x11_sleep_us(2000);
             }
         }
     }
@@ -1039,8 +1049,9 @@ static int32_t sph_x11_pump_events(volatile int32_t* running_flag) {
 #endif
     if (g_x11_wake_fd >= 0) {
         uint64_t drain = 0;
-        ssize_t n = read(g_x11_wake_fd, &drain, sizeof(drain));
-        (void)n;
+        if (read(g_x11_wake_fd, &drain, sizeof(drain)) < 0) {
+            /* drained */
+        }
     }
     return running_flag ? *running_flag : 1;
 }
@@ -1052,7 +1063,7 @@ static void sph_x11_wait_events(int timeout_ms) {
         int nfds = epoll_wait(g_x11_epoll_fd, events, 4, timeout_ms);
         (void)nfds;
     } else {
-        usleep((useconds_t)(timeout_ms > 0 ? timeout_ms * 1000 : 1000));
+        sph_x11_sleep_us(timeout_ms > 0 ? (long)timeout_ms * 1000L : 1000L);
     }
 }
 

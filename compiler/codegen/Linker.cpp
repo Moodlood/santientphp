@@ -187,12 +187,16 @@ bool Linker::linkExecutable(const std::filesystem::path& asmPath,
     if (debugInfo) {
         cmd << "-g ";
     } else {
+#ifdef SPH_SANITIZE_LINK_FLAGS
+        cmd << "-pipe ";
+#else
         cmd << "-s -pipe ";
         if (target.getOS() == TargetOS::MacOS) {
             cmd << "-Wl,-dead_strip ";
         } else {
             cmd << "-Wl,--gc-sections ";
         }
+#endif
     }
 #ifdef SPH_SANITIZE_LINK_FLAGS
     if (target.isHost()) {
